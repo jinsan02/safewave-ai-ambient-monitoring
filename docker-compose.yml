@@ -1,0 +1,58 @@
+services:
+  db:
+    build: ./db
+    container_name: rp5-db
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./volumes/data:/data
+    networks:
+      - rp5-network
+
+  sensing:
+    build: ./sensing
+    container_name: rp5-sensing
+    restart: always
+    depends_on:
+      - db
+    env_file: .env
+    environment:
+      - REDIS_HOST=db
+    ports:
+      - "5005:5005/udp"
+    networks:
+      - rp5-network
+    volumes:
+      - ./volumes/logs:/app/logs
+
+  ai:
+    build: ./ai
+    container_name: rp5-ai
+    restart: always
+    depends_on:
+      - db
+    env_file: .env
+    volumes:
+      - ./volumes/models:/app/models
+      - ./volumes/logs:/app/logs
+    networks:
+      - rp5-network
+
+  api:
+    build: ./api
+    container_name: rp5-api
+    restart: always
+    ports:
+      - "8000:8000"
+    depends_on:
+      - ai
+    env_file: .env
+    volumes:
+      - ./api/auth:/app/auth:ro
+    networks:
+      - rp5-network
+
+networks:
+  rp5-network:
+    driver: bridge

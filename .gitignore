@@ -1,0 +1,9 @@
+.env
+volumes/data/**
+volumes/logs/**
+api/auth/firebase_key.json
+__pycache__/
+*.onnx
+*.pyc
+*.pyo
+.venv/
