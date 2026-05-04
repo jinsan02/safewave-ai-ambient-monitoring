@@ -1,15 +1,15 @@
-# SafeWave-AI: Ambient Monitoring for Solo Safety
+# SafeWave-AI: 독거인 안전 모니터링 시스템
 
-Real-time CSI monitoring pipeline for Raspberry Pi 5 style deployment:
+라즈베리 파이 5 기반 실시간 CSI 모니터링 파이프라인:
 
-- `sensing`: UDP CSI ingest + preprocessing, writes to Redis stream `csi:raw`
-- `ai`: expert inference (M1-M4) + risk fusion, writes to Redis stream `ai:result`
-- `api`: FastAPI REST + WebSocket for app integration
-- `db`: Redis stream hub
+- `sensing`: UDP CSI 수신 + 전처리, Redis 스트림 `csi:raw`에 저장
+- `ai`: 전문가 모델 추론 (M1-M4) + 위험도 융합, Redis 스트림 `ai:result`에 저장
+- `api`: FastAPI REST + WebSocket 앱 통합
+- `db`: Redis 스트림 허브
 
-The stack is containerized with Docker Compose and runs on Windows/macOS/Linux.
+이 스택은 Docker Compose로 컨테이너화되어 Windows/macOS/Linux에서 동작합니다.
 
-## Project Layout
+## 프로젝트 구조
 
 ```text
 <repo-name>/
@@ -35,39 +35,39 @@ The stack is containerized with Docker Compose and runs on Windows/macOS/Linux.
         logs/
 ```
 
-## Repository Naming
+## 저장소 이름 추천
 
-Recommended repository name:
+GitHub 저장소 이름 추천:
 
 - `safewave-ai-ambient-monitoring`
 
-You can keep folder name as `rp5` locally, but use a clear portfolio-friendly name on GitHub.
+로컬에서는 `rp5` 폴더명을 유지하되, GitHub에서는 포트폴리오에 적합한 이름을 사용합니다.
 
-## Prerequisites
+## 필수 요구사항
 
-1. Docker Desktop 4.x+ (Compose v2 included)
+1. Docker Desktop 4.x+ (Compose v2 포함)
 2. Git
-3. Optional local Python for running `sensing/simulator.py` outside containers
+3. 선택사항: 로컬 Python (컨테이너 외부에서 `sensing/simulator.py` 실행 시)
 
-## Clone And Start (Quick Start)
+## 시작하기 (빠른 시작)
 
-1. Clone
+1. 클론
 
 ```powershell
 git clone <your-repo-url>
 cd <repo-name>
 ```
 
-2. Check `.env`
+2. `.env` 확인
 
-Required keys are already prepared in this project. Verify at least:
+필수 설정이 이미 준비되어 있습니다. 다음 항목을 확인하세요:
 
 - `REDIS_HOST=db`
 - `REDIS_PORT=6379`
 - `MODEL_PATH=/app/models`
 - `FIREBASE_KEY_PATH=/app/auth/firebase_key.json`
 
-3. Ensure volume folders exist
+3. 볼륨 폴더 생성
 
 ```powershell
 mkdir volumes\data -ErrorAction SilentlyContinue
@@ -76,48 +76,48 @@ mkdir volumes\logs -ErrorAction SilentlyContinue
 mkdir api\auth -ErrorAction SilentlyContinue
 ```
 
-Place Firebase service account key file as:
+Firebase 서비스 계정 키 파일 배치:
 
 - `api/auth/firebase_key.json`
 
-This path is mounted into API container as `/app/auth/firebase_key.json`.
+이 경로는 API 컨테이너에 `/app/auth/firebase_key.json`으로 마운트됩니다.
 
-4. Build and run
+4. 빌드 및 실행
 
 ```powershell
 docker compose up -d --build
 ```
 
-5. Check health
+5. 상태 확인
 
 ```powershell
 docker compose ps
 Invoke-RestMethod http://localhost:8000/
 ```
 
-Expected API response:
+예상 API 응답:
 
 ```json
 {"service":"rp5-api","status":"ok"}
 ```
 
-## Docker Network Notes
+## Docker 네트워크 참고사항
 
-- `sensing` runs on bridge network and publishes UDP `5005:5005/udp`
-- `sensing`, `ai`, `api` use `REDIS_HOST=db`
-- Redis data persists in `./volumes/data`
-- API mounts Firebase auth directory: `./api/auth:/app/auth:ro`
+- `sensing`은 브릿지 네트워크에서 실행되며 UDP `5005:5005/udp` 포트 발행
+- `sensing`, `ai`, `api`는 `REDIS_HOST=db` 사용
+- Redis 데이터는 `./volumes/data`에 저장
+- API는 Firebase 인증 디렉토리 마운트: `./api/auth:/app/auth:ro`
 
-## Run Simulator (End-to-End Test)
+## 시뮬레이터 실행 (엔드투엔드 테스트)
 
-With stack already up, open a new terminal:
+스택이 이미 실행 중일 때, 새 터미널을 열고:
 
 ```powershell
 cd sensing
 python simulator.py --host 127.0.0.1 --port 5005 --nodes 4 --rate 10 --scenario auto
 ```
 
-Then verify data flow:
+데이터 흐름 확인:
 
 ```powershell
 Invoke-RestMethod http://localhost:8000/status | ConvertTo-Json -Depth 5
@@ -125,34 +125,34 @@ Invoke-RestMethod http://localhost:8000/logs?n=10 | ConvertTo-Json -Depth 5
 Invoke-RestMethod http://localhost:8000/nodes/health | ConvertTo-Json
 ```
 
-## Dashboard (monitor.html)
+## 대시보드 (monitor.html)
 
-Open dashboard file:
+대시보드 파일 열기:
 
 ```powershell
 Start-Process "C:\rp5\monitor.html"
 ```
 
-Address behavior in `monitor.html`:
+`monitor.html`의 주소 동작:
 
-- When opened as `file://`, API defaults to `http://localhost:8000`
-- When served over `http(s)://`, dashboard auto-detects current host and uses `http(s)://<host>:8000`
-- For external device access, use server IP (for example `192.168.0.25`) instead of localhost
+- `file://`로 열 때: API는 `http://localhost:8000`으로 기본 설정
+- `http(s)://`로 제공될 때: 대시보드는 현재 호스트 자동 감지 및 `http(s)://<host>:8000` 사용
+- 외부 기기 접근 시: localhost 대신 서버 IP 사용 (예: `192.168.0.25`)
 
-Optional URL override parameters:
+선택사항 URL 오버라이드 매개변수:
 
 - `?api=http://<server-ip>:8000`
 - `?ws=ws://<server-ip>:8000/ws/monitor`
 
-Example:
+예시:
 
 ```text
 http://192.168.0.25/monitor.html?api=http://192.168.0.25:8000
 ```
 
-## API Endpoints For App Integration
+## 앱 통합용 API 엔드포인트
 
-Monitoring:
+모니터링:
 
 - `GET /status`
 - `GET /logs?n=60`
@@ -160,7 +160,7 @@ Monitoring:
 - `GET /charts/minute?minutes=10`
 - `WS /ws/monitor`
 
-Control and management:
+제어 및 관리:
 
 - `GET /settings`
 - `POST /settings`
@@ -171,7 +171,7 @@ Control and management:
 - `POST /notify/send`
 - `POST /notify/check`
 
-Example `POST /settings` body:
+`POST /settings` 요청 본문 예시:
 
 ```json
 {
@@ -181,70 +181,70 @@ Example `POST /settings` body:
 }
 ```
 
-## Optional Assets
+## 선택사항 리소스
 
-1. ONNX models
+1. ONNX 모델
 
-- Place model files in `volumes/models`
-- If files are missing, fallback logic is used (still runs)
+- 모델 파일을 `volumes/models`에 배치
+- 파일이 없으면 폴백 로직 사용 (계속 동작)
 
-2. Firebase service account key
+2. Firebase 서비스 계정 키
 
-- Place key file at path mapped to `FIREBASE_KEY_PATH`
-- Without key, notify endpoints return error for actual FCM send
+- 키 파일을 `FIREBASE_KEY_PATH`로 매핑된 경로에 배치
+- 키가 없으면 알림 엔드포인트는 실제 FCM 전송 시 오류 반환
 
-## Common Troubleshooting
+## 일반 문제 해결
 
-1. `/status` returns 204
+1. `/status`가 204 반환
 
-- AI stream is empty. Start simulator and check `sensing` logs.
+- AI 스트림이 비어 있음. 시뮬레이터 시작 후 `sensing` 로그 확인
 
-2. `ws://localhost:8000/ws/monitor` fails
+2. `ws://localhost:8000/ws/monitor` 연결 실패
 
-- Confirm API image includes `websockets` package.
-- Rebuild API: `docker compose up -d --build api`
+- API 이미지에 `websockets` 패키지 포함 확인
+- API 재빌드: `docker compose up -d --build api`
 
-3. Redis connection errors right after restart
+3. 재시작 직후 Redis 연결 오류
 
-- Brief startup race can happen while Redis restarts.
-- Retry after a few seconds; services auto-reconnect.
+- Redis 재시작 중 짧은 시동 경쟁 발생 가능
+- 몇 초 후 재시도; 서비스는 자동 재연결
 
-4. No node marked online
+4. 온라인 노드 없음
 
-- Ensure simulator sends packets to `127.0.0.1:5005`
-- Check `docker compose ps` and `docker logs rp5-sensing`
+- 시뮬레이터가 `127.0.0.1:5005`로 패킷 송신 확인
+- `docker compose ps` 및 `docker logs rp5-sensing` 확인
 
-## Stop / Reset
+## 중지 / 초기화
 
-Stop only:
+중지만:
 
 ```powershell
 docker compose down
 ```
 
-Stop and remove volumes (full reset):
+중지 및 볼륨 제거 (완전 초기화):
 
 ```powershell
 docker compose down -v
 ```
 
-## GitHub Publish Checklist
+## GitHub 발행 체크리스트
 
-Before first push, verify:
+첫 푸시 전 확인사항:
 
-1. `docker compose up -d --build` completes without errors
-2. `http://localhost:8000/status` returns live JSON
-3. `monitor.html` opens and WebSocket connects
-4. `.gitignore` includes secrets and runtime artifacts
-5. Firebase key file is not committed (`api/auth/firebase_key.json`)
-6. Large model files (`*.onnx`) are excluded or managed via Git LFS
+1. `docker compose up -d --build` 오류 없이 완료
+2. `http://localhost:8000/status`가 실시간 JSON 반환
+3. `monitor.html` 열림 및 WebSocket 연결
+4. `.gitignore`에 보안 정보 및 런타임 아티팩트 포함
+5. Firebase 키 파일 미커밋 (`api/auth/firebase_key.json`)
+6. 대용량 모델 파일 (`*.onnx`) 제외 또는 Git LFS로 관리
 
-Suggested first push commands:
+첫 푸시 제안 명령어:
 
 ```powershell
 git init
 git add .
-git commit -m "Initial release: SafeWave-AI monitoring stack"
+git commit -m "초기 배포: SafeWave-AI 모니터링 스택"
 git branch -M main
 git remote add origin <your-github-repo-url>
 git push -u origin main
