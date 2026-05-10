@@ -1,9 +1,9 @@
 """
 api/main.py
 갤럭시 플립 4 앱 연동 FastAPI 서버.
-- GET  /status              : 최신 AI 판단 결과
+- GET  /status              : 최신 AI 통합 스냅샷
 - GET  /logs                : 최근 N건 이력
-- GET  /history             : 응급/경고 이벤트 이력
+- GET  /history             : 응급/경고 요약 이력
 - GET  /settings            : 시스템 설정 조회
 - POST /settings            : 시스템 설정 변경 (민감도, 노드 ON/OFF, AI 활성화)
 - GET  /nodes/health        : 노드별 생존 상태
@@ -13,9 +13,12 @@ api/main.py
 """
 
 import ast
+import asyncio
+from contextlib import suppress
 import json
 import os
 import time
+from typing import Any
 
 import redis.asyncio as aioredis
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -24,14 +27,41 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 import uvicorn
 
-from notifier import router as notify_router
+from notifier import load_risk_threshold, router as notify_router, send_risk_notification
 
 
-# ── 설정 스키마 ──────────────────────────────────────────────
 class SystemSettings(BaseModel):
     risk_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     active_nodes: list[int] = Field(default=[1, 2, 3, 4, 5, 6])
     ai_enabled: bool = True
+
+
+class RiskState(BaseModel):
+    score: float = 0.0
+    level: str = "normal"
+    emergency: bool = False
+
+
+class UnifiedSnapshot(BaseModel):
+    ts_ms: int
+    node_id: int = 0
+    experts: dict[str, Any] = Field(default_factory=dict)
+    audio: dict[str, Any] | None = None
+    risk: RiskState = Field(default_factory=RiskState)
+    risk_score: float = 0.0
+    risk_level: str = "normal"
+    emergency: bool = False
+    ai_enabled: bool = True
+    context_window: dict[str, Any] = Field(default_factory=dict)
+
+
+class EmergencySummary(BaseModel):
+    ts_ms: int
+    node_id: int = 0
+    risk_score: float = 0.0
+    risk_level: str = "normal"
+    emergency: bool = False
+    summary: str = ""
 
 
 class TokenRegistration(BaseModel):
@@ -40,25 +70,81 @@ class TokenRegistration(BaseModel):
 
 
 def _parse_result_payload(raw: str) -> dict:
-    """ai:result의 문자열 payload를 dict로 안전하게 복원."""
     if not raw:
         return {}
     try:
-        # 우선 표준 JSON 시도
         return json.loads(raw)
     except Exception:
         try:
-            # AI가 str(dict) 형태로 저장한 경우 처리
             parsed = ast.literal_eval(raw)
             return parsed if isinstance(parsed, dict) else {"raw": raw}
         except Exception:
             return {"raw": raw}
 
-REDIS_HOST  = os.getenv("REDIS_HOST", "db")
-REDIS_PORT  = int(os.getenv("REDIS_PORT", 6379))
+
+def _stream_id_ts_ms(msg_id: str) -> int:
+    try:
+        return int(msg_id.split("-")[0])
+    except Exception:
+        return int(time.time() * 1000)
+
+
+def _normalize_snapshot(payload: dict, msg_id: str | None = None) -> dict:
+    normalized = dict(payload or {})
+    ts_ms = int(normalized.get("ts_ms") or (_stream_id_ts_ms(msg_id) if msg_id else int(time.time() * 1000)))
+    risk_source = normalized.get("risk", {}) if isinstance(normalized.get("risk"), dict) else {}
+    risk_score = float(normalized.get("risk_score", risk_source.get("score", 0.0)))
+    risk_level = normalized.get("risk_level", risk_source.get("level", "normal"))
+    emergency = bool(normalized.get("emergency", risk_source.get("emergency", False)))
+
+    normalized["ts_ms"] = ts_ms
+    normalized["node_id"] = int(normalized.get("node_id", 0))
+    normalized["risk_score"] = risk_score
+    normalized["risk_level"] = risk_level
+    normalized["emergency"] = emergency
+    normalized["risk"] = {
+        "score": risk_score,
+        "level": risk_level,
+        "emergency": emergency,
+    }
+    normalized.setdefault("experts", {})
+    normalized.setdefault("audio", None)
+    normalized.setdefault("ai_enabled", True)
+    normalized.setdefault("context_window", {})
+
+    data = UnifiedSnapshot.model_validate(normalized).model_dump()
+    if msg_id:
+        data["_id"] = msg_id
+        data["_ts"] = _stream_id_ts_ms(msg_id) / 1000
+    return data
+
+
+def _normalize_emergency(payload: dict, msg_id: str | None = None) -> dict:
+    normalized = dict(payload or {})
+    normalized["ts_ms"] = int(normalized.get("ts_ms") or (_stream_id_ts_ms(msg_id) if msg_id else int(time.time() * 1000)))
+    normalized["node_id"] = int(normalized.get("node_id", 0))
+    normalized["risk_score"] = float(normalized.get("risk_score", 0.0))
+    normalized["risk_level"] = normalized.get("risk_level", "normal")
+    normalized["emergency"] = bool(normalized.get("emergency", False))
+    normalized["summary"] = str(normalized.get("summary", ""))
+
+    data = EmergencySummary.model_validate(normalized).model_dump()
+    if msg_id:
+        data["_id"] = msg_id
+        data["_ts"] = _stream_id_ts_ms(msg_id) / 1000
+    return data
+
+
+REDIS_HOST = os.getenv("REDIS_HOST", "db")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 RESULT_STREAM = "ai:result"
-SETTINGS_KEY  = "sys:settings"
-TOKEN_KEY     = "fcm:tokens"
+EMERGENCY_STREAM = "ai:emergency"
+SETTINGS_KEY = "sys:settings"
+TOKEN_KEY_PREFIX = "fcm:token:"
+MINUTE_AGG_PREFIX = "agg:minute:"
+TOKEN_TTL_SECONDS = int(os.getenv("TOKEN_TTL_SECONDS", "3600"))
+SETTINGS_TTL_SECONDS = int(os.getenv("SETTINGS_TTL_SECONDS", "3600"))
+ALERT_DEDUP_TTL_SECONDS = int(os.getenv("ALERT_DEDUP_TTL_SECONDS", "3600"))
 
 app = FastAPI(title="rp5 API")
 
@@ -73,21 +159,76 @@ app.add_middleware(
 app.include_router(notify_router, prefix="/notify")
 
 
-# ── Redis 풀 ─────────────────────────────────────────────────
+async def _list_registered_tokens(redis_client) -> list[tuple[str, str]]:
+    tokens = []
+    async for key in redis_client.scan_iter(match=f"{TOKEN_KEY_PREFIX}*"):
+        device_id = key.replace(TOKEN_KEY_PREFIX, "", 1)
+        token = await redis_client.get(key)
+        if token:
+            tokens.append((device_id, token))
+    return tokens
+
+
+async def _alert_worker(redis_client):
+    last_id = "$"
+    while True:
+        try:
+            entries = await redis_client.xread({EMERGENCY_STREAM: last_id}, count=10, block=1000)
+            if not entries:
+                continue
+
+            for _stream, messages in entries:
+                for msg_id, fields in messages:
+                    payload = _normalize_emergency(_parse_result_payload(fields.get("data", "")), msg_id)
+                    last_id = msg_id
+
+                    if payload["risk_level"] != "critical":
+                        continue
+
+                    for device_id, token in await _list_registered_tokens(redis_client):
+                        dedupe_key = f"notify:sent:{msg_id}:{device_id}"
+                        claimed = await redis_client.set(dedupe_key, "1", ex=ALERT_DEDUP_TTL_SECONDS, nx=True)
+                        if not claimed:
+                            continue
+                        try:
+                            await asyncio.to_thread(
+                                send_risk_notification,
+                                token,
+                                payload["risk_score"],
+                                payload["risk_level"],
+                                True,
+                                {"summary": payload["summary"], "ts_ms": payload["ts_ms"]},
+                            )
+                        except Exception as exc:
+                            print(f"[api] FCM send failed for {device_id}: {exc}", flush=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"[api] alert worker error: {exc}", flush=True)
+            await asyncio.sleep(1)
+
+
 @app.on_event("startup")
 async def startup():
     app.state.redis = aioredis.Redis(
-        host=REDIS_HOST, port=REDIS_PORT,
-        decode_responses=True, socket_connect_timeout=5,
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        decode_responses=True,
+        socket_connect_timeout=5,
     )
+    app.state.alert_worker = asyncio.create_task(_alert_worker(app.state.redis))
 
 
 @app.on_event("shutdown")
 async def shutdown():
+    worker = getattr(app.state, "alert_worker", None)
+    if worker is not None:
+        worker.cancel()
+        with suppress(asyncio.CancelledError):
+            await worker
     await app.state.redis.aclose()
 
 
-# ── REST ─────────────────────────────────────────────────────
 @app.get("/")
 async def root():
     return {"service": "rp5-api", "status": "ok"}
@@ -95,35 +236,28 @@ async def root():
 
 @app.get("/status")
 async def get_status():
-    """ai:result 스트림에서 가장 최신 1건 반환."""
     entries = await app.state.redis.xrevrange(RESULT_STREAM, count=1)
     if not entries:
-        return JSONResponse({"message": "no data yet"}, status_code=204)
-    _msg_id, fields = entries[0]
+        # 204 응답은 body를 포함할 수 없어 h11 프로토콜 오류가 발생하므로 200으로 반환
+        return JSONResponse({"message": "no data yet"}, status_code=200)
+    msg_id, fields = entries[0]
     payload = _parse_result_payload(fields.get("data", ""))
-    return payload
+    return _normalize_snapshot(payload, msg_id)
 
 
 @app.get("/logs")
 async def get_logs(n: int = 60):
-    """최근 n건 ai:result 이력 반환 (기본 60건 ≈ 1분)."""
-    n = max(1, min(n, 3600))
+    n = max(1, min(n, 36000))
     entries = await app.state.redis.xrevrange(RESULT_STREAM, count=n)
     result = []
     for msg_id, fields in entries:
         payload = _parse_result_payload(fields.get("data", ""))
-        payload["_id"] = msg_id
-        result.append(payload)
+        result.append(_normalize_snapshot(payload, msg_id))
     return result
 
 
-# ── WebSocket ────────────────────────────────────────────────
 @app.websocket("/ws/monitor")
 async def ws_monitor(websocket: WebSocket):
-    """
-    ai:result 스트림을 실시간으로 앱에 푸시.
-    새 데이터가 없으면 최대 1초 블로킹 후 재시도.
-    """
     await websocket.accept()
     r = app.state.redis
     last_id = "$"
@@ -135,11 +269,9 @@ async def ws_monitor(websocket: WebSocket):
                 for _stream, messages in entries:
                     for msg_id, fields in messages:
                         payload = _parse_result_payload(fields.get("data", ""))
-                        payload["_id"] = msg_id
-                        await websocket.send_json(payload)
+                        await websocket.send_json(_normalize_snapshot(payload, msg_id))
                         last_id = msg_id
             else:
-                # 데이터 없음 — keepalive ping
                 await websocket.send_json({"ping": True})
 
     except WebSocketDisconnect:
@@ -148,10 +280,8 @@ async def ws_monitor(websocket: WebSocket):
         await websocket.close(code=1011, reason=str(exc))
 
 
-# ── 설정 관리 ─────────────────────────────────────────────────
 @app.get("/settings")
 async def get_settings():
-    """현재 시스템 설정 반환 (기본값 포함)."""
     raw = await app.state.redis.get(SETTINGS_KEY)
     if raw:
         return json.loads(raw)
@@ -160,15 +290,12 @@ async def get_settings():
 
 @app.post("/settings")
 async def update_settings(settings: SystemSettings):
-    """앱에서 보낸 설정값을 Redis에 저장 — AI 엔진이 다음 루프에서 반영."""
-    await app.state.redis.set(SETTINGS_KEY, json.dumps(settings.model_dump()))
+    await app.state.redis.set(SETTINGS_KEY, json.dumps(settings.model_dump()), ex=SETTINGS_TTL_SECONDS)
     return {"status": "updated", "settings": settings.model_dump()}
 
 
-# ── 노드 상태 ─────────────────────────────────────────────────
 @app.get("/nodes/health")
 async def get_node_health():
-    """각 노드의 마지막 수신 시간 기준 온라인/오프라인 판정 (5초 기준)."""
     now = time.time()
     health = {}
     for i in range(1, 7):
@@ -180,101 +307,74 @@ async def get_node_health():
     return health
 
 
-# ── 응급 이력 ─────────────────────────────────────────────────
 @app.get("/history")
 async def get_history(n: int = 100, level: str = "warning"):
-    """
-    응급/경고 이벤트만 필터링한 이력 반환.
-    level: 'warning'(경고 이상) 또는 'critical'(응급만)
-    """
     n = max(1, min(n, 3600))
     if level not in ("warning", "critical"):
         return JSONResponse({"error": "level must be 'warning' or 'critical'"}, status_code=400)
-    entries = await app.state.redis.xrevrange(RESULT_STREAM, count=3600)
+
+    entries = await app.state.redis.xrevrange(EMERGENCY_STREAM, count=3600)
     result = []
     for msg_id, fields in entries:
-        payload = _parse_result_payload(fields.get("data", ""))
-        if "raw" in payload:
-            continue
+        payload = _normalize_emergency(_parse_result_payload(fields.get("data", "")), msg_id)
         rl = payload.get("risk_level", "normal")
         if level == "critical" and rl != "critical":
             continue
         if level == "warning" and rl not in ("warning", "critical"):
             continue
-        payload["_id"] = msg_id
-        # Redis 스트림 ID에서 Unix 타임스탬프 추출 (ms-seq 형식)
-        try:
-            payload["_ts"] = int(msg_id.split("-")[0]) / 1000
-        except Exception:
-            pass
         result.append(payload)
         if len(result) >= n:
             break
     return result
 
 
-# ── 차트 데이터 (분 단위 평균) ────────────────────────────────
 @app.get("/charts/minute")
 async def get_minute_charts(minutes: int = 10):
-    """
-    최근 N분 간 1분 단위 평균값 반환.
-    앱에서 심박수/위험도 시계열 차트를 그릴 때 사용.
-    """
     minutes = max(1, min(minutes, 60))
-    entries = await app.state.redis.xrevrange(RESULT_STREAM, count=minutes * 120)
+    chart = []
+    current_minute = int(time.time() // 60)
 
-    buckets: dict = {}
-    for msg_id, fields in entries:
-        try:
-            ts_ms = int(msg_id.split("-")[0])
-            minute_key = ts_ms // 60000  # 분 단위 버킷
-            payload = _parse_result_payload(fields.get("data", ""))
-            if "raw" in payload:
-                continue
-        except Exception:
+    for minute_key in range(current_minute - minutes + 1, current_minute + 1):
+        raw_bucket = await app.state.redis.hgetall(f"{MINUTE_AGG_PREFIX}{minute_key}")
+        if not raw_bucket:
             continue
 
-        ex = payload.get("experts", {})
-        vital = ex.get("vital", {})
-        bucket = buckets.setdefault(minute_key, {
-            "ts": minute_key * 60,
-            "risk_scores": [], "heart_rates": [], "breathing_rates": [],
-        })
-        if payload.get("risk_score") is not None:
-            bucket["risk_scores"].append(float(payload["risk_score"]))
-        if vital.get("heart_rate") is not None:
-            bucket["heart_rates"].append(float(vital["heart_rate"]))
-        if vital.get("breathing_rate") is not None:
-            bucket["breathing_rates"].append(float(vital["breathing_rate"]))
+        risk_count = int(raw_bucket.get("risk_count", 0) or 0)
+        heart_count = int(raw_bucket.get("heart_count", 0) or 0)
+        breathing_count = int(raw_bucket.get("breathing_count", 0) or 0)
 
-    def _avg(lst): return round(sum(lst) / len(lst), 2) if lst else None
+        def _avg(sum_key: str, count: int):
+            if count <= 0:
+                return None
+            return round(float(raw_bucket.get(sum_key, 0.0)) / count, 2)
 
-    chart = []
-    for key in sorted(buckets.keys(), reverse=True)[:minutes]:
-        b = buckets[key]
         chart.append({
-            "ts":             b["ts"],
-            "risk_score_avg": _avg(b["risk_scores"]),
-            "heart_rate_avg": _avg(b["heart_rates"]),
-            "breathing_rate_avg": _avg(b["breathing_rates"]),
-            "samples":        len(b["risk_scores"]),
+            "ts": int(raw_bucket.get("ts", minute_key * 60)),
+            "risk_score_avg": _avg("risk_sum", risk_count),
+            "heart_rate_avg": _avg("heart_sum", heart_count),
+            "breathing_rate_avg": _avg("breathing_sum", breathing_count),
+            "samples": risk_count,
         })
-    return sorted(chart, key=lambda x: x["ts"])
+
+    return sorted(chart, key=lambda item: item["ts"])
 
 
-# ── FCM 토큰 등록 ─────────────────────────────────────────────
 @app.post("/auth/register-token")
 async def register_fcm_token(body: TokenRegistration):
-    """앱 최초 설치 시 플립 4의 FCM 토큰을 서버에 등록."""
-    await app.state.redis.hset(TOKEN_KEY, body.device_id, body.token)
-    return {"status": "registered", "device_id": body.device_id}
+    await app.state.redis.set(f"{TOKEN_KEY_PREFIX}{body.device_id}", body.token, ex=TOKEN_TTL_SECONDS)
+    return {"status": "registered", "device_id": body.device_id, "ttl_seconds": TOKEN_TTL_SECONDS}
 
 
 @app.get("/auth/tokens")
 async def list_fcm_tokens():
-    """등록된 FCM 토큰 목록 (device_id만 노출)."""
-    tokens = await app.state.redis.hgetall(TOKEN_KEY)
-    return {"devices": list(tokens.keys()), "count": len(tokens)}
+    tokens = await _list_registered_tokens(app.state.redis)
+    return {"devices": [device_id for device_id, _token in tokens], "count": len(tokens)}
+
+
+@app.get("/notify/threshold")
+async def get_notify_threshold():
+    threshold = await load_risk_threshold(app.state.redis)
+    return {"risk_threshold": threshold}
 
 
 if __name__ == "__main__":

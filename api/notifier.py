@@ -5,16 +5,18 @@ FCM 푸시 알림 + 위험 점수 임계값 기반 자동 발송.
 - POST /notify/check  : risk_score 기준 조건부 전송
 """
 
+import json
 import os
 from typing import Any
 
 import firebase_admin
 from firebase_admin import credentials, messaging
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 router = APIRouter()
+SETTINGS_KEY = "sys:settings"
 
 # ── Firebase 초기화 ──────────────────────────────────────────
 _KEY_PATH = os.getenv("FIREBASE_KEY_PATH", "/app/auth/firebase_key.json")
@@ -46,6 +48,41 @@ class RiskPayload(BaseModel):
     risk_score: float
     risk_level: str = "normal"
     emergency: bool = False
+
+
+async def load_risk_threshold(redis_client) -> float:
+    if redis_client is None:
+        return _RISK_THRESHOLD
+
+    try:
+        raw = await redis_client.get(SETTINGS_KEY)
+        if raw:
+            return float(json.loads(raw).get("risk_threshold", _RISK_THRESHOLD))
+    except Exception:
+        pass
+    return _RISK_THRESHOLD
+
+
+def build_risk_message(risk_score: float, risk_level: str, emergency: bool) -> tuple[str, str]:
+    if risk_level == "critical" or emergency or risk_score >= 0.85:
+        return (
+            "응급 상황 감지",
+            f"위험 점수 {risk_score:.2f} - 즉각 확인이 필요합니다.",
+        )
+
+    return (
+        "이상 징후 감지",
+        f"위험 점수 {risk_score:.2f} - 상태를 확인하세요.",
+    )
+
+
+def send_risk_notification(token: str, risk_score: float, risk_level: str,
+                           emergency: bool = False, extra: dict[str, Any] | None = None) -> str:
+    title, body = build_risk_message(risk_score, risk_level, emergency)
+    payload = {"risk_score": risk_score, "risk_level": risk_level, "emergency": emergency}
+    if extra:
+        payload.update(extra)
+    return _send_fcm(token, title, body, payload)
 
 
 # ── 공통 전송 함수 ────────────────────────────────────────────
@@ -81,26 +118,22 @@ async def send_notification(req: NotifyRequest):
 
 
 @router.post("/check")
-async def check_and_notify(payload: RiskPayload):
+async def check_and_notify(payload: RiskPayload, request: Request):
     """
     risk_score 가 임계값(기본 0.6) 이상일 때만 FCM 발송.
     - warning  (0.6 ≤ score < 0.85): "주의" 알림
     - critical (score ≥ 0.85)       : "응급" 알림
     """
-    if payload.risk_score < _RISK_THRESHOLD:
+    threshold = await load_risk_threshold(request.app.state.redis)
+    if payload.risk_score < threshold:
         return {"ok": True, "sent": False, "reason": "below_threshold"}
 
-    if payload.risk_score >= 0.85 or payload.emergency:
-        title = "🚨 응급 상황 감지"
-        body  = f"위험 점수 {payload.risk_score:.2f} — 즉각 확인이 필요합니다."
-    else:
-        title = "⚠️ 이상 징후 감지"
-        body  = f"위험 점수 {payload.risk_score:.2f} — 상태를 확인하세요."
-
     try:
-        msg_id = _send_fcm(
-            payload.token, title, body,
-            {"risk_score": payload.risk_score, "risk_level": payload.risk_level},
+        msg_id = send_risk_notification(
+            payload.token,
+            payload.risk_score,
+            payload.risk_level,
+            payload.emergency,
         )
         return {"ok": True, "sent": True, "message_id": msg_id}
     except Exception as exc:

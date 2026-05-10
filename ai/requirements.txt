@@ -1,5 +1,7 @@
-onnxruntime==1.17.1
+onnxruntime==1.20.1
 transformers==4.38.2
+tokenizers==0.15.2
 numpy==1.26.4
 redis==5.0.3
 huggingface-hub==0.21.4
+optimum[onnxruntime]==1.17.0

@@ -1,13 +1,33 @@
 # SafeWave-AI: 독거인 안전 모니터링 시스템
 
+현재 릴리즈: ver.0.0.1
+
 라즈베리 파이 5 기반 실시간 CSI 모니터링 파이프라인:
 
 - `sensing`: UDP CSI 수신 + 전처리, Redis 스트림 `csi:raw`에 저장
-- `ai`: 전문가 모델 추론 (M1-M4) + 위험도 융합, Redis 스트림 `ai:result`에 저장
+- `ai`: 전문가 모델 추론 (M1-M4) + 위험도 융합, 통합 스냅샷을 Redis 스트림 `ai:result`에 저장
 - `api`: FastAPI REST + WebSocket 앱 통합
 - `db`: Redis 스트림 허브
 
 이 스택은 Docker Compose로 컨테이너화되어 Windows/macOS/Linux에서 동작합니다.
+
+핵심 원칙:
+
+- 운영 데이터는 SSD에 기록하지 않고 Redis 메모리에만 유지
+- 실시간 결과, 응급 요약, 설정, 토큰은 최대 1시간 뒤 자동 소멸
+- 앱과 대시보드는 최근 1시간 이내 데이터만 조회 가능
+
+## ver.0.0.1 변경 요약
+
+- M1~M5 실제 모델 라인업 반영
+    - M1: DT-Pose (WiFi 포즈)
+    - M2: ViFi 계열 생체신호
+    - M3: AST-Base
+    - M4: Whisper-Small
+    - M5: Qwen2-0.5B-Instruct 기반 통합 로직
+- 전문가 모듈 파일명 정리 (`m1_wifi_pose.py`, `m2_frenel_vital.py`, `m3_ast_base.py`, `m4_whisper_small.py`)
+- API 무데이터 상태 응답 안정화 (`/status` no-data 처리)
+- ONNX 런타임 호환성 반영 (`onnxruntime==1.20.1`)
 
 ## 프로젝트 구조
 
@@ -30,10 +50,10 @@
     db/
         redis.conf
     volumes/
-        data/
         models/
-        logs/
 ```
+
+주의: `volumes/models/`의 실제 모델 파일(예: `*.onnx_data`)은 대용량이므로 기본 Git 추적에서 제외합니다.
 
 ## 저장소 이름 추천
 
@@ -70,9 +90,7 @@ cd <repo-name>
 3. 볼륨 폴더 생성
 
 ```powershell
-mkdir volumes\data -ErrorAction SilentlyContinue
 mkdir volumes\models -ErrorAction SilentlyContinue
-mkdir volumes\logs -ErrorAction SilentlyContinue
 mkdir api\auth -ErrorAction SilentlyContinue
 ```
 
@@ -92,7 +110,7 @@ docker compose up -d --build
 
 ```powershell
 docker compose ps
-Invoke-RestMethod http://localhost:8000/
+Invoke-RestMethod http://127.0.0.1:8000/
 ```
 
 예상 API 응답:
@@ -105,8 +123,21 @@ Invoke-RestMethod http://localhost:8000/
 
 - `sensing`은 브릿지 네트워크에서 실행되며 UDP `5005:5005/udp` 포트 발행
 - `sensing`, `ai`, `api`는 `REDIS_HOST=db` 사용
-- Redis 데이터는 `./volumes/data`에 저장
+- Redis는 AOF/RDB 없이 메모리 전용으로 실행
+- `ai:result`는 약 1시간 분량, `ai:emergency`는 경고/응급 요약 약 1시간 분량 유지
+- `sys:settings`, FCM 토큰, 분 단위 차트 집계도 Redis TTL로만 유지
 - API는 Firebase 인증 디렉토리 마운트: `./api/auth:/app/auth:ro`
+
+## 메모리 보존 정책
+
+- `csi:raw`: 센서 입력 스트림, 약 1시간 분량 유지
+- `ai:result`: 통합 스냅샷 스트림, 10Hz 기준 약 1시간 유지
+- `ai:emergency`: warning/critical 요약 이력, 약 1시간 유지
+- `agg:minute:*`: 분 단위 차트 집계, TTL 기반 단기 보존
+- `sys:settings`: 앱 설정값, TTL 1시간
+- `fcm:token:*`: 등록 기기 토큰, TTL 1시간
+
+이전 기록은 의도적으로 남기지 않으며, 컨테이너 재시작 시 메모리 데이터는 사라집니다.
 
 ## 시뮬레이터 실행 (엔드투엔드 테스트)
 
@@ -123,6 +154,13 @@ python simulator.py --host 127.0.0.1 --port 5005 --nodes 4 --rate 10 --scenario 
 Invoke-RestMethod http://localhost:8000/status | ConvertTo-Json -Depth 5
 Invoke-RestMethod http://localhost:8000/logs?n=10 | ConvertTo-Json -Depth 5
 Invoke-RestMethod http://localhost:8000/nodes/health | ConvertTo-Json
+```
+
+Windows 환경에서 `localhost` 연결 리셋이 발생하면 `127.0.0.1`을 사용하세요.
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/status | ConvertTo-Json -Depth 5
+Invoke-RestMethod http://127.0.0.1:8000/logs?n=10 | ConvertTo-Json -Depth 5
 ```
 
 ## 대시보드 (monitor.html)
@@ -199,20 +237,29 @@ http://192.168.0.25/monitor.html?api=http://192.168.0.25:8000
 
 - AI 스트림이 비어 있음. 시뮬레이터 시작 후 `sensing` 로그 확인
 
-2. `ws://localhost:8000/ws/monitor` 연결 실패
+2. 재시작 후 예전 데이터가 안 보임
+
+- 정상 동작입니다. 이 시스템은 메모리 전용이며 재시작 후 이전 이력을 복구하지 않습니다.
+
+3. `ws://localhost:8000/ws/monitor` 연결 실패
 
 - API 이미지에 `websockets` 패키지 포함 확인
 - API 재빌드: `docker compose up -d --build api`
 
-3. 재시작 직후 Redis 연결 오류
+4. 재시작 직후 Redis 연결 오류
 
 - Redis 재시작 중 짧은 시동 경쟁 발생 가능
 - 몇 초 후 재시도; 서비스는 자동 재연결
 
-4. 온라인 노드 없음
+5. 온라인 노드 없음
 
 - 시뮬레이터가 `127.0.0.1:5005`로 패킷 송신 확인
 - `docker compose ps` 및 `docker logs rp5-sensing` 확인
+
+6. Windows에서 API 호출 시 `localhost`가 간헐적으로 실패
+
+- `http://localhost:8000` 대신 `http://127.0.0.1:8000` 사용
+- 필요 시 `curl --noproxy "*" http://127.0.0.1:8000/status`로 점검
 
 ## 중지 / 초기화
 
@@ -222,7 +269,7 @@ http://192.168.0.25/monitor.html?api=http://192.168.0.25:8000
 docker compose down
 ```
 
-중지 및 볼륨 제거 (완전 초기화):
+메모리 데이터까지 완전히 초기화하려면:
 
 ```powershell
 docker compose down -v
@@ -237,7 +284,9 @@ docker compose down -v
 3. `monitor.html` 열림 및 WebSocket 연결
 4. `.gitignore`에 보안 정보 및 런타임 아티팩트 포함
 5. Firebase 키 파일 미커밋 (`api/auth/firebase_key.json`)
-6. 대용량 모델 파일 (`*.onnx`) 제외 또는 Git LFS로 관리
+6. 대용량 모델 파일 (`volumes/models/**`, `*.onnx`, `*.onnx_data`) 제외 또는 Git LFS로 관리
+7. README에 메모리 전용 1시간 보존 정책이 반영되어 있는지 확인
+8. 버전 표기 확인 (`ver.0.0.1`)
 
 첫 푸시 제안 명령어:
 

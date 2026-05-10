@@ -1,9 +1,15 @@
 .env
 volumes/data/**
 volumes/logs/**
+volumes/models/**
+!volumes/models/.gitkeep
+!volumes/logs/.gitkeep
 api/auth/firebase_key.json
 __pycache__/
 *.onnx
+*.onnx_data
 *.pyc
 *.pyo
 .venv/
+*_log.txt
+*.log
