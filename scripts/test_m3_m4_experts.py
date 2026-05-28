@@ -44,7 +44,7 @@ def main() -> None:
 
     m1_path = model_dir / env_file.get("FALL_DETECTION_MODEL", "m1_wifi_pose_onnx")
     m2_path = model_dir / env_file.get("VITAL_SENSING_MODEL", "m2_frenel_vital_onnx")
-    m3_path = model_dir / env_file.get("M3_ENV_SOUND_MODEL", env_file.get("ACTIVITY_MODEL", "ast_onnx"))
+    m3_path = model_dir / env_file.get("M3_ENV_SOUND_MODEL", env_file.get("ACTIVITY_MODEL", "ast_hf"))
     m4_path = model_dir / env_file.get("M4_KO_STT_MODEL", env_file.get("OCCUPANCY_MODEL", "whisper_onnx"))
 
     m1 = WifiPoseModel(str(m1_path))

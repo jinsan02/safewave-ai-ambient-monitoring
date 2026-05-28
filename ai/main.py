@@ -130,7 +130,7 @@ class AIEngine:
         env_sound_model = m3_ast_base.EnvSoundAnalysisModel(
             os.path.join(
                 model_dir,
-                os.getenv("M3_ENV_SOUND_MODEL", os.getenv("ACTIVITY_MODEL", "ast_onnx")),
+                os.getenv("M3_ENV_SOUND_MODEL", os.getenv("ACTIVITY_MODEL", "ast_hf")),
             )
         )
         _log(logging.INFO, "engine_init_step", step="m4_speech_ko")
