@@ -9,6 +9,8 @@ import os
 import numpy as np
 import onnxruntime as ort
 
+from utils import get_ort_providers
+
 
 class WifiPoseModel:
     def __init__(self, model_path):
@@ -19,7 +21,7 @@ class WifiPoseModel:
             self.effective_model_path = os.path.join(self.model_path, "m1_wifi_pose.onnx")
 
         if os.path.exists(self.effective_model_path):
-            self.session = ort.InferenceSession(self.effective_model_path, providers=["CPUExecutionProvider"])
+            self.session = ort.InferenceSession(self.effective_model_path, providers=get_ort_providers())
 
     def _preprocess(self, sensor_data):
         data = np.asarray(sensor_data, dtype=np.float32)

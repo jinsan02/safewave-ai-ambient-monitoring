@@ -28,6 +28,21 @@
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
     #status-dot.off { background: #ff5252; animation: none; }
     .conn-bar { display: flex; align-items: center; margin-bottom: 16px; font-size: 13px; color: #888; }
+    .hidden { display: none !important; }
+    .mic-panel { background: #1e2130; border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+    .mic-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .mic-input { background:#252838; border:1px solid #30354a; color:#e0e0e0; border-radius:8px; padding:8px 10px; min-width:220px; }
+    .mic-btn { background:#2e3550; color:#fff; border:0; border-radius:8px; padding:8px 12px; cursor:pointer; }
+    .mic-btn:disabled { opacity:0.5; cursor:not-allowed; }
+    .mic-hint { font-size:12px; color:#9aa3b2; margin-top:8px; }
+    .chart-panel { background: #1e2130; border-radius: 12px; padding: 14px; margin-bottom: 14px; overflow: hidden; flex-shrink: 0; }
+    .chart-title { color:#9aa3b2; font-size:12px; margin-bottom:8px; }
+    .chart-wrap { position: relative; height: 220px; }
+    #minute-chart { display: block; }
+    #hour-chart { display: block; }
+    .reason-banner { background:#211f2f; border:1px solid #3a3457; border-radius:12px; padding:12px 14px; margin-bottom:12px; }
+    .reason-title { font-size:12px; color:#a79ad8; margin-bottom:6px; text-transform: uppercase; letter-spacing: 0.7px; }
+    .reason-text { font-size:13px; color:#ece8ff; line-height:1.4; }
     #experts { display: grid; grid-template-columns: repeat(2,1fr); gap: 10px; }
     .exp-box { background: #252838; border-radius: 8px; padding: 12px; font-size: 13px; }
     .exp-label { color: #888; font-size: 11px; margin-bottom: 4px; }
@@ -40,6 +55,26 @@
   <div class="conn-bar">
     <span id="status-dot" class="off"></span>
     <span id="conn-text">WebSocket 연결 중...</span>
+  </div>
+
+  <div class="mic-panel" id="mic-panel">
+    <div class="mic-row">
+      <button class="mic-btn" id="mic-start">마이크 시작</button>
+      <button class="mic-btn" id="mic-stop" disabled>중지 후 전송</button>
+      <input class="mic-input" id="mic-text" placeholder="(선택) 전사 힌트 예: 도와줘" />
+      <span id="mic-state">대기</span>
+    </div>
+    <div class="mic-hint">마이크 입력을 API로 보내 m3/m4를 즉시 테스트합니다. (자동으로 AI 트리거 전송)</div>
+  </div>
+
+  <div class="chart-panel" id="chart-panel">
+    <div class="chart-title">최근 10분 추이 (위험도/심박/호흡)</div>
+    <div class="chart-wrap"><canvas id="minute-chart"></canvas></div>
+  </div>
+
+  <div class="chart-panel" id="hour-chart-panel">
+    <div class="chart-title">최근 1시간 위험도 추이 (SLM 호출 마커 포함)</div>
+    <div class="chart-wrap"><canvas id="hour-chart"></canvas></div>
   </div>
 
   <div class="grid">
@@ -59,20 +94,25 @@
       <div class="card-sub" id="breath-val">호흡: — /min</div>
     </div>
     <div class="card" id="card-activity">
-      <div class="card-title">행동 분류 (M3)</div>
+      <div class="card-title">환경음 분석 (M3)</div>
       <div class="card-value" id="act-val">—</div>
       <div class="card-sub" id="act-conf">신뢰도: —</div>
     </div>
     <div class="card" id="card-occ">
-      <div class="card-title">재실 감지 (M4)</div>
-      <div class="card-value" id="occ-val">—</div>
-      <div class="card-sub" id="occ-score">score: —</div>
+      <div class="card-title">한국어 음성인식 (M4)</div>
+      <div class="card-value" id="occ-val" style="font-size:20px; line-height:1.35;">—</div>
+      <div class="card-sub" id="occ-score">STT score: —</div>
     </div>
   </div>
 
   <h3 style="color:#aaa; font-size:14px; margin-bottom:8px;">실시간 로그</h3>
+  <div class="reason-banner" id="reason-banner">
+    <div class="reason-title">SLM 판단 근거</div>
+    <div class="reason-text" id="reason-text">아직 판단 근거가 없습니다.</div>
+  </div>
   <div id="log"></div>
 
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
     function detectApiBase() {
       const params = new URLSearchParams(window.location.search);
@@ -101,9 +141,291 @@
       return apiBase.replace(/^http/, 'ws') + '/ws/monitor';
     }
 
+    function detectSpeechOnlyMode() {
+      const params = new URLSearchParams(window.location.search);
+      const v = (params.get('speechOnly') || '').toLowerCase();
+      return v === '1' || v === 'true' || v === 'yes';
+    }
+
     const API = detectApiBase();
     const WS  = detectWsUrl(API);
+    const SPEECH_ONLY = detectSpeechOnlyMode();
     let ws;
+    let mediaStream = null;
+    let audioContext = null;
+    let sourceNode = null;
+    let processorNode = null;
+    let muteNode = null;
+    let micChunks = [];
+    let micRecording = false;
+    let micSampleRate = 48000;
+    let minuteChart = null;
+    let hourChart = null;
+
+    const micStartBtn = document.getElementById('mic-start');
+    const micStopBtn = document.getElementById('mic-stop');
+    const micState = document.getElementById('mic-state');
+    const micText = document.getElementById('mic-text');
+    const chartCanvas = document.getElementById('minute-chart');
+    const hourChartCanvas = document.getElementById('hour-chart');
+
+    if (SPEECH_ONLY) {
+      document.getElementById('card-risk').classList.add('hidden');
+      document.getElementById('card-fall').classList.add('hidden');
+      document.getElementById('card-vital').classList.add('hidden');
+      document.getElementById('card-activity').classList.add('hidden');
+      document.querySelector('.subtitle').textContent = '음성인식(M4) 실시간 확인 모드';
+      document.querySelector('h3').textContent = '실시간 STT 로그';
+    }
+
+    function initMinuteChart() {
+      minuteChart = new Chart(chartCanvas.getContext('2d'), {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [
+            {
+              label: 'Risk',
+              data: [],
+              borderColor: '#ffb300',
+              backgroundColor: 'rgba(255,179,0,0.15)',
+              tension: 0.25,
+              yAxisID: 'yRisk',
+            },
+            {
+              label: 'HR',
+              data: [],
+              borderColor: '#4fc3f7',
+              backgroundColor: 'rgba(79,195,247,0.15)',
+              tension: 0.25,
+              yAxisID: 'yVital',
+            },
+            {
+              label: 'RR',
+              data: [],
+              borderColor: '#69f0ae',
+              backgroundColor: 'rgba(105,240,174,0.15)',
+              tension: 0.25,
+              yAxisID: 'yVital',
+            },
+            {
+              label: 'SLM',
+              data: [],
+              type: 'scatter',
+              showLine: false,
+              pointRadius: 4,
+              pointHoverRadius: 5,
+              borderColor: '#ff5252',
+              backgroundColor: '#ff5252',
+              yAxisID: 'yRisk',
+            },
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          plugins: {
+            legend: { labels: { color: '#cfd8dc' } }
+          },
+          scales: {
+            x: { ticks: { color: '#9aa3b2' }, grid: { color: '#2a2d3a' } },
+            yRisk: {
+              position: 'left',
+              min: 0,
+              max: 1,
+              ticks: { color: '#ffcc80' },
+              grid: { color: '#2a2d3a' }
+            },
+            yVital: {
+              position: 'right',
+              ticks: { color: '#90caf9' },
+              grid: { drawOnChartArea: false }
+            }
+          }
+        }
+      });
+    }
+
+    function initHourChart() {
+      hourChart = new Chart(hourChartCanvas.getContext('2d'), {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [
+            {
+              label: 'Risk (1h)',
+              data: [],
+              borderColor: '#ff8a65',
+              backgroundColor: 'rgba(255,138,101,0.15)',
+              tension: 0.2,
+              yAxisID: 'yRisk',
+            },
+            {
+              label: 'SLM Invoked',
+              data: [],
+              type: 'scatter',
+              showLine: false,
+              pointRadius: 4,
+              pointHoverRadius: 5,
+              borderColor: '#ffd54f',
+              backgroundColor: '#ffd54f',
+              yAxisID: 'yRisk',
+            },
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          plugins: { legend: { labels: { color: '#cfd8dc' } } },
+          scales: {
+            x: { ticks: { color: '#9aa3b2' }, grid: { color: '#2a2d3a' } },
+            yRisk: { min: 0, max: 1, ticks: { color: '#ffccbc' }, grid: { color: '#2a2d3a' } }
+          }
+        }
+      });
+    }
+
+    async function refreshMinuteChart() {
+      if (!minuteChart) return;
+      try {
+        const res = await fetch(API + '/charts/minute?minutes=10');
+        if (!res.ok) return;
+        const raw = await res.json();
+        const rows = [...raw].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+        const labels = rows.map((row) => new Date((row.ts || 0) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        minuteChart.data.labels = labels;
+        minuteChart.data.datasets[0].data = rows.map((row) => row.risk_score_avg ?? null);
+        minuteChart.data.datasets[1].data = rows.map((row) => row.heart_rate_avg ?? null);
+        minuteChart.data.datasets[2].data = rows.map((row) => row.breathing_rate_avg ?? null);
+        minuteChart.data.datasets[3].data = rows.map((row) => (row.slm_invoked_count > 0 ? row.risk_score_avg : null));
+        minuteChart.update();
+      } catch (_) {}
+    }
+
+    async function refreshHourChart() {
+      if (!hourChart) return;
+      try {
+        const res = await fetch(API + '/charts/minute?minutes=60');
+        if (!res.ok) return;
+        const raw = await res.json();
+        const rows = [...raw].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+        const labels = rows.map((row) => new Date((row.ts || 0) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        hourChart.data.labels = labels;
+        hourChart.data.datasets[0].data = rows.map((row) => row.risk_score_avg ?? null);
+        hourChart.data.datasets[1].data = rows.map((row) => (row.slm_invoked_count > 0 ? row.risk_score_avg : null));
+        hourChart.update();
+      } catch (_) {}
+    }
+
+    function mergeChunks(chunks) {
+      const total = chunks.reduce((acc, c) => acc + c.length, 0);
+      const merged = new Float32Array(total);
+      let offset = 0;
+      chunks.forEach((chunk) => {
+        merged.set(chunk, offset);
+        offset += chunk.length;
+      });
+      return merged;
+    }
+
+    function downsampleTo16k(input, srcRate) {
+      const target = 16000;
+      if (!input || input.length === 0) return new Float32Array(0);
+      if (srcRate === target) return input;
+      const ratio = srcRate / target;
+      const outLen = Math.max(1, Math.floor(input.length / ratio));
+      const out = new Float32Array(outLen);
+      for (let i = 0; i < outLen; i++) {
+        const idx = Math.min(input.length - 1, Math.floor(i * ratio));
+        out[i] = input[idx];
+      }
+      return out;
+    }
+
+    async function startMicCapture() {
+      if (micRecording) return;
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        micSampleRate = audioContext.sampleRate || 48000;
+        sourceNode = audioContext.createMediaStreamSource(mediaStream);
+        processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+        muteNode = audioContext.createGain();
+        muteNode.gain.value = 0;
+
+        micChunks = [];
+        processorNode.onaudioprocess = (event) => {
+          if (!micRecording) return;
+          const input = event.inputBuffer.getChannelData(0);
+          micChunks.push(new Float32Array(input));
+        };
+
+        sourceNode.connect(processorNode);
+        processorNode.connect(muteNode);
+        muteNode.connect(audioContext.destination);
+
+        micRecording = true;
+        micStartBtn.disabled = true;
+        micStopBtn.disabled = false;
+        micState.textContent = '녹음 중...';
+      } catch (err) {
+        micState.textContent = '마이크 권한/장치 오류';
+      }
+    }
+
+    async function stopMicCaptureAndSend() {
+      if (!micRecording) return;
+      micRecording = false;
+      micStartBtn.disabled = false;
+      micStopBtn.disabled = true;
+
+      try {
+        if (processorNode) processorNode.disconnect();
+        if (sourceNode) sourceNode.disconnect();
+        if (muteNode) muteNode.disconnect();
+      } catch (_) {}
+
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((track) => track.stop());
+      }
+      if (audioContext) {
+        try { await audioContext.close(); } catch (_) {}
+      }
+
+      const merged = mergeChunks(micChunks);
+      const wav16k = downsampleTo16k(merged, micSampleRate);
+      const clipped = wav16k.length > 16000 * 6 ? wav16k.slice(0, 16000 * 6) : wav16k;
+      const waveform = Array.from(clipped);
+      const textHint = (micText.value || '').trim();
+
+      micState.textContent = '전송 중...';
+      try {
+        const res = await fetch(API + '/audio/events', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            node_id: 1,
+            text_ko: textHint || null,
+            waveform,
+            sample_rate: 16000,
+            trigger_ai: true,
+          }),
+        });
+        if (!res.ok) {
+          micState.textContent = '전송 실패';
+          return;
+        }
+        const data = await res.json();
+        micState.textContent = `전송 완료 (${data.waveform_samples || 0} samples)`;
+      } catch (_) {
+        micState.textContent = '전송 실패';
+      }
+    }
+
+    micStartBtn.addEventListener('click', startMicCapture);
+    micStopBtn.addEventListener('click', stopMicCaptureAndSend);
 
     function parseResult(raw) {
       // raw가 Python dict 문자열인 경우 JSON으로 변환
@@ -123,6 +445,8 @@
       const level = data.risk_level || 'normal';
       const score = (data.risk_score || 0).toFixed(2);
       const ex    = data.experts || {};
+      const slmInvoked = Boolean(data.slm_invoked);
+      const reasonText = (data.qwen_reason || '').trim();
 
       // 위험도 카드
       document.getElementById('risk-score').textContent = score;
@@ -144,18 +468,28 @@
         document.getElementById('breath-val').textContent = '호흡: ' + (ex.vital.breathing_rate||0).toFixed(0) + ' /min';
       }
 
-      // 행동
-      if (ex.activity) {
-        const actMap = {idle:'정지',walking:'보행',sitting:'앉음',lying:'누움',unknown:'알 수 없음'};
-        document.getElementById('act-val').textContent = actMap[ex.activity.activity] || ex.activity.activity;
-        document.getElementById('act-conf').textContent = '신뢰도: ' + ((ex.activity.activity_confidence||0)*100).toFixed(0) + '%';
+      // 환경음(M3)
+      if (ex.env_sound) {
+        const soundMap = {silence:'무음',speech:'사람 음성',music:'음악',impact:'충격음',noise:'잡음',alarm:'경보음',unknown:'알 수 없음'};
+        document.getElementById('act-val').textContent = soundMap[ex.env_sound.env_sound_label] || ex.env_sound.env_sound_label;
+        document.getElementById('act-conf').textContent = '신뢰도: ' + ((ex.env_sound.env_sound_confidence||0)*100).toFixed(0) + '%';
       }
 
-      // 재실
-      if (ex.occupancy) {
-        document.getElementById('occ-val').textContent = ex.occupancy.occupied ? '🟢 있음' : '⚪ 없음';
-        document.getElementById('occ-score').textContent = 'score: ' + (ex.occupancy.occupancy_score||0).toFixed(2);
-        document.getElementById('card-occ').className = 'card ' + (ex.occupancy.occupied ? 'normal' : '');
+      // 한국어 STT(M4)
+      if (ex.speech_ko) {
+        const text = ex.speech_ko.transcript_ko || '(인식된 텍스트 없음)';
+        document.getElementById('occ-val').textContent = text;
+        document.getElementById('occ-score').textContent = 'STT score: ' + (ex.speech_ko.stt_confidence||0).toFixed(2);
+        document.getElementById('card-occ').className = 'card ' + (ex.speech_ko.speech_detected ? 'normal' : '');
+      }
+
+      const reasonEl = document.getElementById('reason-text');
+      if (reasonText) {
+        const outlier = data.is_outlier ? 'outlier' : 'stable';
+        const corr = data.correlated_with_history ? 'history-correlated' : 'history-weak';
+        reasonEl.textContent = `${slmInvoked ? 'SLM 호출' : 'SLM 스킵'} · ${outlier} · ${corr} · ${reasonText}`;
+      } else {
+        reasonEl.textContent = slmInvoked ? 'SLM 호출됨 (상세 reason 없음)' : 'SLM 스킵됨';
       }
 
       // 로그 추가
@@ -163,7 +497,11 @@
       const t = new Date().toLocaleTimeString();
       const line = document.createElement('div');
       line.className = 'log-line ' + level;
-      line.textContent = `[${t}] ${level.toUpperCase()}  risk=${score}  fall=${ex.fall?.fall_detected}  HR=${(ex.vital?.heart_rate||0).toFixed(0)}bpm  act=${ex.activity?.activity}`;
+      if (SPEECH_ONLY) {
+        line.textContent = `[${t}] stt_score=${(ex.speech_ko?.stt_confidence||0).toFixed(2)}  text=${(ex.speech_ko?.transcript_ko||'(없음)')}`;
+      } else {
+        line.textContent = `[${t}] ${level.toUpperCase()}  risk=${score}  slm=${slmInvoked}  fall=${ex.fall?.fall_detected}  HR=${(ex.vital?.heart_rate||0).toFixed(0)}bpm  sound=${ex.env_sound?.env_sound_label}  stt=${(ex.speech_ko?.transcript_ko||'').slice(0,12)}`;
+      }
       log.prepend(line);
       // 최대 100줄
       while (log.children.length > 100) log.removeChild(log.lastChild);
@@ -194,6 +532,13 @@
       .then(r => r.json())
       .then(d => { const p = parseResult(d.raw || d); if(p) updateUI(p); })
       .catch(() => {});
+
+    initMinuteChart();
+    initHourChart();
+    refreshMinuteChart();
+    refreshHourChart();
+    setInterval(refreshMinuteChart, 30000);
+    setInterval(refreshHourChart, 30000);
 
     connect();
   </script>

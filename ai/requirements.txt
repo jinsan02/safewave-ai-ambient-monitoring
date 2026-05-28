@@ -1,7 +1,9 @@
-onnxruntime==1.20.1
+onnxruntime-gpu==1.18.0
 transformers==4.38.2
 tokenizers==0.15.2
 numpy==1.26.4
 redis==5.0.3
 huggingface-hub==0.21.4
-optimum[onnxruntime]==1.17.0
+regex>=2022.1.18
+paho-mqtt==2.1.0
+edge-tts==6.1.12

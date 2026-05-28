@@ -44,36 +44,40 @@ def parse_packet(raw_bytes: bytes):
     페이로드: n_samples × float32
     """
     if len(raw_bytes) < 8:
-        return None, None, None
+        return None, None, None, None
 
     node_id   = raw_bytes[0]
+    seq       = raw_bytes[1]
     n_samples = struct.unpack_from("<H", raw_bytes, 2)[0]
     ts_ms     = struct.unpack_from("<I", raw_bytes, 4)[0]
     payload   = raw_bytes[8:]
 
     expected = n_samples * 4
     if len(payload) < expected:
-        return None, None, None
+        return None, None, None, None
 
     samples = np.frombuffer(payload[:expected], dtype=np.float32).copy()
-    return node_id, ts_ms, samples
+    return node_id, ts_ms, samples, seq
 
 
 # ── 수신 + 적재 루프 ─────────────────────────────────────────
 def receive_loop(sock: socket.socket, r: redis.Redis):
     stats = {"rx": 0, "err": 0}
     last_log = time.time()
+    node_seq_state: dict[int, int] = {}
+    node_loss_state: dict[int, dict] = {}
 
     while True:
         try:
             data, addr = sock.recvfrom(4096)
-            node_id, ts_ms, samples = parse_packet(data)
+            node_id, ts_ms, samples, seq = parse_packet(data)
 
             if samples is None:
                 # 헤더 없는 레거시 패킷: 전체를 float32 배열로 처리
                 samples = np.frombuffer(data, dtype=np.float32).copy()
                 node_id = 0
                 ts_ms   = int(time.time() * 1000) & 0xFFFFFFFF
+                seq = None
 
             processed = preprocess_csi(samples, fs=FS)
 
@@ -92,6 +96,30 @@ def receive_loop(sock: socket.socket, r: redis.Redis):
             # 노드 생존 신고 — /nodes/health 에서 온라인 판정에 사용
             if node_id > 0:
                 r.set(f"node:{node_id}:last_seen", time.time(), ex=30)
+
+                state = node_loss_state.setdefault(node_id, {"rx": 0, "lost": 0})
+                state["rx"] += 1
+                if seq is not None:
+                    prev = node_seq_state.get(node_id)
+                    if prev is not None and seq != prev:
+                        step = (int(seq) - int(prev)) % 256
+                        if step > 1:
+                            state["lost"] += (step - 1)
+                    node_seq_state[node_id] = int(seq)
+
+                denom = state["rx"] + state["lost"]
+                loss_rate = (state["lost"] / denom) if denom > 0 else 0.0
+                r.hset(
+                    f"node:{node_id}:health",
+                    mapping={
+                        "last_seen": time.time(),
+                        "last_seq": int(seq) if seq is not None else -1,
+                        "rx": state["rx"],
+                        "lost": state["lost"],
+                        "loss_rate": round(loss_rate, 6),
+                    },
+                )
+                r.expire(f"node:{node_id}:health", 3600)
 
         except redis.exceptions.ConnectionError as exc:
             print(f"[sensing] Redis error: {exc}, reconnecting…", flush=True)

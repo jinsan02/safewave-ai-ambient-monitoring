@@ -1,300 +1,333 @@
-# SafeWave-AI: 독거인 안전 모니터링 시스템
+# SafeWave-AI
 
-현재 릴리즈: ver.0.0.1
+독거인 안전 모니터링 시스템 — Raspberry Pi 5 + Docker Compose 기반
 
-라즈베리 파이 5 기반 실시간 CSI 모니터링 파이프라인:
+**현재 릴리즈: ver.0.0.2**
 
-- `sensing`: UDP CSI 수신 + 전처리, Redis 스트림 `csi:raw`에 저장
-- `ai`: 전문가 모델 추론 (M1-M4) + 위험도 융합, 통합 스냅샷을 Redis 스트림 `ai:result`에 저장
-- `api`: FastAPI REST + WebSocket 앱 통합
-- `db`: Redis 스트림 허브
+---
 
-이 스택은 Docker Compose로 컨테이너화되어 Windows/macOS/Linux에서 동작합니다.
+## 시스템 개요
 
-핵심 원칙:
+WiFi CSI와 마이크 음향을 동시에 수집해 AI로 낙상·생체신호·환경음·한국어 음성을 실시간 분석하고, MQTT와 FCM 푸시 알림으로 결과를 전달합니다.
 
-- 운영 데이터는 SSD에 기록하지 않고 Redis 메모리에만 유지
-- 실시간 결과, 응급 요약, 설정, 토큰은 최대 1시간 뒤 자동 소멸
-- 앱과 대시보드는 최근 1시간 이내 데이터만 조회 가능
-
-## ver.0.0.1 변경 요약
-
-- M1~M5 실제 모델 라인업 반영
-    - M1: DT-Pose (WiFi 포즈)
-    - M2: ViFi 계열 생체신호
-    - M3: AST-Base
-    - M4: Whisper-Small
-    - M5: Qwen2-0.5B-Instruct 기반 통합 로직
-- 전문가 모듈 파일명 정리 (`m1_wifi_pose.py`, `m2_frenel_vital.py`, `m3_ast_base.py`, `m4_whisper_small.py`)
-- API 무데이터 상태 응답 안정화 (`/status` no-data 처리)
-- ONNX 런타임 호환성 반영 (`onnxruntime==1.20.1`)
-
-## 프로젝트 구조
-
-```text
-<repo-name>/
-    docker-compose.yml
-    .env
-    README.md
-    sensing/
-        main.py
-        simulator.py
-        filters/
-    ai/
-        main.py
-        experts/
-        logic/
-    api/
-        main.py
-        notifier.py
-    db/
-        redis.conf
-    volumes/
-        models/
+```
+ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶ ai
+마이크 (오디오) ─────────────▶ audio-sensing ──▶ Redis audio:events ──▶ ai
+                                                              │
+                                        ai:result ◀──────────┤
+                                        ai:emergency ◀────────┤
+                                              │               │
+                                        api (FastAPI) ◀───────┘
+                                        MQTT (Mosquitto) ◀────┘
+                                        Home Assistant ◀──MQTT──┘
 ```
 
-주의: `volumes/models/`의 실제 모델 파일(예: `*.onnx_data`)은 대용량이므로 기본 Git 추적에서 제외합니다.
+---
 
-## 저장소 이름 추천
+## 서비스 구성
 
-GitHub 저장소 이름 추천:
+| 컨테이너 | 이미지 / 빌드 | 포트 | 역할 |
+|---|---|---|---|
+| `rp5-db` | `./db` (Redis) | 6379 | 스트림 허브 |
+| `rp5-sensing` | `./sensing` | 5005/UDP | CSI UDP 수신 + 전처리 |
+| `rp5-audio-sensing` | `./sensing` (audio_main.py) | — | 마이크 VAD 수집 (프로파일: `audio`) |
+| `rp5-mqtt` | eclipse-mosquitto:2 | 1883 | MQTT 브로커 |
+| `rp5-ai` | `./ai` (cpu-runtime / gpu-runtime) | — | M1~M5 추론 |
+| `rp5-api` | `./api` | 8000 | FastAPI REST + WebSocket |
+| `rp5-ha` | home-assistant:stable | 8123 | Home Assistant 대시보드 |
 
-- `safewave-ai-ambient-monitoring`
+### AI 서비스 빌드 타깃
 
-로컬에서는 `rp5` 폴더명을 유지하되, GitHub에서는 포트폴리오에 적합한 이름을 사용합니다.
+`ai/Dockerfile`은 멀티 스테이지로 구성됩니다:
+
+| 타깃 | 베이스 이미지 | 사용 환경 |
+|---|---|---|
+| `cpu-runtime` (기본) | python:3.12-slim-bookworm | Raspberry Pi 5, CPU 전용 |
+| `gpu-runtime` | nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 | 개발 머신 (RTX GPU) |
+
+---
+
+## 모델 라인업
+
+| ID | 파일 | 입력 | 출력 |
+|---|---|---|---|
+| M1 | `experts/m1_wifi_pose.py` | CSI (1×1×192×100) | 낙상 위험 점수 (0–1) |
+| M2 | `experts/m2_frenel_vital.py` | CSI | 생체신호 점수 (0–1) |
+| M3 | `experts/m3_ast_base.py` | 오디오 스펙트로그램 (최근 3s) | 환경음 분류 |
+| M4 | `experts/m4_whisper_small.py` | 오디오 PCM (최근 5s) | 한국어 STT |
+| M5 | `logic/qwen_05b.py` | 컨텍스트 JSON | 통합 위험도 판단 |
+
+---
+
+## Redis 데이터 구조
+
+| 키 | 타입 | TTL / 크기 | 설명 |
+|---|---|---|---|
+| `csi:raw` | Stream | MAXLEN 36,000 | CSI 원시 스트림 (10 Hz) |
+| `audio:events` | Stream | MAXLEN 3,600 | VAD 트리거 오디오 이벤트 |
+| `ai:result` | Stream | MAXLEN 36,000 | 추론 통합 스냅샷 |
+| `ai:emergency` | Stream | MAXLEN 3,600 | warning/critical 이벤트 |
+| `ai:m1:latest` ~ `ai:m4:latest` | Hash | TTL 3600s | 전문가별 최신 결과 |
+| `agg:minute:*` | Hash | TTL 3600s | 분 단위 집계 차트 |
+| `node:N:last_seen` | String | TTL 30s | 노드 마지막 수신 시각 |
+| `node:N:health` | Hash | TTL 3600s | rx/lost/loss_rate 패킷 통계 |
+| `sys:settings` | Hash | TTL 3600s | 앱 설정값 |
+| `fcm:token:*` | String | TTL 3600s | FCM 등록 기기 토큰 |
+| `mqtt:feedback:last` | String | TTL 3600s | MQTT 피드백 마지막 값 |
+
+모든 데이터는 메모리에만 유지되며, 컨테이너 재시작 시 이력이 복구되지 않습니다.
+
+---
+
+## MQTT 토픽 구조
+
+베이스 토픽: `safewave` (`.env`의 `MQTT_BASE_TOPIC` 변경 가능)
+
+| 토픽 | 방향 | 내용 |
+|---|---|---|
+| `safewave/ai/result` | ai → 구독자 | 추론 결과 요약 |
+| `safewave/ai/emergency` | ai → 구독자 | warning/critical 이벤트 |
+| `safewave/feedback` | 구독자 → ai | 피드백 (Redis에 저장) |
+
+Home Assistant MQTT 통합 설정은 `docs/api-db-spec.html` 참조.
+
+---
+
+## API 엔드포인트
+
+**모니터링:**
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| GET | `/status` | 최신 추론 스냅샷 |
+| GET | `/logs?n=60` | 최근 N개 로그 |
+| GET | `/history?n=100&level=warning` | 이벤트 이력 |
+| GET | `/charts/minute?minutes=10` | 분 단위 집계 차트 |
+| GET | `/nodes/health` | 노드별 패킷 통계 |
+| GET | `/system/redis-memory` | Redis 메모리 사용량 |
+| GET | `/system/health` | 시스템 전체 상태 |
+| WS  | `/ws/monitor` | 실시간 스트리밍 |
+
+**제어 및 관리:**
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| GET/POST | `/settings` | 위험도 임계값, 활성 노드 등 |
+| POST | `/auth/register-token` | FCM 토큰 등록 |
+| GET | `/auth/tokens` | 등록 토큰 목록 |
+| POST | `/notify/test` | FCM 테스트 전송 |
+| POST | `/notify/send` | FCM 수동 전송 |
+| POST | `/notify/check` | FCM 결과 확인 |
+| POST | `/audio/events` | 오디오 이벤트 수동 주입 (마이크 테스트) |
+
+전체 스키마: `http://localhost:8000/docs` 또는 `docs/api-db-spec.html` 참조.
+
+---
+
+## 대시보드 (monitor.html)
+
+- **실시간 위험도 카드**: 낙상(M1), 생체신호(M2), 환경음(M3), 한국어 음성(M4), M5 통합 판단
+- **SLM 판단 이유 배너**: Qwen 모델의 위험 판단 근거 텍스트 표시
+- **10분 추이 차트**: 위험도 / 심박 / 호흡 시계열
+- **1시간 위험도 차트**: SLM 호출 마커 포함
+- **마이크 패널**: 브라우저 마이크 녹음 → `POST /audio/events` 즉시 전송 (M3/M4 즉시 테스트)
+
+```powershell
+# 로컬 정적 서버로 열기 (마이크 권한 안정)
+python -m http.server 8081
+# http://127.0.0.1:8081/monitor.html
+```
+
+외부 기기 접근 시 URL 파라미터:
+
+```
+http://192.168.0.25/monitor.html?api=http://192.168.0.25:8000
+```
+
+---
 
 ## 필수 요구사항
 
-1. Docker Desktop 4.x+ (Compose v2 포함)
-2. Git
-3. 선택사항: 로컬 Python (컨테이너 외부에서 `sensing/simulator.py` 실행 시)
+- Docker Desktop 4.x+ (Compose v2 포함)
+- Git
+- (선택) NVIDIA GPU + CUDA 드라이버 — GPU 가속 모드 사용 시
 
-## 시작하기 (빠른 시작)
+---
 
-1. 클론
+## 시작하기
 
-```powershell
+### 1. 클론
+
+```bash
 git clone <your-repo-url>
-cd <repo-name>
+cd rp5
 ```
 
-2. `.env` 확인
+### 2. `.env` 설정
 
-필수 설정이 이미 준비되어 있습니다. 다음 항목을 확인하세요:
+```env
+REDIS_HOST=db
+REDIS_PORT=6379
+MODEL_PATH=/app/models
+FIREBASE_KEY_PATH=/app/auth/firebase_key.json
+MQTT_BASE_TOPIC=safewave
+```
 
-- `REDIS_HOST=db`
-- `REDIS_PORT=6379`
-- `MODEL_PATH=/app/models`
-- `FIREBASE_KEY_PATH=/app/auth/firebase_key.json`
-
-3. 볼륨 폴더 생성
+### 3. 볼륨 및 인증 파일 준비
 
 ```powershell
 mkdir volumes\models -ErrorAction SilentlyContinue
 mkdir api\auth -ErrorAction SilentlyContinue
+# Firebase 서비스 계정 키 (없으면 알림 기능만 비활성)
+# api/auth/firebase_key.json
 ```
 
-Firebase 서비스 계정 키 파일 배치:
+### 4. 실행
 
-- `api/auth/firebase_key.json`
+**CPU 모드 (기본 / Raspberry Pi 5):**
 
-이 경로는 API 컨테이너에 `/app/auth/firebase_key.json`으로 마운트됩니다.
-
-4. 빌드 및 실행
-
-```powershell
+```bash
 docker compose up -d --build
 ```
 
-5. 상태 확인
+**GPU 모드 (NVIDIA 개발 머신):**
 
-```powershell
+```bash
+AI_DOCKER_TARGET=gpu-runtime docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+```
+
+**오디오 센싱 포함:**
+
+```bash
+docker compose --profile audio up -d
+```
+
+### 5. 상태 확인
+
+```bash
 docker compose ps
-Invoke-RestMethod http://127.0.0.1:8000/
+curl http://127.0.0.1:8000/
+# {"service":"rp5-api","status":"ok"}
 ```
 
-예상 API 응답:
+---
 
-```json
-{"service":"rp5-api","status":"ok"}
+## 유용한 명령어
+
+```bash
+# 로그 확인
+docker compose logs -f ai
+docker compose logs -f api
+
+# Redis 스트림 길이
+docker compose exec db redis-cli XLEN ai:result
+docker compose exec db redis-cli XLEN csi:raw
+
+# Redis 메모리
+docker compose exec db redis-cli INFO memory
+
+# API 빠른 확인
+curl http://localhost:8000/status
+curl http://localhost:8000/nodes/health
 ```
 
-## Docker 네트워크 참고사항
+---
 
-- `sensing`은 브릿지 네트워크에서 실행되며 UDP `5005:5005/udp` 포트 발행
-- `sensing`, `ai`, `api`는 `REDIS_HOST=db` 사용
-- Redis는 AOF/RDB 없이 메모리 전용으로 실행
-- `ai:result`는 약 1시간 분량, `ai:emergency`는 경고/응급 요약 약 1시간 분량 유지
-- `sys:settings`, FCM 토큰, 분 단위 차트 집계도 Redis TTL로만 유지
-- API는 Firebase 인증 디렉토리 마운트: `./api/auth:/app/auth:ro`
+## 프로젝트 구조
 
-## 메모리 보존 정책
-
-- `csi:raw`: 센서 입력 스트림, 약 1시간 분량 유지
-- `ai:result`: 통합 스냅샷 스트림, 10Hz 기준 약 1시간 유지
-- `ai:emergency`: warning/critical 요약 이력, 약 1시간 유지
-- `agg:minute:*`: 분 단위 차트 집계, TTL 기반 단기 보존
-- `sys:settings`: 앱 설정값, TTL 1시간
-- `fcm:token:*`: 등록 기기 토큰, TTL 1시간
-
-이전 기록은 의도적으로 남기지 않으며, 컨테이너 재시작 시 메모리 데이터는 사라집니다.
-
-## 시뮬레이터 실행 (엔드투엔드 테스트)
-
-스택이 이미 실행 중일 때, 새 터미널을 열고:
-
-```powershell
-cd sensing
-python simulator.py --host 127.0.0.1 --port 5005 --nodes 4 --rate 10 --scenario auto
+```
+rp5/
+├── docker-compose.yml          # 기본 구성 (CPU)
+├── docker-compose.gpu.yml      # GPU 오버라이드
+├── mosquitto.conf              # MQTT 브로커 설정
+├── sensing/
+│   ├── main.py                 # CSI UDP 수신 + 패킷 손실 추적
+│   ├── audio_main.py           # 마이크 VAD 수집 (audio 프로파일)
+│   └── Dockerfile
+├── ai/
+│   ├── main.py                 # 추론 메인 루프 (MQTT 발행 포함)
+│   ├── mqtt_helper.py          # MQTT 연결/발행 헬퍼
+│   ├── experts/                # M1-M4 전문가 모듈
+│   ├── logic/                  # M5 Qwen 로직
+│   ├── utils/                  # TurboQuant 등
+│   └── Dockerfile              # cpu-runtime / gpu-runtime 멀티 스테이지
+├── api/
+│   ├── main.py                 # FastAPI 앱
+│   ├── notifier.py             # FCM 푸시
+│   └── Dockerfile
+├── db/
+│   └── redis.conf
+├── docs/
+│   ├── api-db-spec.html        # REST/WebSocket/MQTT/Redis 전체 명세
+│   └── benchmark_template.md
+├── monitor.html                # 웹 대시보드
+└── volumes/
+    └── models/                 # ONNX 모델 파일 (Git 제외)
 ```
 
-데이터 흐름 확인:
+---
 
-```powershell
-Invoke-RestMethod http://localhost:8000/status | ConvertTo-Json -Depth 5
-Invoke-RestMethod http://localhost:8000/logs?n=10 | ConvertTo-Json -Depth 5
-Invoke-RestMethod http://localhost:8000/nodes/health | ConvertTo-Json
-```
+## 문제 해결
 
-Windows 환경에서 `localhost` 연결 리셋이 발생하면 `127.0.0.1`을 사용하세요.
+| 증상 | 원인 | 해결 |
+|---|---|---|
+| `/status` 204 반환 | AI 스트림 비어 있음 | sensing 서비스 및 로그 확인 |
+| 재시작 후 데이터 없음 | 정상 (메모리 전용) | 의도적 설계, 이력 복구 없음 |
+| WebSocket 연결 실패 | 패키지 누락 | `docker compose up --build api` |
+| GPU 첫 추론 ~6s 지연 | CUDA JIT 컴파일 | 정상 (이후 <2ms, 워밍업 자동 실행) |
+| `localhost` 간헐적 실패 | Windows IPv6 우선 | `127.0.0.1` 사용 |
+| MQTT 연결 안 됨 | mosquitto 미실행 | `docker compose ps` 확인 후 재시작 |
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:8000/status | ConvertTo-Json -Depth 5
-Invoke-RestMethod http://127.0.0.1:8000/logs?n=10 | ConvertTo-Json -Depth 5
-```
+---
 
-## 대시보드 (monitor.html)
+## 변경 이력
 
-대시보드 파일 열기:
+### ver.0.0.2
 
-```powershell
-Start-Process "C:\rp5\monitor.html"
-```
+**신규 서비스:**
+- `mqtt` — eclipse-mosquitto:2 MQTT 브로커 추가 (포트 1883)
+- `audio-sensing` — VAD 기반 마이크 오디오 수집 서비스 (프로파일: audio)
+- `homeassistant` — Home Assistant 연동 (포트 8123, MQTT 구독)
 
-`monitor.html`의 주소 동작:
+**AI 엔진:**
+- MQTT 발행 통합 (`safewave/ai/result`, `safewave/ai/emergency`)
+- `ThreadPoolExecutor` 매 루프 생성·소멸 → `self._executor` 재사용 (스레드 누수 제거)
+- CUDA JIT 첫 추론 지연 해소: `__init__` 시 전문가 모델 GPU 워밍업
+- 전문가별 최신 결과 Redis 저장 (`ai:m1:latest` ~ `ai:m4:latest`)
+- AI 도커 멀티 스테이지 빌드: `cpu-runtime` / `gpu-runtime` 분리
 
-- `file://`로 열 때: API는 `http://localhost:8000`으로 기본 설정
-- `http(s)://`로 제공될 때: 대시보드는 현재 호스트 자동 감지 및 `http(s)://<host>:8000` 사용
-- 외부 기기 접근 시: localhost 대신 서버 IP 사용 (예: `192.168.0.25`)
+**센싱:**
+- UDP 패킷 시퀀스 번호 파싱 추가
+- 노드별 패킷 수신/손실/loss_rate 통계 (`node:N:health` Hash)
+- 오디오 센싱 서비스 신규 (`sensing/audio_main.py`)
 
-선택사항 URL 오버라이드 매개변수:
+**API:**
+- `POST /audio/events` — 오디오 이벤트 수동 주입
+- `GET /system/redis-memory`, `GET /system/health` 신규
+- FCM alert_worker 비정상 종료 시 자동 재시작
 
-- `?api=http://<server-ip>:8000`
-- `?ws=ws://<server-ip>:8000/ws/monitor`
+**대시보드 (monitor.html):**
+- 마이크 녹음 패널 — 브라우저에서 바로 M3/M4 테스트
+- 10분 추이 차트 (Chart.js)
+- 1시간 위험도 차트 + SLM 호출 마커
+- M3 환경음, M4 STT 결과 카드
 
-예시:
+**버그 수정:**
+- `MINUTE_AGG_TTL_SECONDS` 기본값 3900 → 3600 (TTL 규칙 위반)
+- `audio:events` 필드 타입 `str` → `int` (sensing/AI 형식 통일)
+- Qwen `critical_count` 조건 순서 역전 (unreachable elif 제거)
+- Qwen 전체 `print()` → `logging.getLogger` 구조화 로그
 
-```text
-http://192.168.0.25/monitor.html?api=http://192.168.0.25:8000
-```
+**신규 파일:**
+- `docker-compose.gpu.yml` — GPU 리소스 예약 오버라이드
+- `mosquitto.conf` — MQTT 브로커 설정
+- `ai/mqtt_helper.py` — MQTT 연결/발행 헬퍼
+- `docs/api-db-spec.html` — 전체 API/DB 명세 (공유용 HTML)
+- `.github/workflows/docker-build.yml` — CI 빌드 검증
 
-## 앱 통합용 API 엔드포인트
+### ver.0.0.1
 
-모니터링:
-
-- `GET /status`
-- `GET /logs?n=60`
-- `GET /history?n=100&level=warning`
-- `GET /charts/minute?minutes=10`
-- `WS /ws/monitor`
-
-제어 및 관리:
-
-- `GET /settings`
-- `POST /settings`
-- `GET /nodes/health`
-- `POST /auth/register-token`
-- `GET /auth/tokens`
-- `POST /notify/test`
-- `POST /notify/send`
-- `POST /notify/check`
-
-`POST /settings` 요청 본문 예시:
-
-```json
-{
-    "risk_threshold": 0.8,
-    "active_nodes": [1, 2, 3, 4],
-    "ai_enabled": true
-}
-```
-
-## 선택사항 리소스
-
-1. ONNX 모델
-
-- 모델 파일을 `volumes/models`에 배치
-- 파일이 없으면 폴백 로직 사용 (계속 동작)
-
-2. Firebase 서비스 계정 키
-
-- 키 파일을 `FIREBASE_KEY_PATH`로 매핑된 경로에 배치
-- 키가 없으면 알림 엔드포인트는 실제 FCM 전송 시 오류 반환
-
-## 일반 문제 해결
-
-1. `/status`가 204 반환
-
-- AI 스트림이 비어 있음. 시뮬레이터 시작 후 `sensing` 로그 확인
-
-2. 재시작 후 예전 데이터가 안 보임
-
-- 정상 동작입니다. 이 시스템은 메모리 전용이며 재시작 후 이전 이력을 복구하지 않습니다.
-
-3. `ws://localhost:8000/ws/monitor` 연결 실패
-
-- API 이미지에 `websockets` 패키지 포함 확인
-- API 재빌드: `docker compose up -d --build api`
-
-4. 재시작 직후 Redis 연결 오류
-
-- Redis 재시작 중 짧은 시동 경쟁 발생 가능
-- 몇 초 후 재시도; 서비스는 자동 재연결
-
-5. 온라인 노드 없음
-
-- 시뮬레이터가 `127.0.0.1:5005`로 패킷 송신 확인
-- `docker compose ps` 및 `docker logs rp5-sensing` 확인
-
-6. Windows에서 API 호출 시 `localhost`가 간헐적으로 실패
-
-- `http://localhost:8000` 대신 `http://127.0.0.1:8000` 사용
-- 필요 시 `curl --noproxy "*" http://127.0.0.1:8000/status`로 점검
-
-## 중지 / 초기화
-
-중지만:
-
-```powershell
-docker compose down
-```
-
-메모리 데이터까지 완전히 초기화하려면:
-
-```powershell
-docker compose down -v
-```
-
-## GitHub 발행 체크리스트
-
-첫 푸시 전 확인사항:
-
-1. `docker compose up -d --build` 오류 없이 완료
-2. `http://localhost:8000/status`가 실시간 JSON 반환
-3. `monitor.html` 열림 및 WebSocket 연결
-4. `.gitignore`에 보안 정보 및 런타임 아티팩트 포함
-5. Firebase 키 파일 미커밋 (`api/auth/firebase_key.json`)
-6. 대용량 모델 파일 (`volumes/models/**`, `*.onnx`, `*.onnx_data`) 제외 또는 Git LFS로 관리
-7. README에 메모리 전용 1시간 보존 정책이 반영되어 있는지 확인
-8. 버전 표기 확인 (`ver.0.0.1`)
-
-첫 푸시 제안 명령어:
-
-```powershell
-git init
-git add .
-git commit -m "초기 배포: SafeWave-AI 모니터링 스택"
-git branch -M main
-git remote add origin <your-github-repo-url>
-git push -u origin main
-```
+- M1~M5 실제 모델 라인업 반영 (DT-Pose, ViFi, AST-Base, Whisper-Small, Qwen2-0.5B)
+- Docker Compose 기반 초기 스택 구성 (db / sensing / ai / api)
+- GPU/CPU 겸용 ONNX 런타임 구성
+- `/status` no-data 처리 안정화

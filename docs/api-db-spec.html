@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SafeWave-AI — API &amp; DB 명세서</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #222636;
+    --border: #2e3350;
+    --text: #e2e8f0;
+    --muted: #8892a4;
+    --accent: #6c8ef7;
+    --green: #4ade80;
+    --yellow: #fbbf24;
+    --red: #f87171;
+    --orange: #fb923c;
+    --cyan: #22d3ee;
+    --purple: #a78bfa;
+    --get: #4ade80;
+    --post: #fbbf24;
+    --ws: #a78bfa;
+    --pub: #22d3ee;
+    --sub: #fb923c;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; line-height: 1.6; }
+  a { color: var(--accent); text-decoration: none; }
+
+  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 20px 40px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 20px; font-weight: 700; }
+  header .badge { background: var(--accent); color: #fff; padding: 2px 10px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+  header .meta { margin-left: auto; color: var(--muted); font-size: 12px; text-align: right; }
+
+  nav { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 40px; display: flex; gap: 0; }
+  nav a { display: block; padding: 12px 18px; font-size: 13px; color: var(--muted); border-bottom: 2px solid transparent; }
+  nav a:hover, nav a.active { color: var(--text); border-color: var(--accent); }
+
+  main { max-width: 1100px; margin: 0 auto; padding: 40px; }
+
+  section { margin-bottom: 56px; }
+  h2 { font-size: 18px; font-weight: 700; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+  h2 .icon { font-size: 20px; }
+  h3 { font-size: 14px; font-weight: 600; margin: 24px 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+
+  .endpoint-group { display: flex; flex-direction: column; gap: 12px; }
+  .endpoint { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .endpoint-header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; cursor: pointer; }
+  .endpoint-header:hover { background: var(--surface2); }
+  .method { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 4px; min-width: 46px; text-align: center; letter-spacing: .04em; }
+  .method.GET  { background: #16422b; color: var(--get); }
+  .method.POST { background: #3f2a0a; color: var(--yellow); }
+  .method.WS   { background: #2d1f5e; color: var(--ws); }
+  .method.PUB  { background: #083344; color: var(--cyan); }
+  .method.SUB  { background: #3b1b09; color: var(--orange); }
+  .path { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 13px; color: var(--accent); }
+  .desc { margin-left: auto; color: var(--muted); font-size: 12px; }
+  .endpoint-body { padding: 16px; border-top: 1px solid var(--border); background: var(--surface2); display: none; }
+  .endpoint-body.open { display: block; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table th { text-align: left; color: var(--muted); font-weight: 600; padding: 6px 12px; border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; }
+  table td { padding: 7px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  table tr:last-child td { border-bottom: none; }
+  .type { font-family: monospace; color: var(--cyan); font-size: 12px; }
+  .key { font-family: monospace; color: var(--accent); font-size: 12px; }
+  .ttl { color: var(--yellow); font-size: 12px; }
+  .note { color: var(--muted); font-size: 12px; }
+
+  .code { background: #0b0d14; border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 12px; color: #c9d1d9; overflow-x: auto; white-space: pre; margin-top: 10px; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; margin-right: 4px; }
+  .tag.redis { background: #1e0a0a; color: var(--red); }
+  .tag.mqtt  { background: #083344; color: var(--cyan); }
+  .tag.ttl   { background: #1e2a0a; color: var(--green); }
+  .tag.stream { background: #1a1040; color: var(--purple); }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .card h4 { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+
+  .alert { background: #1f1208; border: 1px solid #4a2e05; border-radius: 6px; padding: 10px 14px; color: var(--orange); font-size: 12px; margin-top: 10px; }
+  .info  { background: #080f1f; border: 1px solid #1e3a6e; border-radius: 6px; padding: 10px 14px; color: var(--accent); font-size: 12px; margin-top: 10px; }
+
+  .stack-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .stack-row:last-child { border-bottom: none; }
+  .stack-label { min-width: 120px; color: var(--muted); font-size: 12px; }
+  .stack-val { font-size: 13px; }
+
+  footer { text-align: center; padding: 30px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border); margin-top: 40px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>🛡️</div>
+  <h1>SafeWave-AI</h1>
+  <span class="badge">v0.0.1</span>
+  <div class="meta">독거인 안전 모니터링 시스템<br>Raspberry Pi 5 + Docker Compose</div>
+</header>
+
+<nav>
+  <a href="#overview" class="active">개요</a>
+  <a href="#rest">REST API</a>
+  <a href="#websocket">WebSocket</a>
+  <a href="#mqtt">MQTT</a>
+  <a href="#redis">Redis DB</a>
+  <a href="#signals">신호 규격</a>
+</nav>
+
+<main>
+
+<!-- ── 개요 ── -->
+<section id="overview">
+  <h2><span class="icon">🏗️</span> 시스템 개요</h2>
+  <div class="grid2">
+    <div class="card">
+      <h4>서비스 포트</h4>
+      <div class="stack-row"><span class="stack-label">REST / WS API</span><span class="stack-val"><code>:8000</code> FastAPI (uvicorn)</span></div>
+      <div class="stack-row"><span class="stack-label">Redis</span><span class="stack-val"><code>:6379</code> — 메모리 전용, TTL 1h</span></div>
+      <div class="stack-row"><span class="stack-label">MQTT Broker</span><span class="stack-val"><code>:1883</code> Mosquitto 2</span></div>
+      <div class="stack-row"><span class="stack-label">Home Assistant</span><span class="stack-val"><code>:8123</code> (optional)</span></div>
+      <div class="stack-row"><span class="stack-label">CSI UDP 수신</span><span class="stack-val"><code>:5005/UDP</code> ESP32-S3</span></div>
+    </div>
+    <div class="card">
+      <h4>데이터 흐름</h4>
+      <div class="code">ESP32-S3 ──UDP:5005──▶ sensing
+sensing    ──────────▶ Redis  csi:raw
+                        Redis  audio:events
+ai         ──XREAD──▶ csi:raw / audio:events
+           ──XADD───▶ ai:result / ai:emergency
+           ──MQTT────▶ safewave/ai/result
+api        ──WS──────▶ 앱 클라이언트
+           ──FCM─────▶ Galaxy Flip 4</div>
+    </div>
+  </div>
+
+  <h3>AI 모델 라인업</h3>
+  <table>
+    <tr><th>ID</th><th>파일</th><th>입력</th><th>출력 키</th><th>추론 시간</th></tr>
+    <tr><td>M1</td><td class="key">m1_wifi_pose.py</td><td>CSI 512-sample float32</td><td><span class="key">fall_score</span>, <span class="key">fall_detected</span></td><td>~2 ms (GPU)</td></tr>
+    <tr><td>M2</td><td class="key">m2_frenel_vital.py</td><td>CSI 512-sample float32</td><td><span class="key">heart_rate</span>, <span class="key">breathing_rate</span></td><td>~1 ms (GPU)</td></tr>
+    <tr><td>M3</td><td class="key">m3_ast_base.py</td><td>오디오 waveform (3초 window)</td><td><span class="key">env_sound_label</span>, <span class="key">env_sound_confidence</span></td><td>~190 ms</td></tr>
+    <tr><td>M4</td><td class="key">m4_whisper_small.py</td><td>오디오 waveform (5초 window)</td><td><span class="key">transcript_ko</span>, <span class="key">speech_detected</span></td><td>~190 ms</td></tr>
+    <tr><td>M5</td><td class="key">logic/qwen_05b.py</td><td>Expert 결과 JSON (컨텍스트 10분)</td><td><span class="key">risk_level</span>, <span class="key">risk_score</span>, <span class="key">qwen_reason</span></td><td>조건부 호출</td></tr>
+  </table>
+  <div class="info">M3 배경음 입력 윈도우 <b>3초</b> | M4 한국어 STT 입력 윈도우 <b>5초</b> | CSI UDP 수신률 <b>10 Hz</b> (내부 필터링 FS=100 Hz)</div>
+</section>
+
+<!-- ── REST ── -->
+<section id="rest">
+  <h2><span class="icon">🔌</span> REST API  <span style="font-size:12px;font-weight:400;color:var(--muted);margin-left:8px;">Base: http://&lt;host&gt;:8000</span></h2>
+
+  <div class="endpoint-group">
+
+    <!-- GET / -->
+    <div class="endpoint">
+      <div class="endpoint-header" onclick="toggle(this)">
+        <span class="method GET">GET</span>
+        <span class="path">/</span>
+        <span class="desc">헬스 체크</span>
+      </div>
+      <div class="endpoint-body">
+        <div class="code">{ "service": "rp5-api", "status": "ok" }</div>
+      </div>
+    </div>
+
+    <!-- GET /status -->
+    <div class="endpoint">
+      <div class="endpoint-header" onclick="toggle(this)">
+        <span class="method GET">GET</span>
+        <span class="path">/status</span>
+        <span class="desc">최신 AI 통합 스냅샷</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="note">Redis <code>ai:result</code> 스트림의 마지막 항목을 반환.</p>
+        <div class="code">{
+  "ts_ms": 1779943598722,       // Unix ms
+  "node_id": 1,                  // 노드 번호 (1-6)
+  "risk_score": 0.97,            // 0.0 ~ 1.0
+  "risk_level": "normal|warning|critical",
+  "emergency": false,
+  "risk": { "score": 0.97, "level": "critical", "emergency": true },
+  "experts": {
+    "fall":      { "fall_score": 0.05, "fall_detected": false },
+    "vital":     { "heart_rate": 119.8, "breathing_rate": 24.4 },
+    "env_sound": { "env_sound_label": "alarm", "env_sound_confidence": 0.48,
+                   "env_sound_source": "ast+heuristic",
+                   "onnx_top_class": "class_515", "onnx_confidence": 0.17 },
+    "speech_ko": { "transcript_ko": "도와줘", "speech_detected": true,
+                   "stt_confidence": 0.87, "language": "ko",
+                   "keywords": [], "occupied": true, "occupancy_score": 0.9 }
+  },
+  "audio": { "sample_rate": 16000, "duration_ms": 2000, "peak_db": -8.3 },
+  "slm_invoked": true,           // M5(Qwen) 호출 여부
+  "qwen_reason": "...",          // M5 판단 근거 텍스트
+  "is_outlier": false,
+  "correlated_with_history": true,
+  "context_window": { "window_minutes": 10, "recent_warning_count": 2,
+                      "recent_critical_count": 1 },
+  "expert_latency_ms": { "fall": 1.5, "vital": 0.9, "env_sound": 191.0, "speech_ko": 188.0 },
+  "model_latency_ms": { "qwen": 340 }
+}</div>
+      </div>
+    </div>
+
+    <!-- GET /logs -->
+    <div class="endpoint">
+      <div class="endpoint-header" onclick="toggle(this)">
+        <span class="method GET">GET</span>
+        <span class="path">/logs?n=60</span>
+        <span class="desc">최근 N건 ai:result 이력</span>
+      </div>
+      <div class="endpoint-body">
+        <table>
+          <tr><th>파라미터</th><th>기본값</th><th>설명</th></tr>
+          <tr><td class="key">n</td><td>60</td><td>반환할 최대 건수</td></tr>
+        </table>
+        <p class="note" style="margin-top:8px;">반환값: UnifiedSnapshot 배열 (최신순)</p>
+      </div>
+    </div>
+
+    <!-- GET /history -->
+    <div class="endpoint">
+      <div class="endpoint-header" onclick="toggle(this)">
+        <span class="method GET">GET</span>
+        <span class="path">/history?n=100&amp;level=warning</span>
+        <span class="desc">응급/경고 요약 이력</span>
+      </div>
+      <div class="endpoint-body">
+        <table>
+          <tr><th>파라미터</th><th>기본값</th><th>설명</th></tr>
+          <tr><td class="key">n</td><td>100</td><td>최대 건수</td></tr>
+          <tr><td class="key">level</td><td>—</td><td><code>warning</code> 또는 <code>critical</code> 필터</td></tr>
+        </table>
+        <div class="code">// EmergencySummary 배열
+[{
+  "ts_ms": 1779943639903,
+  "node_id": 1,
+  "risk_score": 1.0,
+  "risk_level": "critical",
+  "emergency": true,
+  "summary": "node 1, critical, score 1.00, hr 119.2, rr 24.1, sound alarm"
+}]</div>
+      </div>
+    </div>
+
+    <!-- GET /nodes/health -->
+    <div class="endpoint">
+      <div class="endpoint-header" onclick="toggle(this)">
+        <span class="method GET">GET</span>
+        <span class="path">/nodes/health</span>
+        <span class="desc">노드 1~6 생존 상태</span>
+      </div>
+      <div class="endpoint-body">
+        <div class="alert">node:N:last_seen 키 TTL=30s. 하드웨어 없이 시뮬레이션 시 직접 갱신 필요.</div>
+        <div class="code">{
+  "node_1": { "status": "online", "age_s": 0.1, "loss_rate": 0.0, "rx": 1986, "lost": 0 },
+  "node_2": { "status": "offline", "age_s": null, "loss_rate": 0.0, "rx": 0, "lost": 0 }
+}</div>
+      </div>
+    </div>
+
+    <!-- GET /charts/minute -->
+    <div class="endpoint">
+      <div class="endpoint-header" onclick="toggle(this)">
+        <span class="method GET">GET</span>
+        <span class="path">/charts/minute?minutes=10</span>
+        <span class="desc">분 단위 평균 차트 데이터</span>
+      </div>
+      <div class="endpoint-body">
+        <table>
+          <tr><th>파라미터</th><th>기본값</th><th>설명</th></tr>
+          <tr><td class="key">minutes</td><td>10</td><td>조회 범위 (분)</td></tr>
+        </table>
+        <div class="code">[{
+  "ts": 1779943920,              // 분 버킷 Unix sec
+  "risk_score_avg": 0.97,
+  "heart_rate_avg": 119.17,
+  "breathing_rate_avg": 24.22,
+  "slm_invoked_count": 54,
+  "samples": 307
+}]</div>
+      </div>
+    </div>
+
+    <!-- GET /settings -->
+    <div class="endpoint">
+      <div class="endpoint-header" onclick="toggle(this)">
+        <span class="method GET">GET</span>
+        <span class="path">/settings</span>
+        <span class="desc">시스템 설정 조회</span>
+      </div>
+      <div class="endpoint-body">
+        <div class="code">{ "risk_threshold": 0.6, "active_nodes": [1,2,3,4,5,6], "ai_enabled": true }</div>
+      </div>
+    </div>
+
+    <!-- POST /settings -->
+    <div class="endpoint">
+      <div class="endpoint-header" onclick="toggle(this)">
+        <span class="method POST">POST</span>
+        <span class="path">/settings</span>
+        <span class="desc">설정 변경 (민감도, 노드 ON/OFF, AI 활성화)</span>
+      </div>
+      <div class="endpoint-body">
+        <div class="code">// Request body
+{ "risk_threshold": 0.7, "active_nodes": [1, 2, 3], "ai_enabled": true }
+
+// Response
+{ "status": "ok", "settings": { ... } }</div>
+        <div class="info">sys:settings Redis 키에 저장. TTL 1h. AI 엔진이 매 루프 polling.</div>
+      </div>
+    </div>
+
+    <!-- POST /audio/events -->
+    <div class="endpoint">
+      <div class="endpoint-header" onclick="toggle(this)">
+        <span class="method POST">POST</span>
+        <span class="path">/audio/events</span>
+        <span class="desc">오디오 이벤트 수동 주입 (앱 마이크)</span>
+      </div>
+      <div class="endpoint-body">
+        <div class="code">// Request body (AudioEventIn)
+{
+  "node_id": 1,
+  "waveform": [0.0, 0.03, ...],  // float32 샘플 리스트
+  "sample_rate": 16000,
+  "text_ko": null,               // 선택: 이미 전사된 텍스트
+  "trigger_ai": true             // true = audio:events 스트림에 push
+}
+
+// Response
+{ "status": "ok", "audio_event_id": "1779943598722-0" }</div>
+      </div>
+    </div>
+
+    <!-- POST /auth/register-token -->
+    <div class="endpoint">
+      <div class="endpoint-header" onclick="toggle(this)">
+        <span class="method POST">POST</span>
+        <span class="path">/auth/register-token</span>
+        <span class="desc">FCM 푸시 토큰 등록</span>
+      </div>
+      <div class="endpoint-body">
+        <div class="code">// Request
+{ "token": "fcm_token_string", "device_id": "galaxy_flip4" }
+
+// Response
+{ "status": "registered", "device_id": "galaxy_flip4", "ttl_seconds": 3600 }</div>
+        <div class="info">Redis 키: <code>fcm:token:{device_id}</code>  TTL 1h. critical 이벤트 시 자동 FCM 발송.</div>
+      </div>
+    </div>
+
+    <!-- GET /system/* -->
+    <div class="endpoint">
+      <div class="endpoint-header" onclick="toggle(this)">
+        <span class="method GET">GET</span>
+        <span class="path">/system/health &nbsp;·&nbsp; /system/redis-memory</span>
+        <span class="desc">시스템 상태</span>
+      </div>
+      <div class="endpoint-body">
+        <div class="code">// /system/health
+{ "redis": "ok", "streams": { "csi:raw": 36000, "ai:result": 305 } }
+
+// /system/redis-memory
+{ "used_memory_human": "48M", "maxmemory_human": "512M", "mem_fragmentation_ratio": 1.2 }</div>
+      </div>
+    </div>
+
+  </div><!-- endpoint-group -->
+</section>
+
+<!-- ── WebSocket ── -->
+<section id="websocket">
+  <h2><span class="icon">⚡</span> WebSocket</h2>
+  <div class="endpoint">
+    <div class="endpoint-header" onclick="toggle(this)">
+      <span class="method WS">WS</span>
+      <span class="path">ws://&lt;host&gt;:8000/ws/monitor</span>
+      <span class="desc">실시간 ai:result 스트리밍</span>
+    </div>
+    <div class="endpoint-body">
+      <p class="note">서버가 <code>ai:result</code> 스트림을 XREAD(block=1000ms)로 폴링, 새 항목을 JSON 텍스트로 push.</p>
+      <div class="code">// 클라이언트 연결
+const ws = new WebSocket("ws://localhost:8000/ws/monitor");
+ws.onmessage = (e) => {
+  const snap = JSON.parse(e.data);  // UnifiedSnapshot
+  console.log(snap.risk_level, snap.risk_score);
+};
+
+// 수신 메시지 형태: UnifiedSnapshot (GET /status 응답과 동일 스키마)</div>
+      <div class="info">연결 끊김 시 자동 제거. 다중 클라이언트 동시 연결 가능 (브로드캐스트).</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── MQTT ── -->
+<section id="mqtt">
+  <h2><span class="icon">📡</span> MQTT  <span style="font-size:12px;font-weight:400;color:var(--muted);margin-left:8px;">Broker: mqtt:1883  |  Base topic: <code>safewave</code>  |  Protocol: MQTTv3.1.1</span></h2>
+
+  <div class="endpoint-group">
+
+    <div class="endpoint">
+      <div class="endpoint-header" onclick="toggle(this)">
+        <span class="method PUB">PUB</span>
+        <span class="path">safewave/ai/result</span>
+        <span class="desc">AI 추론 결과 (매 프레임)</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="note">ai 서비스가 매 CSI 프레임 처리 후 publish. QoS 0.</p>
+        <div class="code">{
+  "ts_ms": 1779943598722,
+  "node_id": 1,
+  "risk_level": "normal|warning|critical",
+  "risk_score": 0.05,
+  "slm_invoked": false,
+  "reason": null,               // M5 판단 근거 (slm_invoked=true 시)
+  "is_outlier": false,
+  "correlated_with_history": false
+}</div>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header" onclick="toggle(this)">
+        <span class="method PUB">PUB</span>
+        <span class="path">safewave/ai/emergency</span>
+        <span class="desc">경고/위험 이벤트 (risk_level = warning | critical 시)</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="note">동일 payload. Home Assistant automation trigger로 활용.</p>
+        <div class="code">// HA automation.yaml 예시
+trigger:
+  - platform: mqtt
+    topic: safewave/ai/emergency
+action:
+  - service: notify.mobile_app
+    data:
+      message: "{{ trigger.payload_json.risk_level }} — node {{ trigger.payload_json.node_id }}"</div>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header" onclick="toggle(this)">
+        <span class="method SUB">SUB</span>
+        <span class="path">safewave/feedback</span>
+        <span class="desc">외부 피드백 수신 (HA → ai)</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="note">ai 서비스가 subscribe. 수신 payload를 Redis <code>mqtt:feedback:last</code>(TTL 1h)에 저장.</p>
+        <div class="code">// HA MQTT publish 예시
+- service: mqtt.publish
+  data:
+    topic: safewave/feedback
+    payload: '{"confirmed": true, "node_id": 1, "action": "silenced"}'</div>
+      </div>
+    </div>
+
+  </div>
+
+  <h3>Home Assistant 연동 구성</h3>
+  <div class="card" style="margin-top:0">
+    <div class="code">## configuration.yaml
+
+mqtt:
+  sensor:
+    - name: "SafeWave Risk Score"
+      state_topic: "safewave/ai/result"
+      value_template: "{{ value_json.risk_score }}"
+      unit_of_measurement: ""
+
+    - name: "SafeWave Risk Level"
+      state_topic: "safewave/ai/result"
+      value_template: "{{ value_json.risk_level }}"
+
+    - name: "SafeWave Node"
+      state_topic: "safewave/ai/result"
+      value_template: "{{ value_json.node_id }}"
+
+automation:
+  - alias: "SafeWave Emergency Alert"
+    trigger:
+      - platform: mqtt
+        topic: safewave/ai/emergency
+    condition:
+      - condition: template
+        value_template: "{{ trigger.payload_json.risk_level == 'critical' }}"
+    action:
+      - service: notify.mobile_app_galaxy_flip4
+        data:
+          title: "🚨 긴급 상황"
+          message: "{{ trigger.payload_json.risk_level }} — node {{ trigger.payload_json.node_id }}"</div>
+  </div>
+</section>
+
+<!-- ── Redis DB ── -->
+<section id="redis">
+  <h2><span class="icon">🗄️</span> Redis DB 명세  <span style="font-size:12px;font-weight:400;color:var(--muted);margin-left:8px;">host:6379  |  메모리 전용 (maxmemory 512 MB, allkeys-lru)  |  영속성 없음</span></h2>
+
+  <h3>스트림 (Redis Streams)</h3>
+  <table>
+    <tr><th>키</th><th>생산자</th><th>소비자</th><th>maxlen</th><th>보존 시간</th><th>필드</th></tr>
+    <tr>
+      <td class="key">csi:raw</td>
+      <td>sensing</td>
+      <td>ai</td>
+      <td>36,000</td>
+      <td class="ttl">~1시간 @ 10 Hz</td>
+      <td class="note"><code>node</code> int, <code>ts_ms</code> int, <code>data</code> bytes (float32[])</td>
+    </tr>
+    <tr>
+      <td class="key">audio:events</td>
+      <td>sensing (audio profile) / api</td>
+      <td>ai</td>
+      <td>3,600</td>
+      <td class="ttl">~1시간 @ 1 Hz</td>
+      <td class="note"><code>node</code> int, <code>ts_ms</code> int, <code>data</code> JSON bytes<br><small>{sample_rate, channels, duration_ms, peak_db, waveform[]}</small></td>
+    </tr>
+    <tr>
+      <td class="key">ai:result</td>
+      <td>ai</td>
+      <td>api (XREAD)</td>
+      <td>36,000</td>
+      <td class="ttl">~1시간 @ 10 Hz</td>
+      <td class="note"><code>data</code> JSON bytes (UnifiedSnapshot)</td>
+    </tr>
+    <tr>
+      <td class="key">ai:emergency</td>
+      <td>ai (warning/critical 시)</td>
+      <td>api alert_worker</td>
+      <td>3,600</td>
+      <td class="ttl">~1시간</td>
+      <td class="note"><code>data</code> JSON bytes (EmergencySummary)</td>
+    </tr>
+  </table>
+
+  <h3>해시 / 문자열 키</h3>
+  <table>
+    <tr><th>키 패턴</th><th>타입</th><th>TTL</th><th>내용</th></tr>
+    <tr>
+      <td class="key">node:{N}:last_seen</td>
+      <td class="type">string</td>
+      <td class="ttl">30 s</td>
+      <td class="note">마지막 패킷 수신 시각 (Unix sec float). 30초 초과 시 offline 판정.</td>
+    </tr>
+    <tr>
+      <td class="key">node:{N}:health</td>
+      <td class="type">hash</td>
+      <td class="ttl">1 h</td>
+      <td class="note">last_seen (float sec), rx (int), lost (int), loss_rate (float)</td>
+    </tr>
+    <tr>
+      <td class="key">ai:m1:latest</td>
+      <td class="type">string</td>
+      <td class="ttl">1 h</td>
+      <td class="note">M1 마지막 추론 결과 JSON {ts_ms, node_id, expert, latency_ms, data}</td>
+    </tr>
+    <tr>
+      <td class="key">ai:m2:latest</td>
+      <td class="type">string</td>
+      <td class="ttl">1 h</td>
+      <td class="note">M2 마지막 추론 결과 JSON</td>
+    </tr>
+    <tr>
+      <td class="key">ai:m3:latest</td>
+      <td class="type">string</td>
+      <td class="ttl">1 h</td>
+      <td class="note">M3 마지막 추론 결과 JSON</td>
+    </tr>
+    <tr>
+      <td class="key">ai:m4:latest</td>
+      <td class="type">string</td>
+      <td class="ttl">1 h</td>
+      <td class="note">M4 마지막 추론 결과 JSON</td>
+    </tr>
+    <tr>
+      <td class="key">agg:minute:{bucket}</td>
+      <td class="type">hash</td>
+      <td class="ttl">65 min</td>
+      <td class="note">분 단위 집계 — ts, risk_sum, risk_count, heart_sum, heart_count, breathing_sum, breathing_count, slm_invoked_count</td>
+    </tr>
+    <tr>
+      <td class="key">sys:settings</td>
+      <td class="type">string</td>
+      <td class="ttl">1 h</td>
+      <td class="note">JSON {risk_threshold, active_nodes, ai_enabled}. ai 엔진이 매 루프 polling.</td>
+    </tr>
+    <tr>
+      <td class="key">fcm:token:{device_id}</td>
+      <td class="type">string</td>
+      <td class="ttl">1 h</td>
+      <td class="note">FCM 푸시 토큰. critical 이벤트 시 자동 발송.</td>
+    </tr>
+    <tr>
+      <td class="key">notify:sent:{msg_id}:{device_id}</td>
+      <td class="type">string</td>
+      <td class="ttl">1 h</td>
+      <td class="note">중복 알림 방지 dedup 키. NX SET으로 claim.</td>
+    </tr>
+    <tr>
+      <td class="key">mqtt:feedback:last</td>
+      <td class="type">string</td>
+      <td class="ttl">1 h</td>
+      <td class="note">safewave/feedback MQTT 수신 마지막 payload JSON</td>
+    </tr>
+  </table>
+
+  <h3>Redis 설정 요약</h3>
+  <div class="grid2">
+    <div class="card">
+      <h4>redis.conf 핵심 설정</h4>
+      <div class="stack-row"><span class="stack-label">maxmemory</span><span class="stack-val">512 MB (allkeys-lru)</span></div>
+      <div class="stack-row"><span class="stack-label">persistence</span><span class="stack-val">없음 (appendonly no, save "")</span></div>
+      <div class="stack-row"><span class="stack-label">stream-node-max-bytes</span><span class="stack-val">4096 bytes</span></div>
+      <div class="stack-row"><span class="stack-label">stream-node-max-entries</span><span class="stack-val">100 entries</span></div>
+      <div class="stack-row"><span class="stack-label">tcp-keepalive</span><span class="stack-val">60 s</span></div>
+    </div>
+    <div class="card">
+      <h4>CSI vs Audio 저장 분리</h4>
+      <div class="stack-row"><span class="stack-label">csi:raw</span><span class="stack-val">binary float32 bytes, maxlen 36,000</span></div>
+      <div class="stack-row"><span class="stack-label">audio:events</span><span class="stack-val">JSON waveform list, maxlen 3,600</span></div>
+      <div class="stack-row"><span class="stack-label">공통 원칙</span><span class="stack-val">모든 키 TTL ≤ 1h, SSD 미사용</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 신호 규격 ── -->
+<section id="signals">
+  <h2><span class="icon">📊</span> 신호 규격</h2>
+
+  <h3>CSI 패킷 포맷 (ESP32-S3 → sensing, UDP)</h3>
+  <table>
+    <tr><th>오프셋</th><th>크기</th><th>타입</th><th>내용</th></tr>
+    <tr><td>0</td><td>1 byte</td><td class="type">uint8</td><td>node_id (1~6)</td></tr>
+    <tr><td>1</td><td>1 byte</td><td class="type">uint8</td><td>reserved</td></tr>
+    <tr><td>2</td><td>2 bytes</td><td class="type">uint16 LE</td><td>n_samples</td></tr>
+    <tr><td>4</td><td>4 bytes</td><td class="type">uint32 LE</td><td>timestamp_ms (32-bit rollover)</td></tr>
+    <tr><td>8</td><td>n_samples × 4</td><td class="type">float32[]</td><td>CSI 진폭 샘플</td></tr>
+  </table>
+  <div class="info">수신률: <b>10 Hz</b> (ESP32 송출 기준). 전처리 필터링 FS: <b>100 Hz</b> (CSI_FS 환경변수). ONNX 입력: 512-sample float32 벡터.</div>
+
+  <h3>오디오 이벤트 포맷 (audio:events 스트림)</h3>
+  <table>
+    <tr><th>필드</th><th>타입</th><th>값</th></tr>
+    <tr><td class="key">sample_rate</td><td class="type">int</td><td>16,000 Hz</td></tr>
+    <tr><td class="key">channels</td><td class="type">int</td><td>1 (mono)</td></tr>
+    <tr><td class="key">duration_ms</td><td class="type">int</td><td>VAD 활성 구간 길이</td></tr>
+    <tr><td class="key">peak_db</td><td class="type">float</td><td>피크 음압 (dBFS)</td></tr>
+    <tr><td class="key">waveform</td><td class="type">float32[]</td><td>정규화 PCM 샘플</td></tr>
+  </table>
+  <div class="info">M3 배경음 분류: 최근 <b>3초</b> 이벤트 병합 | M4 한국어 STT: 최근 <b>5초</b> 이벤트 병합</div>
+
+  <h3>VAD 설정 (audio-sensing 프로필)</h3>
+  <table>
+    <tr><th>설정</th><th>기본값</th><th>환경변수</th></tr>
+    <tr><td>임계값</td><td>-45 dBFS</td><td class="key">VAD_THRESHOLD_DB</td></tr>
+    <tr><td>최소 활성 시간</td><td>300 ms</td><td class="key">VAD_MIN_ACTIVE_MS</td></tr>
+    <tr><td>Hangover</td><td>250 ms</td><td class="key">VAD_HANGOVER_MS</td></tr>
+    <tr><td>최대 이벤트 길이</td><td>6초</td><td class="key">AUDIO_MAX_EVENT_SECONDS</td></tr>
+    <tr><td>블록 크기</td><td>1,024 샘플</td><td class="key">AUDIO_BLOCK_SIZE</td></tr>
+  </table>
+
+  <h3>위험 레벨 판정 로직</h3>
+  <table>
+    <tr><th>risk_score</th><th>risk_level</th><th>emergency</th><th>동작</th></tr>
+    <tr><td>≥ 0.85</td><td style="color:var(--red)">critical</td><td>true</td><td>ai:emergency push · MQTT publish · FCM 발송</td></tr>
+    <tr><td>≥ threshold (기본 0.6)</td><td style="color:var(--yellow)">warning</td><td>false</td><td>ai:emergency push · MQTT publish</td></tr>
+    <tr><td>&lt; threshold</td><td style="color:var(--green)">normal</td><td>false</td><td>ai:result만 기록</td></tr>
+  </table>
+  <div class="info">M5(Qwen SLM) 호출 조건: expert 최고 점수 ≥ threshold AND 쿨다운(3초) 경과. threshold는 /settings로 동적 변경 가능.</div>
+
+</section>
+
+</main>
+
+<footer>SafeWave-AI v0.0.1 &nbsp;·&nbsp; Raspberry Pi 5 + Docker Compose &nbsp;·&nbsp; ONNX Runtime · Redis Streams · MQTT · FastAPI</footer>
+
+<script>
+  function toggle(header) {
+    const body = header.nextElementSibling;
+    body.classList.toggle('open');
+  }
+  // 스크롤에 따라 nav 활성화
+  const sections = document.querySelectorAll('section');
+  const navLinks = document.querySelectorAll('nav a');
+  window.addEventListener('scroll', () => {
+    let cur = '';
+    sections.forEach(s => { if (window.scrollY >= s.offsetTop - 80) cur = s.id; });
+    navLinks.forEach(a => { a.classList.toggle('active', a.getAttribute('href') === '#' + cur); });
+  });
+</script>
+</body>
+</html>

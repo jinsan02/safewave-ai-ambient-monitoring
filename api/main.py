@@ -16,6 +16,8 @@ import ast
 import asyncio
 from contextlib import suppress
 import json
+import logging
+import math
 import os
 import time
 from typing import Any
@@ -53,6 +55,11 @@ class UnifiedSnapshot(BaseModel):
     emergency: bool = False
     ai_enabled: bool = True
     context_window: dict[str, Any] = Field(default_factory=dict)
+    slm_invoked: bool = False
+    is_outlier: bool = False
+    correlated_with_history: bool = False
+    qwen_reason: str | None = None
+    slm_mode: str | None = None
 
 
 class EmergencySummary(BaseModel):
@@ -67,6 +74,14 @@ class EmergencySummary(BaseModel):
 class TokenRegistration(BaseModel):
     token: str
     device_id: str = "galaxy_flip4"
+
+
+class AudioEventIn(BaseModel):
+    node_id: int = Field(default=1, ge=0, le=255)
+    text_ko: str | None = None
+    waveform: list[float] = Field(default_factory=list)
+    sample_rate: int = Field(default=16000, ge=8000, le=48000)
+    trigger_ai: bool = True
 
 
 def _parse_result_payload(raw: str) -> dict:
@@ -111,6 +126,11 @@ def _normalize_snapshot(payload: dict, msg_id: str | None = None) -> dict:
     normalized.setdefault("audio", None)
     normalized.setdefault("ai_enabled", True)
     normalized.setdefault("context_window", {})
+    normalized.setdefault("slm_invoked", False)
+    normalized.setdefault("is_outlier", False)
+    normalized.setdefault("correlated_with_history", False)
+    normalized.setdefault("qwen_reason", None)
+    normalized.setdefault("slm_mode", None)
 
     data = UnifiedSnapshot.model_validate(normalized).model_dump()
     if msg_id:
@@ -139,14 +159,65 @@ REDIS_HOST = os.getenv("REDIS_HOST", "db")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 RESULT_STREAM = "ai:result"
 EMERGENCY_STREAM = "ai:emergency"
+AUDIO_STREAM = "audio:events"
+CSI_STREAM = "csi:raw"
 SETTINGS_KEY = "sys:settings"
 TOKEN_KEY_PREFIX = "fcm:token:"
 MINUTE_AGG_PREFIX = "agg:minute:"
 TOKEN_TTL_SECONDS = int(os.getenv("TOKEN_TTL_SECONDS", "3600"))
 SETTINGS_TTL_SECONDS = int(os.getenv("SETTINGS_TTL_SECONDS", "3600"))
 ALERT_DEDUP_TTL_SECONDS = int(os.getenv("ALERT_DEDUP_TTL_SECONDS", "3600"))
+AUDIO_STREAM_MAXLEN = int(os.getenv("AUDIO_STREAM_MAXLEN", "3600"))
+CSI_STREAM_MAXLEN = int(os.getenv("CSI_STREAM_MAXLEN", "36000"))
+REDIS_MEMORY_WARN_BYTES = int(os.getenv("REDIS_MEMORY_WARN_BYTES", str(512 * 1024 * 1024)))
+
+LOGGER = logging.getLogger("rp5.api")
+if not LOGGER.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    LOGGER.addHandler(_handler)
+LOGGER.setLevel(logging.INFO)
+LOGGER.propagate = False
+
+
+def _log(level: int, event: str, **fields):
+    payload = {
+        "service": "api",
+        "event": event,
+        "ts_ms": int(time.time() * 1000),
+    }
+    payload.update(fields)
+    LOGGER.log(level, json.dumps(payload, ensure_ascii=False))
 
 app = FastAPI(title="rp5 API")
+
+
+async def _reconnect_redis():
+    old_client = getattr(app.state, "redis", None)
+    if old_client is not None:
+        with suppress(Exception):
+            await old_client.aclose()
+
+    app.state.redis = aioredis.Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        decode_responses=True,
+        socket_connect_timeout=5,
+    )
+    await app.state.redis.ping()
+    return app.state.redis
+
+
+async def _ensure_redis():
+    redis_client = getattr(app.state, "redis", None)
+    if redis_client is None:
+        return await _reconnect_redis()
+    try:
+        await redis_client.ping()
+        return redis_client
+    except Exception as exc:
+        _log(logging.WARNING, "redis_reconnect", reason=str(exc))
+        return await _reconnect_redis()
 
 app.add_middleware(
     CORSMiddleware,
@@ -173,6 +244,7 @@ async def _alert_worker(redis_client):
     last_id = "$"
     while True:
         try:
+            redis_client = await _ensure_redis()
             entries = await redis_client.xread({EMERGENCY_STREAM: last_id}, count=10, block=1000)
             if not entries:
                 continue
@@ -200,23 +272,37 @@ async def _alert_worker(redis_client):
                                 {"summary": payload["summary"], "ts_ms": payload["ts_ms"]},
                             )
                         except Exception as exc:
-                            print(f"[api] FCM send failed for {device_id}: {exc}", flush=True)
+                            _log(logging.ERROR, "fcm_send_failed", device_id=device_id, error=str(exc))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            print(f"[api] alert worker error: {exc}", flush=True)
+            _log(logging.ERROR, "alert_worker_error", error=str(exc))
             await asyncio.sleep(1)
 
 
 @app.on_event("startup")
 async def startup():
-    app.state.redis = aioredis.Redis(
-        host=REDIS_HOST,
-        port=REDIS_PORT,
-        decode_responses=True,
-        socket_connect_timeout=5,
-    )
-    app.state.alert_worker = asyncio.create_task(_alert_worker(app.state.redis))
+    while True:
+        try:
+            app.state.redis = await _reconnect_redis()
+            break
+        except Exception as exc:
+            _log(logging.WARNING, "startup_redis_retry", error=str(exc), retry_in_sec=1)
+            await asyncio.sleep(1)
+    def _restart_alert_worker(task: asyncio.Task):
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            _log(logging.ERROR, "alert_worker_crashed", error=str(exc), action="restarting")
+        new_task = asyncio.create_task(_alert_worker(app.state.redis))
+        new_task.add_done_callback(_restart_alert_worker)
+        app.state.alert_worker = new_task
+
+    task = asyncio.create_task(_alert_worker(app.state.redis))
+    task.add_done_callback(_restart_alert_worker)
+    app.state.alert_worker = task
+    _log(logging.INFO, "startup_completed", redis_host=REDIS_HOST, redis_port=REDIS_PORT)
 
 
 @app.on_event("shutdown")
@@ -227,6 +313,7 @@ async def shutdown():
         with suppress(asyncio.CancelledError):
             await worker
     await app.state.redis.aclose()
+    _log(logging.INFO, "shutdown_completed")
 
 
 @app.get("/")
@@ -236,7 +323,8 @@ async def root():
 
 @app.get("/status")
 async def get_status():
-    entries = await app.state.redis.xrevrange(RESULT_STREAM, count=1)
+    redis_client = await _ensure_redis()
+    entries = await redis_client.xrevrange(RESULT_STREAM, count=1)
     if not entries:
         # 204 응답은 body를 포함할 수 없어 h11 프로토콜 오류가 발생하므로 200으로 반환
         return JSONResponse({"message": "no data yet"}, status_code=200)
@@ -248,7 +336,8 @@ async def get_status():
 @app.get("/logs")
 async def get_logs(n: int = 60):
     n = max(1, min(n, 36000))
-    entries = await app.state.redis.xrevrange(RESULT_STREAM, count=n)
+    redis_client = await _ensure_redis()
+    entries = await redis_client.xrevrange(RESULT_STREAM, count=n)
     result = []
     for msg_id, fields in entries:
         payload = _parse_result_payload(fields.get("data", ""))
@@ -259,7 +348,7 @@ async def get_logs(n: int = 60):
 @app.websocket("/ws/monitor")
 async def ws_monitor(websocket: WebSocket):
     await websocket.accept()
-    r = app.state.redis
+    r = await _ensure_redis()
     last_id = "$"
 
     try:
@@ -282,7 +371,8 @@ async def ws_monitor(websocket: WebSocket):
 
 @app.get("/settings")
 async def get_settings():
-    raw = await app.state.redis.get(SETTINGS_KEY)
+    redis_client = await _ensure_redis()
+    raw = await redis_client.get(SETTINGS_KEY)
     if raw:
         return json.loads(raw)
     return SystemSettings().model_dump()
@@ -290,20 +380,46 @@ async def get_settings():
 
 @app.post("/settings")
 async def update_settings(settings: SystemSettings):
-    await app.state.redis.set(SETTINGS_KEY, json.dumps(settings.model_dump()), ex=SETTINGS_TTL_SECONDS)
+    redis_client = await _ensure_redis()
+    await redis_client.set(SETTINGS_KEY, json.dumps(settings.model_dump()), ex=SETTINGS_TTL_SECONDS)
     return {"status": "updated", "settings": settings.model_dump()}
 
 
 @app.get("/nodes/health")
 async def get_node_health():
     now = time.time()
+    redis_client = await _ensure_redis()
     health = {}
     for i in range(1, 7):
-        last_seen = await app.state.redis.get(f"node:{i}:last_seen")
+        bucket = await redis_client.hgetall(f"node:{i}:health")
+        if bucket:
+            last_seen = float(bucket.get("last_seen", 0.0) or 0.0)
+            loss_rate = float(bucket.get("loss_rate", 0.0) or 0.0)
+            rx = int(bucket.get("rx", 0) or 0)
+            lost = int(bucket.get("lost", 0) or 0)
+            if last_seen and (now - last_seen) < 5:
+                health[f"node_{i}"] = {
+                    "status": "online",
+                    "age_s": round(now - last_seen, 2),
+                    "loss_rate": round(loss_rate, 4),
+                    "rx": rx,
+                    "lost": lost,
+                }
+            else:
+                health[f"node_{i}"] = {
+                    "status": "offline",
+                    "age_s": None,
+                    "loss_rate": round(loss_rate, 4),
+                    "rx": rx,
+                    "lost": lost,
+                }
+            continue
+
+        last_seen = await redis_client.get(f"node:{i}:last_seen")
         if last_seen and (now - float(last_seen)) < 5:
-            health[f"node_{i}"] = {"status": "online", "age_s": round(now - float(last_seen), 2)}
+            health[f"node_{i}"] = {"status": "online", "age_s": round(now - float(last_seen), 2), "loss_rate": 0.0, "rx": 0, "lost": 0}
         else:
-            health[f"node_{i}"] = {"status": "offline", "age_s": None}
+            health[f"node_{i}"] = {"status": "offline", "age_s": None, "loss_rate": 0.0, "rx": 0, "lost": 0}
     return health
 
 
@@ -313,7 +429,8 @@ async def get_history(n: int = 100, level: str = "warning"):
     if level not in ("warning", "critical"):
         return JSONResponse({"error": "level must be 'warning' or 'critical'"}, status_code=400)
 
-    entries = await app.state.redis.xrevrange(EMERGENCY_STREAM, count=3600)
+    redis_client = await _ensure_redis()
+    entries = await redis_client.xrevrange(EMERGENCY_STREAM, count=3600)
     result = []
     for msg_id, fields in entries:
         payload = _normalize_emergency(_parse_result_payload(fields.get("data", "")), msg_id)
@@ -331,11 +448,12 @@ async def get_history(n: int = 100, level: str = "warning"):
 @app.get("/charts/minute")
 async def get_minute_charts(minutes: int = 10):
     minutes = max(1, min(minutes, 60))
+    redis_client = await _ensure_redis()
     chart = []
     current_minute = int(time.time() // 60)
 
     for minute_key in range(current_minute - minutes + 1, current_minute + 1):
-        raw_bucket = await app.state.redis.hgetall(f"{MINUTE_AGG_PREFIX}{minute_key}")
+        raw_bucket = await redis_client.hgetall(f"{MINUTE_AGG_PREFIX}{minute_key}")
         if not raw_bucket:
             continue
 
@@ -353,6 +471,7 @@ async def get_minute_charts(minutes: int = 10):
             "risk_score_avg": _avg("risk_sum", risk_count),
             "heart_rate_avg": _avg("heart_sum", heart_count),
             "breathing_rate_avg": _avg("breathing_sum", breathing_count),
+            "slm_invoked_count": int(raw_bucket.get("slm_invoked_count", 0) or 0),
             "samples": risk_count,
         })
 
@@ -361,20 +480,146 @@ async def get_minute_charts(minutes: int = 10):
 
 @app.post("/auth/register-token")
 async def register_fcm_token(body: TokenRegistration):
-    await app.state.redis.set(f"{TOKEN_KEY_PREFIX}{body.device_id}", body.token, ex=TOKEN_TTL_SECONDS)
+    redis_client = await _ensure_redis()
+    await redis_client.set(f"{TOKEN_KEY_PREFIX}{body.device_id}", body.token, ex=TOKEN_TTL_SECONDS)
     return {"status": "registered", "device_id": body.device_id, "ttl_seconds": TOKEN_TTL_SECONDS}
 
 
 @app.get("/auth/tokens")
 async def list_fcm_tokens():
-    tokens = await _list_registered_tokens(app.state.redis)
+    redis_client = await _ensure_redis()
+    tokens = await _list_registered_tokens(redis_client)
     return {"devices": [device_id for device_id, _token in tokens], "count": len(tokens)}
 
 
 @app.get("/notify/threshold")
 async def get_notify_threshold():
-    threshold = await load_risk_threshold(app.state.redis)
+    redis_client = await _ensure_redis()
+    threshold = await load_risk_threshold(redis_client)
     return {"risk_threshold": threshold}
+
+
+@app.get("/system/redis-memory")
+async def get_redis_memory():
+    redis_client = await _ensure_redis()
+    info = await redis_client.info("memory")
+    used = int(info.get("used_memory", 0) or 0)
+    used_peak = int(info.get("used_memory_peak", 0) or 0)
+    maxmemory = int(info.get("maxmemory", 0) or 0)
+
+    limit = maxmemory if maxmemory > 0 else REDIS_MEMORY_WARN_BYTES
+    ratio = (used / limit) if limit > 0 else 0.0
+    warning = ratio >= 0.85
+
+    if warning:
+        _log(logging.WARNING, "redis_memory_warning", used=used, limit=limit, ratio=round(ratio, 4))
+
+    return {
+        "used_memory": used,
+        "used_memory_human": info.get("used_memory_human", str(used)),
+        "used_memory_peak": used_peak,
+        "used_memory_peak_human": info.get("used_memory_peak_human", str(used_peak)),
+        "maxmemory": maxmemory,
+        "warn_limit": limit,
+        "usage_ratio": round(ratio, 4),
+        "warning": warning,
+    }
+
+
+@app.get("/system/health")
+async def get_system_health():
+    try:
+        redis_client = await _ensure_redis()
+        pong = await redis_client.ping()
+        info = await redis_client.info("memory")
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "status": "degraded",
+                "redis": {"connected": False, "error": str(exc)},
+            },
+            status_code=503,
+        )
+
+    used = int(info.get("used_memory", 0) or 0)
+    maxmemory = int(info.get("maxmemory", 0) or 0)
+    limit = maxmemory if maxmemory > 0 else REDIS_MEMORY_WARN_BYTES
+    usage_ratio = (used / limit) if limit > 0 else 0.0
+
+    return {
+        "status": "ok" if pong else "degraded",
+        "redis": {
+            "connected": bool(pong),
+            "used_memory": used,
+            "used_memory_human": info.get("used_memory_human", str(used)),
+            "maxmemory": maxmemory,
+            "warn_limit": limit,
+            "usage_ratio": round(usage_ratio, 4),
+            "warning": usage_ratio >= 0.85,
+        },
+        "ts_ms": int(time.time() * 1000),
+    }
+
+
+@app.post("/audio/events")
+async def ingest_audio_event(body: AudioEventIn):
+    text_ko = (body.text_ko or "").strip()
+    if not text_ko and not body.waveform:
+        return JSONResponse({"error": "text_ko or waveform is required"}, status_code=400)
+
+    clean_waveform = []
+    if body.waveform:
+        for sample in body.waveform[:16000 * 8]:
+            try:
+                value = float(sample)
+            except Exception:
+                continue
+            if not math.isfinite(value):
+                continue
+            clean_waveform.append(max(-1.0, min(1.0, value)))
+
+    payload: dict[str, Any] = {"sample_rate": body.sample_rate}
+    if text_ko:
+        payload["text_ko"] = text_ko
+    if clean_waveform:
+        payload["waveform"] = clean_waveform
+
+    redis_client = await _ensure_redis()
+    ts_ms = int(time.time() * 1000)
+    audio_id = await redis_client.xadd(
+        AUDIO_STREAM,
+        {
+            "node": body.node_id,
+            "ts_ms": ts_ms,
+            "data": json.dumps(payload, ensure_ascii=False),
+        },
+        maxlen=AUDIO_STREAM_MAXLEN,
+        approximate=True,
+    )
+
+    csi_id = None
+    if body.trigger_ai:
+        # AI 루프를 깨우기 위한 최소 CSI 트리거 이벤트
+        csi_id = await redis_client.xadd(
+            CSI_STREAM,
+            {
+                "node": body.node_id,
+                "ts_ms": ts_ms,
+                "data": "",
+            },
+            maxlen=CSI_STREAM_MAXLEN,
+            approximate=True,
+        )
+
+    return {
+        "status": "ok",
+        "audio_event_id": audio_id,
+        "csi_event_id": csi_id,
+        "node_id": body.node_id,
+        "sample_rate": body.sample_rate,
+        "text_len": len(text_ko),
+        "waveform_samples": len(clean_waveform),
+    }
 
 
 if __name__ == "__main__":

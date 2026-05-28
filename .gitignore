@@ -2,6 +2,7 @@
 volumes/data/**
 volumes/logs/**
 volumes/models/**
+volumes/mosquitto/**
 !volumes/models/.gitkeep
 !volumes/logs/.gitkeep
 api/auth/firebase_key.json
@@ -13,3 +14,7 @@ __pycache__/
 .venv/
 *_log.txt
 *.log
+
+# Claude Code
+CLAUDE.md
+.claude/

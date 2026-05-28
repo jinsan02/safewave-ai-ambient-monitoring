@@ -1,4 +1,14 @@
 import numpy as np
+import onnxruntime as ort
+
+
+def get_ort_providers():
+	available = set(ort.get_available_providers())
+	providers = []
+	if "CUDAExecutionProvider" in available:
+		providers.append("CUDAExecutionProvider")
+	providers.append("CPUExecutionProvider")
+	return providers
 
 
 class TurboQuant:
