@@ -10,6 +10,29 @@ import numpy as np
 
 DEFAULT_HF_MODEL_ID = "MIT/ast-finetuned-audioset-10-10-0.4593"
 DEFAULT_SAMPLE_RATE = 16000
+ENV_SOUND_LABELS = ("silence", "speech", "impact", "noise", "alarm", "unknown")
+
+
+def _normalize_quiet_waveform(waveform: np.ndarray) -> np.ndarray:
+    """멀리서/작게 들리는 신호를 AST 입력 전에 보정한다."""
+    if os.getenv("M3_GAIN_NORMALIZE", "1") == "0":
+        return waveform
+
+    x = np.asarray(waveform, dtype=np.float32).reshape(-1)
+    if x.size == 0:
+        return x
+
+    peak = float(np.max(np.abs(x)))
+    if peak <= 1e-9:
+        return x
+
+    target_peak = float(os.getenv("M3_TARGET_PEAK", "0.9"))
+    normalize_below = float(os.getenv("M3_NORMALIZE_BELOW_PEAK", "0.15"))
+    if peak >= normalize_below:
+        return x
+
+    scaled = x * (target_peak / peak)
+    return np.clip(scaled, -1.0, 1.0).astype(np.float32)
 
 
 def _map_audioset_label(label: str) -> str:
@@ -32,8 +55,8 @@ def _map_audioset_label(label: str) -> str:
         )
     ):
         return "speech"
-    if any(k in text for k in ("music", "singing", "song", "melody", "musical")):
-        return "music"
+    if any(k in text for k in ("music", "singing", "song", "melody", "musical", "television", "tv")):
+        return "noise"
     if any(
         k in text
         for k in (
@@ -71,7 +94,7 @@ def _map_audioset_label(label: str) -> str:
 
 
 class EnvSoundAnalysisModel:
-    ENV_LABELS = ["silence", "speech", "music", "impact", "noise", "alarm", "unknown"]
+    ENV_LABELS = list(ENV_SOUND_LABELS)
 
     def __init__(self, model_path):
         self.model_path = model_path
@@ -155,7 +178,7 @@ class EnvSoundAnalysisModel:
         if zcr < 0.08 and 0.02 <= energy <= 0.25:
             return "speech", 0.72
         if zcr < 0.05 and energy > 0.25:
-            return "music", 0.68
+            return "noise", 0.62
         if energy > 0.6:
             return "impact", 0.7
         return "noise", 0.62
@@ -211,6 +234,8 @@ class EnvSoundAnalysisModel:
                 "activity": "silence",
                 "activity_confidence": 0.0,
             }
+
+        waveform = _normalize_quiet_waveform(waveform)
 
         hf_result = None
         if self.backend == "hf-ast":

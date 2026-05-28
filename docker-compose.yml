@@ -49,7 +49,7 @@ services:
       - AUDIO_SAMPLE_RATE=16000
       - AUDIO_CHANNELS=1
       - AUDIO_BLOCK_SIZE=1024
-      - VAD_THRESHOLD_DB=-45
+      - VAD_THRESHOLD_DB=${VAD_THRESHOLD_DB:--55}
       - VAD_MIN_ACTIVE_MS=300
       - VAD_HANGOVER_MS=250
       - AUDIO_MAX_EVENT_SECONDS=6
@@ -74,7 +74,7 @@ services:
       - MQTT_PORT=1883
       - MQTT_BASE_TOPIC=safewave
       - MQTT_ENABLED=1
-      - EXPERT_INFER_TIMEOUT_MS=1000
+      - EXPERT_INFER_TIMEOUT_MS=${EXPERT_INFER_TIMEOUT_MS:-10000}
     volumes:
       - ./volumes/models:/app/models
     networks:

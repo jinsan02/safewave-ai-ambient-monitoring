@@ -344,6 +344,24 @@
       return out;
     }
 
+    function normalizeMicWaveform(input) {
+      if (!input || input.length === 0) return input;
+      let peak = 0;
+      for (let i = 0; i < input.length; i++) {
+        const v = Math.abs(input[i]);
+        if (v > peak) peak = v;
+      }
+      const targetPeak = 0.9;
+      const normalizeBelow = 0.15;
+      if (peak <= 1e-9 || peak >= normalizeBelow) return input;
+      const out = new Float32Array(input.length);
+      const gain = targetPeak / peak;
+      for (let i = 0; i < input.length; i++) {
+        out[i] = Math.max(-1, Math.min(1, input[i] * gain));
+      }
+      return out;
+    }
+
     async function startMicCapture() {
       if (micRecording) return;
       try {
@@ -396,7 +414,8 @@
 
       const merged = mergeChunks(micChunks);
       const wav16k = downsampleTo16k(merged, micSampleRate);
-      const clipped = wav16k.length > 16000 * 6 ? wav16k.slice(0, 16000 * 6) : wav16k;
+      const boosted = normalizeMicWaveform(wav16k);
+      const clipped = boosted.length > 16000 * 6 ? boosted.slice(0, 16000 * 6) : boosted;
       const waveform = Array.from(clipped);
       const textHint = (micText.value || '').trim();
 
@@ -470,7 +489,7 @@
 
       // 환경음(M3)
       if (ex.env_sound) {
-        const soundMap = {silence:'무음',speech:'사람 음성',music:'음악',impact:'충격음',noise:'잡음',alarm:'경보음',unknown:'알 수 없음'};
+        const soundMap = {silence:'무음',speech:'사람 음성',impact:'충격음',noise:'잡음',alarm:'경보음',unknown:'알 수 없음'};
         document.getElementById('act-val').textContent = soundMap[ex.env_sound.env_sound_label] || ex.env_sound.env_sound_label;
         document.getElementById('act-conf').textContent = '신뢰도: ' + ((ex.env_sound.env_sound_confidence||0)*100).toFixed(0) + '%';
       }

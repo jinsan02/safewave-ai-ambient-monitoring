@@ -46,6 +46,28 @@ def connect_redis() -> redis.Redis:
             time.sleep(2)
 
 
+def normalize_quiet_waveform(waveform: np.ndarray) -> np.ndarray:
+    """VAD 통과 후에도 작은 peak면 전송 전에 gain을 보정한다."""
+    if os.getenv("AUDIO_GAIN_NORMALIZE", "1") == "0":
+        return waveform
+
+    x = np.asarray(waveform, dtype=np.float32).reshape(-1)
+    if x.size == 0:
+        return x
+
+    peak = float(np.max(np.abs(x)))
+    if peak <= 1e-9:
+        return x
+
+    target_peak = float(os.getenv("AUDIO_TARGET_PEAK", "0.85"))
+    normalize_below = float(os.getenv("AUDIO_NORMALIZE_BELOW_PEAK", "0.12"))
+    if peak >= normalize_below:
+        return x
+
+    scaled = x * (target_peak / peak)
+    return np.clip(scaled, -1.0, 1.0).astype(np.float32)
+
+
 def rms_dbfs(samples: np.ndarray) -> float:
     if samples.size == 0:
         return -120.0
@@ -147,6 +169,7 @@ def run_audio_loop(r: redis.Redis):
                 waveform = np.concatenate(event_buffers) if event_buffers else np.zeros(0, dtype=np.float32)
                 if enough_voice and waveform.size > 0:
                     try:
+                        waveform = normalize_quiet_waveform(waveform)
                         xadd_audio_event(r, waveform, event_peak_db)
                         print(
                             f"[audio] event xadd samples={waveform.size} "
