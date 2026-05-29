@@ -415,6 +415,36 @@ def _merge_audio_window(events: list[dict], window_ms: int) -> dict | None:
     }
 
 
+def _attach_env_sound_timing(output: dict, audio_input: dict | None) -> dict:
+    """M3 결과에 오디오 구간 시각을 붙인다 (상위 ts_ms는 CSI 기준)."""
+    enriched = dict(output)
+    if not isinstance(audio_input, dict):
+        enriched["audio_ts_ms"] = None
+        enriched["audio_duration_ms"] = None
+        enriched["audio_window_ms"] = None
+        enriched["audio_ts_start_ms"] = None
+        return enriched
+
+    audio_ts_ms = audio_input.get("ts_ms")
+    duration_ms = audio_input.get("duration_ms")
+    window_ms = audio_input.get("window_ms", M3_AUDIO_WINDOW_MS)
+
+    enriched["audio_window_ms"] = int(window_ms)
+    if audio_ts_ms is not None:
+        enriched["audio_ts_ms"] = int(audio_ts_ms)
+    else:
+        enriched["audio_ts_ms"] = None
+    if duration_ms is not None:
+        enriched["audio_duration_ms"] = int(duration_ms)
+    else:
+        enriched["audio_duration_ms"] = None
+    if audio_ts_ms is not None and duration_ms is not None:
+        enriched["audio_ts_start_ms"] = int(audio_ts_ms) - int(duration_ms)
+    else:
+        enriched["audio_ts_start_ms"] = None
+    return enriched
+
+
 def _build_expert_inputs(default_data, audio_events: list[dict]) -> tuple[dict, dict | None]:
     latest_audio = audio_events[-1] if audio_events else None
     expert_inputs = {
@@ -710,6 +740,12 @@ if __name__ == "__main__":
                         input_data,
                         expert_inputs=expert_inputs,
                     )
+                    if "env_sound" in expert_results:
+                        env_sound_audio = expert_inputs.get("env_sound") if expert_inputs else None
+                        expert_results["env_sound"] = _attach_env_sound_timing(
+                            expert_results["env_sound"],
+                            env_sound_audio,
+                        )
                     for expert_name, output in expert_results.items():
                         _write_expert_latest(
                             r,

@@ -126,10 +126,11 @@
     <div class="card">
       <h4>데이터 흐름</h4>
       <div class="code">ESP32-S3 ──UDP:5005──▶ sensing
-sensing    ──────────▶ Redis  csi:raw
-                        Redis  audio:events
-ai         ──XREAD──▶ csi:raw / audio:events
-           ──XADD───▶ ai:result / ai:emergency
+sensing / api  ────────▶ Redis  csi:raw
+audio-sensing / api ───▶ Redis  audio:events
+ai         ──XREAD──▶ csi:raw (트리거)
+           ──XREVRANGE──▶ audio:events (CSI 시점 역조회)
+           ──XADD───▶ ai:result / ai:emergency / ai:m3:latest
            ──MQTT────▶ safewave/ai/result
 api        ──WS──────▶ 앱 클라이언트
            ──FCM─────▶ Galaxy Flip 4</div>
@@ -141,11 +142,11 @@ api        ──WS──────▶ 앱 클라이언트
     <tr><th>ID</th><th>파일</th><th>입력</th><th>출력 키</th><th>추론 시간</th></tr>
     <tr><td>M1</td><td class="key">m1_wifi_pose.py</td><td>CSI 512-sample float32</td><td><span class="key">fall_score</span>, <span class="key">fall_detected</span></td><td>~2 ms (GPU)</td></tr>
     <tr><td>M2</td><td class="key">m2_frenel_vital.py</td><td>CSI 512-sample float32</td><td><span class="key">heart_rate</span>, <span class="key">breathing_rate</span></td><td>~1 ms (GPU)</td></tr>
-    <tr><td>M3</td><td class="key">m3_ast_base.py</td><td>오디오 waveform (3초 window)</td><td><span class="key">env_sound_label</span>, <span class="key">env_sound_confidence</span></td><td>~190 ms</td></tr>
+    <tr><td>M3</td><td class="key">m3_ast_base.py</td><td>오디오 waveform (기본 4s window, env 설정)</td><td><span class="key">env_sound_label</span>, <span class="key">env_sound_confidence</span>, <span class="key">ast_top_class</span></td><td>CPU ~10s / GPU ~200ms</td></tr>
     <tr><td>M4</td><td class="key">m4_whisper_small.py</td><td>오디오 waveform (5초 window)</td><td><span class="key">transcript_ko</span>, <span class="key">speech_detected</span></td><td>~190 ms</td></tr>
     <tr><td>M5</td><td class="key">logic/qwen_05b.py</td><td>Expert 결과 JSON (컨텍스트 10분)</td><td><span class="key">risk_level</span>, <span class="key">risk_score</span>, <span class="key">qwen_reason</span></td><td>조건부 호출</td></tr>
   </table>
-  <div class="info">M3 배경음 입력 윈도우 <b>3초</b> | M4 한국어 STT 입력 윈도우 <b>5초</b> | CSI UDP 수신률 <b>10 Hz</b> (내부 필터링 FS=100 Hz)</div>
+  <div class="info">M3 라벨 6종: silence / speech / impact / noise / alarm / unknown &nbsp;|&nbsp; M3 윈도우 <b>M3_AUDIO_WINDOW_MS</b> (기본 4s) &nbsp;|&nbsp; M4 STT 윈도우 5s &nbsp;|&nbsp; audio:events는 CSI 트리거 시 xrevrange 조회</div>
 </section>
 
 <!-- ── REST ── -->
@@ -176,7 +177,7 @@ api        ──WS──────▶ 앱 클라이언트
       <div class="endpoint-body">
         <p class="note">Redis <code>ai:result</code> 스트림의 마지막 항목을 반환.</p>
         <div class="code">{
-  "ts_ms": 1779943598722,       // Unix ms
+  "ts_ms": 1779943598722,       // CSI 트리거 / 추론 시각 (Unix ms)
   "node_id": 1,                  // 노드 번호 (1-6)
   "risk_score": 0.97,            // 0.0 ~ 1.0
   "risk_level": "normal|warning|critical",
@@ -185,9 +186,12 @@ api        ──WS──────▶ 앱 클라이언트
   "experts": {
     "fall":      { "fall_score": 0.05, "fall_detected": false },
     "vital":     { "heart_rate": 119.8, "breathing_rate": 24.4 },
-    "env_sound": { "env_sound_label": "alarm", "env_sound_confidence": 0.48,
-                   "env_sound_source": "ast+heuristic",
-                   "onnx_top_class": "class_515", "onnx_confidence": 0.17 },
+    "env_sound": { "env_sound_label": "impact", "env_sound_confidence": 0.72,
+                   "env_sound_source": "hf-ast",
+                   "ast_top_class": "Slam", "ast_top_confidence": 0.45,
+                   "audio_ts_ms": 1779943598500,
+                   "audio_ts_start_ms": 1779943595700,
+                   "audio_duration_ms": 2800, "audio_window_ms": 4000 },
     "speech_ko": { "transcript_ko": "도와줘", "speech_detected": true,
                    "stt_confidence": 0.87, "language": "ko",
                    "keywords": [], "occupied": true, "occupancy_score": 0.9 }
@@ -202,6 +206,7 @@ api        ──WS──────▶ 앱 클라이언트
   "expert_latency_ms": { "fall": 1.5, "vital": 0.9, "env_sound": 191.0, "speech_ko": 188.0 },
   "model_latency_ms": { "qwen": 340 }
 }</div>
+        <div class="info">최상위 <code>ts_ms</code> = CSI 시각. 소리 시각은 <code>experts.env_sound.audio_ts_ms</code> 사용.</div>
       </div>
     </div>
 
@@ -516,7 +521,7 @@ automation:
       <td>ai</td>
       <td>3,600</td>
       <td class="ttl">~1시간 @ 1 Hz</td>
-      <td class="note"><code>node</code> int, <code>ts_ms</code> int, <code>data</code> JSON bytes<br><small>{sample_rate, channels, duration_ms, peak_db, waveform[]}</small></td>
+      <td class="note"><code>node</code> int, <code>ts_ms</code> int, <code>data</code> JSON bytes<br><small>{sample_rate, channels, duration_ms, peak_db, waveform[]}</small><br><small>소비: ai가 csi:raw 트리거 시 xrevrange 역조회</small></td>
     </tr>
     <tr>
       <td class="key">ai:result</td>
@@ -650,7 +655,18 @@ automation:
     <tr><td class="key">peak_db</td><td class="type">float</td><td>피크 음압 (dBFS)</td></tr>
     <tr><td class="key">waveform</td><td class="type">float32[]</td><td>정규화 PCM 샘플</td></tr>
   </table>
-  <div class="info">M3 배경음 분류: 최근 <b>3초</b> 이벤트 병합 | M4 한국어 STT: 최근 <b>5초</b> 이벤트 병합</div>
+  <div class="info">M3 배경음: 최근 <b>M3_AUDIO_WINDOW_MS</b> (기본 4s) 이벤트 병합, 뒤에서 자름 | M4 STT: 5s | 라벨 6종: silence/speech/impact/noise/alarm/unknown</div>
+
+  <h3>M3 env_sound_label (6종)</h3>
+  <table>
+    <tr><th>라벨</th><th>의미</th></tr>
+    <tr><td class="key">silence</td><td>무음</td></tr>
+    <tr><td class="key">speech</td><td>사람 음성</td></tr>
+    <tr><td class="key">impact</td><td>충격음</td></tr>
+    <tr><td class="key">noise</td><td>잡음 (TV/음악 포함)</td></tr>
+    <tr><td class="key">alarm</td><td>경보음</td></tr>
+    <tr><td class="key">unknown</td><td>기타</td></tr>
+  </table>
 
   <h3>VAD 설정 (audio-sensing 프로필)</h3>
   <table>
