@@ -168,6 +168,9 @@ TOKEN_TTL_SECONDS = int(os.getenv("TOKEN_TTL_SECONDS", "3600"))
 SETTINGS_TTL_SECONDS = int(os.getenv("SETTINGS_TTL_SECONDS", "3600"))
 ALERT_DEDUP_TTL_SECONDS = int(os.getenv("ALERT_DEDUP_TTL_SECONDS", "3600"))
 AUDIO_STREAM_MAXLEN = int(os.getenv("AUDIO_STREAM_MAXLEN", "3600"))
+AUDIO_CLIP_KEY_PREFIX = "ai:clip:"
+AUDIO_CLIP_TTL_SECONDS = int(os.getenv("AUDIO_CLIP_TTL_SECONDS", "3600"))
+AUDIO_CLIP_POST_WAIT_MS = int(os.getenv("AUDIO_CLIP_POST_WAIT_MS", "15000"))
 CSI_STREAM_MAXLEN = int(os.getenv("CSI_STREAM_MAXLEN", "36000"))
 REDIS_MEMORY_WARN_BYTES = int(os.getenv("REDIS_MEMORY_WARN_BYTES", str(512 * 1024 * 1024)))
 
@@ -240,6 +243,77 @@ async def _list_registered_tokens(redis_client) -> list[tuple[str, str]]:
     return tokens
 
 
+async def _capture_audio_clip(redis_client, ts_ms: int, node_id: int):
+    """
+    응급 이벤트 발생 시 전후 오디오 이벤트 메타데이터를 캡처해 Redis에 저장한다.
+    전 15초: 즉시 수집 / 후 15초: AUDIO_CLIP_POST_WAIT_MS 대기 후 수집
+    저장키: ai:clip:{ts_ms}  TTL: AUDIO_CLIP_TTL_SECONDS
+    """
+    pre_window_ms = 15000
+    post_window_ms = AUDIO_CLIP_POST_WAIT_MS
+
+    def _collect_events(entries, since_ms, until_ms):
+        results = []
+        for msg_id, fields in entries:
+            try:
+                event_ts = int(fields.get("ts_ms") or _stream_id_ts_ms(msg_id))
+            except Exception:
+                continue
+            if not (since_ms <= event_ts <= until_ms):
+                continue
+            try:
+                node = int(fields.get("node", 0))
+            except Exception:
+                node = 0
+            if node_id and node not in (0, node_id):
+                continue
+            payload = _parse_result_payload(fields.get("data", ""))
+            results.append({
+                "ts_ms": event_ts,
+                "peak_db": float(payload.get("peak_db", -120.0)),
+                "sample_count": len(payload.get("waveform") or []),
+                "sample_rate": int(payload.get("sample_rate", 16000)),
+                "duration_ms": int(payload.get("duration_ms", 0)),
+            })
+        return results
+
+    try:
+        # 전 15초 수집
+        pre_entries = await redis_client.xrevrange(AUDIO_STREAM, count=128)
+        pre_events = _collect_events(pre_entries, ts_ms - pre_window_ms, ts_ms)
+        pre_events.sort(key=lambda e: e["ts_ms"])
+
+        # 후 15초 대기
+        await asyncio.sleep(post_window_ms / 1000.0)
+
+        # 후 15초 수집
+        post_entries = await redis_client.xrange(
+            AUDIO_STREAM,
+            min=str(ts_ms),
+            max=str(ts_ms + post_window_ms),
+            count=128,
+        )
+        post_events = _collect_events(post_entries, ts_ms, ts_ms + post_window_ms)
+
+        clip = {
+            "ts_ms": ts_ms,
+            "node_id": node_id,
+            "pre_window_ms": pre_window_ms,
+            "post_window_ms": post_window_ms,
+            "pre_events": pre_events,
+            "post_events": post_events,
+            "total_events": len(pre_events) + len(post_events),
+            "captured_at_ms": int(time.time() * 1000),
+        }
+        clip_key = f"{AUDIO_CLIP_KEY_PREFIX}{ts_ms}"
+        await redis_client.set(clip_key, json.dumps(clip, ensure_ascii=False),
+                               ex=AUDIO_CLIP_TTL_SECONDS)
+        _log(logging.INFO, "audio_clip_captured", ts_ms=ts_ms, node_id=node_id,
+             pre=len(pre_events), post=len(post_events))
+    except Exception as exc:
+        _log(logging.WARNING, "audio_clip_failed", ts_ms=ts_ms, error=str(exc))
+
+
 async def _alert_worker(redis_client):
     last_id = "$"
     while True:
@@ -256,6 +330,11 @@ async def _alert_worker(redis_client):
 
                     if payload["risk_level"] != "critical":
                         continue
+
+                    # 응급 오디오 클립 캡처 (비블로킹)
+                    asyncio.create_task(
+                        _capture_audio_clip(redis_client, payload["ts_ms"], payload["node_id"])
+                    )
 
                     for device_id, token in await _list_registered_tokens(redis_client):
                         dedupe_key = f"notify:sent:{msg_id}:{device_id}"
@@ -559,6 +638,16 @@ async def get_system_health():
         },
         "ts_ms": int(time.time() * 1000),
     }
+
+
+@app.get("/emergency/clip/{ts_ms}")
+async def get_emergency_clip(ts_ms: int):
+    """응급 이벤트 오디오 클립 메타데이터 조회. ai:clip:{ts_ms} → JSON."""
+    redis_client = await _ensure_redis()
+    raw = await redis_client.get(f"{AUDIO_CLIP_KEY_PREFIX}{ts_ms}")
+    if not raw:
+        return JSONResponse({"error": "clip not found", "ts_ms": ts_ms}, status_code=404)
+    return json.loads(raw)
 
 
 @app.post("/audio/events")

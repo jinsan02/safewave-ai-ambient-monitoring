@@ -62,8 +62,10 @@ class EnvSoundAnalysisModel:
         else:
             confidence = 0.0
         return {
-            "onnx_top_class": f"class_{label_idx}",
-            "onnx_confidence": confidence,
+            "onnx_top_class": f"class_{label_idx}",   # 하위 호환
+            "ast_top_class": f"class_{label_idx}",
+            "onnx_confidence": confidence,             # 하위 호환 (infer 내부 참조용)
+            "ast_top_confidence": confidence,
         }
 
     def _heuristic_label(self, data):
@@ -97,8 +99,10 @@ class EnvSoundAnalysisModel:
     def _classify_fallback(self, data):
         label, confidence = self._heuristic_label(data)
         return {
-            "env_sound_label": label,
-            "env_sound_confidence": confidence,
+            "env_sound_label": label,   # 하위 호환
+            "label": label,
+            "env_sound_confidence": confidence,  # 하위 호환
+            "confidence": confidence,
         }
 
     def infer(self, input_data):
@@ -117,16 +121,16 @@ class EnvSoundAnalysisModel:
         if onnx is not None:
             confidence = float(np.clip(0.5 * confidence + 0.5 * float(onnx["onnx_confidence"]), 0.0, 1.0))
 
+        source = "onnx" if onnx is not None else "heuristic"
         result = {
             "env_sound_label": label,
             "env_sound_confidence": confidence,
-            "env_sound_source": "ast+heuristic" if onnx is not None else "heuristic",
-            # 하위 호환 키 (기존 activity UI/로직 유지)
+            "env_sound_source": source,
             "activity": label,
             "activity_confidence": confidence,
         }
         if onnx is not None:
-            result.update(onnx)
+            result.update(onnx)  # onnx_top_class, ast_top_class, onnx_confidence, ast_top_confidence
         return result
 
 

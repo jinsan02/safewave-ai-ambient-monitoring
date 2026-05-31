@@ -94,6 +94,27 @@ services:
     networks:
       - rp5-network
 
+  tts-worker:
+    build: ./api
+    container_name: rp5-tts-worker
+    restart: always
+    profiles:
+      - audio
+    depends_on:
+      - mqtt
+    env_file: .env
+    environment:
+      - MQTT_HOST=mqtt
+      - MQTT_PORT=1883
+      - TTS_VOICE=ko-KR-SunHiNeural
+      - TTS_COOLDOWN_SEC=120
+      - TTS_OUTPUT_DIR=/app/tts
+    volumes:
+      - ./volumes/logs/tts:/app/tts
+    command: ["python", "/app/../scripts/tts_worker.py"]
+    networks:
+      - rp5-network
+
   homeassistant:
     image: ghcr.io/home-assistant/home-assistant:stable
     container_name: rp5-ha

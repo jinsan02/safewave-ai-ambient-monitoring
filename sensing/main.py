@@ -38,26 +38,37 @@ def connect_redis() -> redis.Redis:
 
 
 # ── 패킷 파싱 ────────────────────────────────────────────────
+_PKT_MAGIC      = b"CSI!"
+_PKT_NEW_SIZE   = 20                          # "<4sBBHIIhH"
+_PKT_NEW_STRUCT = struct.Struct("<4sBBHIIhH")
+_PKT_OLD_SIZE   = 8
+
+
 def parse_packet(raw_bytes: bytes):
     """
-    헤더(8 bytes): node_id(uint8) + reserved(1) + n_samples(uint16) + timestamp_ms(uint32)
-    페이로드: n_samples × float32
+    신규(20B): magic"CSI!" + node_id(B) + rsv(B) + n_samples(H) + seq_num(u32) + ts_ms(u32) + rssi(i16) + rsv2(H)
+    구형(8B):  node_id(B) + seq(B) + n_samples(H) + ts_ms(u32)  [레거시 폴백]
+    반환: (node_id, ts_ms, samples, seq, rssi)  — rssi는 구형 패킷일 때 None
     """
-    if len(raw_bytes) < 8:
-        return None, None, None, None
-
-    node_id   = raw_bytes[0]
-    seq       = raw_bytes[1]
-    n_samples = struct.unpack_from("<H", raw_bytes, 2)[0]
-    ts_ms     = struct.unpack_from("<I", raw_bytes, 4)[0]
-    payload   = raw_bytes[8:]
+    if len(raw_bytes) >= _PKT_NEW_SIZE and raw_bytes[:4] == _PKT_MAGIC:
+        _, node_id, _rsv, n_samples, seq, ts_ms, rssi, _rsv2 = _PKT_NEW_STRUCT.unpack_from(raw_bytes)
+        payload = raw_bytes[_PKT_NEW_SIZE:]
+    elif len(raw_bytes) >= _PKT_OLD_SIZE:
+        node_id   = raw_bytes[0]
+        seq       = raw_bytes[1]
+        n_samples = struct.unpack_from("<H", raw_bytes, 2)[0]
+        ts_ms     = struct.unpack_from("<I", raw_bytes, 4)[0]
+        rssi      = None
+        payload   = raw_bytes[_PKT_OLD_SIZE:]
+    else:
+        return None, None, None, None, None
 
     expected = n_samples * 4
     if len(payload) < expected:
-        return None, None, None, None
+        return None, None, None, None, None
 
     samples = np.frombuffer(payload[:expected], dtype=np.float32).copy()
-    return node_id, ts_ms, samples, seq
+    return node_id, ts_ms, samples, seq, rssi
 
 
 # ── 수신 + 적재 루프 ─────────────────────────────────────────
@@ -70,14 +81,15 @@ def receive_loop(sock: socket.socket, r: redis.Redis):
     while True:
         try:
             data, addr = sock.recvfrom(4096)
-            node_id, ts_ms, samples, seq = parse_packet(data)
+            node_id, ts_ms, samples, seq, rssi = parse_packet(data)
 
             if samples is None:
                 # 헤더 없는 레거시 패킷: 전체를 float32 배열로 처리
                 samples = np.frombuffer(data, dtype=np.float32).copy()
                 node_id = 0
                 ts_ms   = int(time.time() * 1000) & 0xFFFFFFFF
-                seq = None
+                seq  = None
+                rssi = None
 
             processed = preprocess_csi(samples, fs=FS)
 
@@ -101,25 +113,29 @@ def receive_loop(sock: socket.socket, r: redis.Redis):
                 state["rx"] += 1
                 if seq is not None:
                     prev = node_seq_state.get(node_id)
+                    # 신규 포맷(rssi 포함)은 uint32 롤오버, 구형은 uint8 롤오버
+                    seq_wrap = (1 << 32) if rssi is not None else 256
                     if prev is not None and seq != prev:
-                        step = (int(seq) - int(prev)) % 256
+                        step = (int(seq) - int(prev)) % seq_wrap
                         if step > 1:
                             state["lost"] += (step - 1)
                     node_seq_state[node_id] = int(seq)
 
                 denom = state["rx"] + state["lost"]
                 loss_rate = (state["lost"] / denom) if denom > 0 else 0.0
-                r.hset(
-                    f"node:{node_id}:health",
-                    mapping={
-                        "last_seen": time.time(),
-                        "last_seq": int(seq) if seq is not None else -1,
-                        "rx": state["rx"],
-                        "lost": state["lost"],
-                        "loss_rate": round(loss_rate, 6),
-                    },
-                )
-                r.expire(f"node:{node_id}:health", 3600)
+                health_map = {
+                    "last_seen": time.time(),
+                    "last_seq": int(seq) if seq is not None else -1,
+                    "rx": state["rx"],
+                    "lost": state["lost"],
+                    "loss_rate": round(loss_rate, 6),
+                }
+                if rssi is not None:
+                    health_map["rssi"] = int(rssi)
+                pipe = r.pipeline()
+                pipe.hset(f"node:{node_id}:health", mapping=health_map)
+                pipe.expire(f"node:{node_id}:health", 3600)
+                pipe.execute()
 
         except redis.exceptions.ConnectionError as exc:
             print(f"[sensing] Redis error: {exc}, reconnecting…", flush=True)

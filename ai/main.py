@@ -11,6 +11,7 @@ import redis as _redis
 from experts import m1_wifi_pose, m2_frenel_vital, m3_ast_base, m4_whisper_small
 from mqtt_helper import make_client, publish_json, topic
 from logic.qwen_05b import QwenLogic
+from logic.emergency_score import compute_emergency_score
 from utils import TurboQuant
 
 
@@ -33,6 +34,7 @@ M3_AUDIO_WINDOW_MS = int(os.getenv("M3_AUDIO_WINDOW_MS", "3000"))
 M4_AUDIO_WINDOW_MS = int(os.getenv("M4_AUDIO_WINDOW_MS", "5000"))
 SLM_MIN_INTERVAL_MS = int(os.getenv("SLM_MIN_INTERVAL_MS", "3000"))
 STREAM_START_ID = os.getenv("CSI_STREAM_START_ID", "0-0")
+CSI_BACKLOG_SKIP_STREAK = int(os.getenv("CSI_BACKLOG_SKIP_STREAK", "5"))
 EXPERT_INFER_TIMEOUT_MS = int(os.getenv("EXPERT_INFER_TIMEOUT_MS", "1000"))
 MQTT_ENABLED = os.getenv("MQTT_ENABLED", "1").lower() not in {"0", "false", "no"}
 MQTT_HOST = os.getenv("MQTT_HOST", "mqtt")
@@ -175,9 +177,12 @@ class AIEngine:
     def _empty_output(self, name):
         if name == "env_sound":
             return {
-                "env_sound_label": "silence",
-                "env_sound_confidence": 0.0,
-                "env_sound_source": "no-audio",
+                "env_sound_label": "silence",    # 하위 호환
+                "label": "silence",
+                "env_sound_confidence": 0.0,     # 하위 호환
+                "confidence": 0.0,
+                "env_sound_source": "no-audio",  # 하위 호환
+                "source": "no-audio",
                 "activity": "silence",
                 "activity_confidence": 0.0,
             }
@@ -499,6 +504,7 @@ def _build_snapshot(ts_ms: int, node_id: int, result: dict, audio_result: dict |
             "qwen": result.get("qwen_infer_ms")
         },
         "expert_latency_ms": result.get("expert_latency_ms", {}),
+        "emergency_breakdown": result.get("emergency_breakdown"),
     }
 
 
@@ -590,36 +596,6 @@ def _write_expert_latest(r, expert_name: str, node_id: int, ts_ms: int, output: 
     r.set(key, json.dumps(payload, ensure_ascii=False), ex=EXPERT_LATEST_TTL_SECONDS)
 
 
-def _collect_expert_risk_scores(expert_results: dict) -> list[float]:
-    scores: list[float] = []
-    for output in expert_results.values():
-        if not isinstance(output, dict):
-            continue
-        for key in (
-            "risk_score",
-            "fall_score",
-            "env_sound_confidence",
-            "stt_confidence",
-            "occupancy_score",
-            "activity_confidence",
-        ):
-            if key in output:
-                val = _safe_float(output.get(key), default=-1.0)
-                if val >= 0.0:
-                    scores.append(float(np.clip(val, 0.0, 1.0)))
-    return scores
-
-
-def _aggregate_expert_risk(expert_results: dict) -> float:
-    scores = _collect_expert_risk_scores(expert_results)
-    if not scores:
-        return 0.0
-    return float(np.clip(max(scores), 0.0, 1.0))
-
-
-def _should_invoke_slm(expert_results: dict, threshold: float) -> tuple[bool, float]:
-    max_expert_score = _aggregate_expert_risk(expert_results)
-    return max_expert_score >= threshold, max_expert_score
 
 
 def _decode_csi_payload(raw: Any) -> np.ndarray:
@@ -660,6 +636,7 @@ if __name__ == "__main__":
 
     last_id = STREAM_START_ID
     last_slm_invoked_at_ms = 0
+    _backlog_streak = 0
     while True:
         try:
             settings = _load_settings(r)
@@ -669,6 +646,7 @@ if __name__ == "__main__":
 
             entries = r.xread({"csi:raw": last_id}, count=10, block=1000)
             if not entries:
+                _backlog_streak = 0
                 continue
 
             for _stream, messages in entries:
@@ -711,16 +689,30 @@ if __name__ == "__main__":
                         expert_inputs=expert_inputs,
                     )
                     for expert_name, output in expert_results.items():
+                        write_output = output
+                        if expert_name == "env_sound":
+                            audio_in  = expert_inputs.get("env_sound") or {}
+                            audio_ts  = audio_in.get("ts_ms")
+                            audio_dur = audio_in.get("duration_ms")
+                            write_output = {
+                                **output,
+                                "audio_ts_ms": audio_ts,
+                                "audio_ts_start_ms": (audio_ts - audio_dur)
+                                    if (audio_ts is not None and audio_dur is not None) else None,
+                                "audio_duration_ms": audio_dur,
+                                "audio_window_ms": audio_in.get("window_ms"),
+                            }
                         _write_expert_latest(
                             r,
                             expert_name,
                             node_id,
                             ts_ms,
-                            output,
+                            write_output,
                             expert_latency_ms.get(expert_name, 0.0),
                         )
 
-                    invoke_slm, max_expert_score = _should_invoke_slm(expert_results, threshold)
+                    emg_score, emg_breakdown = compute_emergency_score(expert_results)
+                    invoke_slm = emg_score >= threshold
                     now_ms = int(time.time() * 1000)
                     if invoke_slm and (now_ms - last_slm_invoked_at_ms) < SLM_MIN_INTERVAL_MS:
                         invoke_slm = False
@@ -728,20 +720,22 @@ if __name__ == "__main__":
                     if invoke_slm:
                         result = ai_engine.fuse_results(expert_results, context_window=context_window)
                         result["slm_invoked"] = True
+                        result["emergency_breakdown"] = emg_breakdown
                         last_slm_invoked_at_ms = now_ms
                     else:
                         skip_reason = "below_threshold"
-                        if max_expert_score >= threshold:
+                        if emg_score >= threshold:
                             skip_reason = "cooldown"
                         result = {
                             "emergency": False,
                             "risk_level": "normal",
-                            "risk_score": round(float(max_expert_score), 4),
+                            "risk_score": round(float(emg_score), 4),
                             "experts": expert_results,
                             "context_used": False,
                             "qwen_infer_ms": None,
                             "slm_invoked": False,
                             "slm_skip_reason": skip_reason,
+                            "emergency_breakdown": emg_breakdown,
                         }
 
                     result["expert_latency_ms"] = expert_latency_ms
@@ -761,6 +755,20 @@ if __name__ == "__main__":
                         expert_latency_ms=result.get("expert_latency_ms", {}),
                     )
                     last_id = msg_id
+
+            # 백로그 스킵: full batch가 연속되면 최신으로 점프
+            total_batch = sum(len(m) for _, m in entries)
+            if total_batch >= 10:
+                _backlog_streak += 1
+                if _backlog_streak >= CSI_BACKLOG_SKIP_STREAK:
+                    tail = r.xrevrange("csi:raw", count=1)
+                    if tail:
+                        last_id = tail[0][0]
+                        _log(logging.WARNING, "csi_backlog_skipped",
+                             jumped_to=str(last_id), streak=_backlog_streak)
+                    _backlog_streak = 0
+            else:
+                _backlog_streak = 0
 
         except _redis.exceptions.ConnectionError as exc:
             _log(logging.ERROR, "redis_lost", error=str(exc), action="reconnect")

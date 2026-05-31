@@ -82,26 +82,41 @@ def send_risk_notification(token: str, risk_score: float, risk_level: str,
     payload = {"risk_score": risk_score, "risk_level": risk_level, "emergency": emergency}
     if extra:
         payload.update(extra)
-    return _send_fcm(token, title, body, payload)
+    is_critical = risk_level == "critical" or emergency or risk_score >= 0.85
+    return _send_fcm(token, title, body, payload, critical=is_critical)
 
 
 # ── 공통 전송 함수 ────────────────────────────────────────────
-def _send_fcm(token: str, title: str, body: str, extra: dict[str, Any] | None = None) -> str:
+def _send_fcm(token: str, title: str, body: str, extra: dict[str, Any] | None = None,
+              critical: bool = False) -> str:
     if extra is None:
         extra = {}
     if not firebase_admin._apps:
         raise RuntimeError("Firebase not initialized — key file missing")
 
+    # Android: emergency_alarm 채널 + 잠금화면 노출 + 최고 우선순위
+    android_notif = messaging.AndroidNotification(
+        channel_id="emergency_alarm" if critical else "safety_alert",
+        priority="max" if critical else "high",
+        visibility="public",
+        notification_count=1,
+    )
+    # iOS: critical=True는 무음/방해금지 우회 (앱 entitlement 필요)
+    apns_sound = messaging.CriticalSound(name="alarm.wav", critical=True, volume=1.0) if critical \
+        else messaging.CriticalSound(name="default")
+    apns_payload = messaging.APNSPayload(
+        aps=messaging.Aps(sound=apns_sound, badge=1)
+    )
+
     msg = messaging.Message(
         notification=messaging.Notification(title=title, body=body),
         data={k: str(v) for k, v in extra.items()},
         token=token,
-        android=messaging.AndroidConfig(priority="high"),
-        apns=messaging.APNSConfig(
-            payload=messaging.APNSPayload(
-                aps=messaging.Aps(sound="default")
-            )
+        android=messaging.AndroidConfig(
+            priority="high",
+            notification=android_notif,
         ),
+        apns=messaging.APNSConfig(payload=apns_payload),
     )
     return messaging.send(msg)
 

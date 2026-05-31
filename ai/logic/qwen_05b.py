@@ -44,7 +44,7 @@ class QwenLogic:
         self.hourly_emergency_scan_limit = int(os.getenv("SLM_HOURLY_EMERGENCY_SCAN_LIMIT", "600"))
         self.hourly_speech_sample_limit = int(os.getenv("SLM_HOURLY_SPEECH_SAMPLE_LIMIT", "8"))
         self.hourly_event_sample_limit = int(os.getenv("SLM_HOURLY_EVENT_SAMPLE_LIMIT", "8"))
-        self.hourly_cache_ms = int(os.getenv("SLM_HOURLY_CACHE_MS", "3000"))
+        self.hourly_cache_ms = int(os.getenv("SLM_HOURLY_CACHE_MS", "10000"))
         self.redis_client = None
         self._hourly_cache_at_ms = 0
         self._hourly_cache_data = None
@@ -83,12 +83,8 @@ class QwenLogic:
     def _load_model(self, onnx_path, model_dir=None):
         """ONNX 모델 및 토크나이저 로드"""
         try:
-            # ONNX Runtime 세션 생성
-            available = ort.get_available_providers()
-            providers = []
-            if "CUDAExecutionProvider" in available:
-                providers.append("CUDAExecutionProvider")
-            providers.append("CPUExecutionProvider")
+            from utils import get_ort_providers
+            providers = get_ort_providers()
             session_opts = ort.SessionOptions()
             session_opts.intra_op_num_threads = 4
             session_opts.inter_op_num_threads = 2

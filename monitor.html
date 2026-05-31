@@ -40,9 +40,19 @@
     .chart-wrap { position: relative; height: 220px; }
     #minute-chart { display: block; }
     #hour-chart { display: block; }
-    .reason-banner { background:#211f2f; border:1px solid #3a3457; border-radius:12px; padding:12px 14px; margin-bottom:12px; }
+    .reason-banner { background:#211f2f; border:1px solid #3a3457; border-radius:12px; padding:12px 14px; margin-bottom:12px; transition: background 0.3s, border-color 0.3s; }
+    .reason-banner.critical { background:#2d1a1a; border-color:#ff5252; animation: flash-border 1s ease-in-out 3; }
+    @keyframes flash-border { 0%,100%{border-color:#ff5252} 50%{border-color:#ff9090} }
     .reason-title { font-size:12px; color:#a79ad8; margin-bottom:6px; text-transform: uppercase; letter-spacing: 0.7px; }
     .reason-text { font-size:13px; color:#ece8ff; line-height:1.4; }
+    .breakdown-panel { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:12px; }
+    .bk-box { background:#1e2130; border-radius:8px; padding:10px 12px; border-top:3px solid #2a2d3a; }
+    .bk-box.bk-high { border-top-color:#ffb300; }
+    .bk-box.bk-critical { border-top-color:#ff5252; }
+    .bk-label { font-size:10px; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px; }
+    .bk-score { font-size:18px; font-weight:bold; color:#e0e0e0; }
+    .bk-bar { height:4px; background:#2a2d3a; border-radius:2px; margin-top:6px; }
+    .bk-fill { height:100%; border-radius:2px; transition: width 0.3s; }
     #experts { display: grid; grid-template-columns: repeat(2,1fr); gap: 10px; }
     .exp-box { background: #252838; border-radius: 8px; padding: 12px; font-size: 13px; }
     .exp-label { color: #888; font-size: 11px; margin-bottom: 4px; }
@@ -106,6 +116,29 @@
   </div>
 
   <h3 style="color:#aaa; font-size:14px; margin-bottom:8px;">실시간 로그</h3>
+  <div class="breakdown-panel" id="breakdown-panel">
+    <div class="bk-box" id="bk-fall">
+      <div class="bk-label">낙상 M1</div>
+      <div class="bk-score" id="bk-fall-score">—</div>
+      <div class="bk-bar"><div class="bk-fill" id="bk-fall-fill" style="width:0%;background:#4fc3f7"></div></div>
+    </div>
+    <div class="bk-box" id="bk-vital">
+      <div class="bk-label">바이탈 M2</div>
+      <div class="bk-score" id="bk-vital-score">—</div>
+      <div class="bk-bar"><div class="bk-fill" id="bk-vital-fill" style="width:0%;background:#69f0ae"></div></div>
+    </div>
+    <div class="bk-box" id="bk-sound">
+      <div class="bk-label">환경음 M3</div>
+      <div class="bk-score" id="bk-sound-score">—</div>
+      <div class="bk-bar"><div class="bk-fill" id="bk-sound-fill" style="width:0%;background:#ce93d8"></div></div>
+    </div>
+    <div class="bk-box" id="bk-speech">
+      <div class="bk-label">음성 M4</div>
+      <div class="bk-score" id="bk-speech-score">—</div>
+      <div class="bk-bar"><div class="bk-fill" id="bk-speech-fill" style="width:0%;background:#ffcc80"></div></div>
+    </div>
+  </div>
+
   <div class="reason-banner" id="reason-banner">
     <div class="reason-title">SLM 판단 근거</div>
     <div class="reason-text" id="reason-text">아직 판단 근거가 없습니다.</div>
@@ -483,7 +516,26 @@
         document.getElementById('card-occ').className = 'card ' + (ex.speech_ko.speech_detected ? 'normal' : '');
       }
 
+      // 응급지수 도메인 분해 (emergency_breakdown)
+      const bd = data.emergency_breakdown || {};
+      function setBk(id, val) {
+        const score = typeof val === 'number' ? val : 0;
+        const pct = (score * 100).toFixed(0);
+        document.getElementById(`bk-${id}-score`).textContent = score.toFixed(2);
+        document.getElementById(`bk-${id}-fill`).style.width = pct + '%';
+        const box = document.getElementById(`bk-${id}`);
+        box.classList.remove('bk-high', 'bk-critical');
+        if (score >= 0.7) box.classList.add('bk-critical');
+        else if (score >= 0.4) box.classList.add('bk-high');
+      }
+      setBk('fall',   bd.fall);
+      setBk('vital',  bd.vital);
+      setBk('sound',  bd.sound);
+      setBk('speech', bd.speech);
+
       const reasonEl = document.getElementById('reason-text');
+      const banner = document.getElementById('reason-banner');
+      banner.classList.toggle('critical', level === 'critical');
       if (reasonText) {
         const outlier = data.is_outlier ? 'outlier' : 'stable';
         const corr = data.correlated_with_history ? 'history-correlated' : 'history-weak';
