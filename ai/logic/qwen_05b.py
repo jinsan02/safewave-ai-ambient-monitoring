@@ -37,8 +37,8 @@ class QwenLogic:
         self.model_path = model_path
         self.session = None
         self.tokenizer = None
-        self.max_new_tokens = int(os.getenv("QWEN_MAX_NEW_TOKENS", "24"))
-        self.max_new_tokens = max(16, min(32, self.max_new_tokens))
+        self.max_new_tokens = int(os.getenv("QWEN_MAX_NEW_TOKENS", "128"))
+        self.max_new_tokens = max(96, min(192, self.max_new_tokens))
         self.hourly_window_ms = int(os.getenv("SLM_HOURLY_WINDOW_MS", "3600000"))
         self.hourly_result_scan_limit = int(os.getenv("SLM_HOURLY_RESULT_SCAN_LIMIT", "1800"))
         self.hourly_emergency_scan_limit = int(os.getenv("SLM_HOURLY_EMERGENCY_SCAN_LIMIT", "600"))
@@ -258,100 +258,57 @@ class QwenLogic:
         return context
     
     def _build_analysis_prompt(self, expert_results, context_window=None, hourly_context=None):
-        """
-        M1-M4 결과를 Qwen이 이해하는 분석 프롬프트로 변환
-        """
+        """few-shot 예시로 Qwen-0.5B가 실제 값을 생성하도록 유도."""
         fall = expert_results.get("fall", {})
         vital = expert_results.get("vital", {})
         env_sound = expert_results.get("env_sound", {})
         speech_ko = expert_results.get("speech_ko", {})
-        transcript = speech_ko.get("transcript_ko", "")
 
-        findings = []
-        if fall.get("fall_detected", False):
-            findings.append("낙상 감지됨")
         hr = float(vital.get("heart_rate", 0.0) or 0.0)
         rr = float(vital.get("breathing_rate", 0.0) or 0.0)
+        fall_score = float(fall.get("fall_score", 0.0) or 0.0)
+        fall_detected = bool(fall.get("fall_detected", False))
+        env_label = str(env_sound.get("env_sound_label", "unknown"))
+        transcript = str(speech_ko.get("transcript_ko", "")).strip()
+
+        findings = []
+        if fall_detected:
+            findings.append("낙상감지")
         if hr and (hr < 60 or hr > 100):
-            findings.append(f"심박 이상 가능(hr={hr:.0f})")
+            findings.append(f"심박이상(hr={hr:.0f})")
         if rr and (rr < 12 or rr > 25):
-            findings.append(f"호흡 이상 가능(rr={rr:.0f})")
-        if env_sound.get("env_sound_label") in {"impact", "alarm"}:
-            findings.append(f"고위험 환경음({env_sound.get('env_sound_label')})")
+            findings.append(f"호흡이상(rr={rr:.0f})")
+        if env_label in {"impact", "alarm"}:
+            findings.append(f"위험음({env_label})")
         if transcript and any(kw in transcript for kw in ["살려", "도와", "응급", "위험", "119", "불", "화재"]):
-            findings.append("긴급 키워드 음성 감지")
+            findings.append("긴급키워드")
 
-        context_text = ""
+        findings_str = ", ".join(findings) if findings else "정상"
+
+        ctx_note = ""
         if context_window:
-            critical_count = int(context_window.get("recent_critical_count", 0))
-            warning_count = int(context_window.get("recent_warning_count", 0))
-            context_text = f"최근 맥락: critical={critical_count}, warning={warning_count}"
-
-        hourly_text = ""
+            cc = int(context_window.get("recent_critical_count", 0))
+            wc = int(context_window.get("recent_warning_count", 0))
+            if cc or wc:
+                ctx_note = f", 최근이력:critical={cc},warning={wc}"
         if hourly_context:
-            speech_samples = hourly_context.get("speech_samples", [])
-            events = hourly_context.get("important_events", [])
-            hourly_text = (
-                f"지난 {hourly_context.get('window_minutes', 60)}분: "
-                f"warning={hourly_context.get('warning_count', 0)}, "
-                f"critical={hourly_context.get('critical_count', 0)}, "
-                f"{hourly_context.get('heart_rate_trend', '심박 추세 없음')}, "
-                f"{hourly_context.get('breathing_rate_trend', '호흡 추세 없음')}, "
-                f"음성샘플={speech_samples if speech_samples else '(없음)'}, "
-                f"중요이벤트={events if events else '(없음)'}"
-            )
-        
-        # 타임스탐프
-        timestamp = ""
-        if context_window and context_window.get("current_time"):
-            timestamp = f"[{context_window['current_time']}] "
-        
-        # 모델별 추론 신뢰도
-        def _fmt_conf(d, key="infer_confidence"):
-            v = d.get(key)
-            return f"{v:.0%}" if v is not None else "?"
+            hc = int(hourly_context.get("critical_count", 0))
+            hw = int(hourly_context.get("warning_count", 0))
+            if hc or hw:
+                ctx_note += f", 1h:c={hc},w={hw}"
 
-        conf_line = (
-            f"M1(낙상)={_fmt_conf(fall)}"
-            f" M2(생체)={_fmt_conf(vital)}"
-            f" M3(환경음)={_fmt_conf(env_sound)}"
-            f" M4(음성)={_fmt_conf(speech_ko)}"
+        return (
+            "[예시]\n"
+            "낙상:False(2%), 심박:72, 호흡:15, 환경음:silence, 이상소견:정상\n"
+            '-> {"risk_score":0.1,"risk_level":"normal","is_outlier":false,'
+            '"correlated_with_history":false,"reason":"정상범위"}\n\n'
+            "낙상:True(91%), 심박:45, 호흡:8, 환경음:impact, 이상소견:낙상감지,심박이상,위험음\n"
+            '-> {"risk_score":0.95,"risk_level":"critical","is_outlier":false,'
+            '"correlated_with_history":false,"reason":"낙상+심박이상+위험음"}\n\n'
+            f"[현재] 낙상:{fall_detected}({fall_score:.0%}), 심박:{hr:.0f}, 호흡:{rr:.0f}, "
+            f"환경음:{env_label}, 이상소견:{findings_str}{ctx_note}\n"
+            "->"
         )
-        src_line = (
-            f"M1={fall.get('infer_source','?')}"
-            f" M2={vital.get('infer_source','?')}"
-            f" M3={env_sound.get('env_sound_source','?')}"
-            f" M4={speech_ko.get('stt_source','?')}"
-        )
-
-        # 프롬프트 구성
-        prompt = f"""{timestamp}센서 데이터 분석 요청:
-
-[현재 상황 정보]
-- 낙상 감지: {fall.get('fall_detected', False)} (점수: {fall.get('fall_score', 0):.1%})
-- 심박수: {vital.get('heart_rate', 0):.0f} bpm (정상: 60-100)
-- 호흡수: {vital.get('breathing_rate', 0):.0f} bpm (정상: 12-20)
-- 환경음 분석: {env_sound.get('env_sound_label', 'unknown')} (레이블신뢰도: {env_sound.get('env_sound_confidence', 0):.1%})
-- 한국어 음성인식: {transcript if transcript else '(없음)'}
-- 음성 감지 점수: {speech_ko.get('stt_confidence', 0):.1%}
-- 핵심 이상 소견: {', '.join(findings) if findings else '(특이사항 없음)'}
-- 모델 추론 신뢰도: {conf_line}
-- 추론 방식: {src_line}
-- {context_text if context_text else '최근 맥락 정보 없음'}
-- {hourly_text if hourly_text else '최근 1시간 시계열 정보 없음'}
-
-[질문]
-현재 신호가 실제 응급 상황인지, 일시적 이상치(outlier)인지 판단해줘.
-반드시 JSON만 출력해:
-{{
-    "risk_score": 0.0,
-    "risk_level": "normal|warning|critical",
-    "is_outlier": false,
-    "correlated_with_history": false,
-    "reason": "한 줄 근거"
-}}"""
-        
-        return prompt
     
     def _extract_risk_score(self, response_text):
         """
@@ -490,8 +447,34 @@ class QwenLogic:
         if not self.session or not self.tokenizer:
             return None
         try:
+            system_content = (
+                "독거인 안전 모니터링 AI. 센서 데이터 분석 후 JSON만 출력.\n"
+                '스키마: {"risk_score":float,"risk_level":"normal|warning|critical",'
+                '"is_outlier":bool,"correlated_with_history":bool,"reason":"str"}\n'
+                "normal(<0.6), warning(0.6~0.85), critical(≥0.85)"
+            )
+
+            if hasattr(self.tokenizer, "apply_chat_template"):
+                messages = [
+                    {"role": "system", "content": system_content},
+                    {"role": "user", "content": prompt_text},
+                ]
+                formatted = self.tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
+            else:
+                # apply_chat_template 없을 때 Qwen-Instruct 포맷 직접 구성
+                formatted = (
+                    f"<|im_start|>system\n{system_content}<|im_end|>\n"
+                    f"<|im_start|>user\n{prompt_text}<|im_end|>\n"
+                    f"<|im_start|>assistant\n"
+                )
+
+            # JSON prefix forcing: { 를 입력에 추가해 모델이 JSON으로 시작하도록 강제
+            formatted += "{"
+
             inputs = self.tokenizer(
-                prompt_text, return_tensors="np", truncation=True, max_length=512
+                formatted, return_tensors="np", truncation=True, max_length=640
             )
             input_ids = inputs["input_ids"].astype(np.int64)
             attention_mask = inputs.get("attention_mask")
@@ -501,8 +484,14 @@ class QwenLogic:
                 attention_mask = attention_mask.astype(np.int64)
 
             if self.session_with_past is not None:
-                return self._generate_with_past(input_ids, attention_mask)
-            return self._generate_full_seq(input_ids, attention_mask)
+                raw = self._generate_with_past(input_ids, attention_mask)
+            else:
+                raw = self._generate_full_seq(input_ids, attention_mask)
+
+            if not raw:
+                return None
+            # 모델이 { 를 중복 생성했을 경우 정규화
+            return "{" + raw.lstrip("{")
         except Exception as e:
             _LOGGER.error("qwen_infer_failed error=%s", e)
             return None
