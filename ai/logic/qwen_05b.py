@@ -52,6 +52,7 @@ class QwenLogic:
         self._model_dir = None
         self._load_attempted = False
         self.session_with_past = None
+        self._is_merged_kv = False  # optimum 2.x single-file merged KV format
         self.feedback_topic_key = os.getenv("MQTT_FEEDBACK_REDIS_KEY", "mqtt:feedback:last")
 
         if redis is not None:
@@ -97,8 +98,13 @@ class QwenLogic:
             )
             _LOGGER.info("qwen_model_loaded path=%s", onnx_path)
 
-            # decoder_with_past 모델 로드 (있으면 사용, 없으면 full-seq 폴백)
-            if model_dir:
+            # optimum 2.x: single merged model with past_key_values inputs
+            in_names = {inp.name for inp in self.session.get_inputs()}
+            if "past_key_values.0.key" in in_names:
+                self._is_merged_kv = True
+                _LOGGER.info("qwen_merged_kv_detected — using _generate_merged_kv path")
+            elif model_dir:
+                # optimum 1.x: separate model_with_past.onnx
                 with_past_path = os.path.join(model_dir, "model_with_past.onnx")
                 if os.path.exists(with_past_path):
                     self.session_with_past = ort.InferenceSession(
@@ -374,6 +380,78 @@ class QwenLogic:
             feed["position_ids"] = position_ids
         return feed
 
+    def _get_kv_config(self):
+        """config.json에서 num_layers, num_kv_heads, head_dim 읽기."""
+        if self._model_dir:
+            cfg_path = os.path.join(self._model_dir, "config.json")
+            if os.path.exists(cfg_path):
+                try:
+                    with open(cfg_path) as f:
+                        cfg = json.load(f)
+                    num_layers = int(cfg.get("num_hidden_layers", 24))
+                    num_heads = int(cfg.get("num_attention_heads", 14))
+                    num_kv_heads = int(cfg.get("num_key_value_heads", num_heads))
+                    hidden_size = int(cfg.get("hidden_size", 896))
+                    head_dim = hidden_size // num_heads
+                    return num_layers, num_kv_heads, head_dim
+                except Exception:
+                    pass
+        return 24, 2, 64  # Qwen2-0.5B defaults
+
+    def _generate_merged_kv(self, input_ids, attention_mask):
+        """optimum 2.x merged 형식: prefill + decode를 단일 session으로 처리.
+
+        prefill: past_key_values = empty [1, kv_heads, 0, head_dim]
+        decode: past_key_values = 직전 present 출력
+        """
+        num_layers, num_kv_heads, head_dim = self._get_kv_config()
+        in_names = {inp.name for inp in self.session.get_inputs()}
+
+        # 빈 past KV (prefill용)
+        past_kv = {
+            f"past_key_values.{i}.{t}": np.zeros((1, num_kv_heads, 0, head_dim), dtype=np.float32)
+            for i in range(num_layers)
+            for t in ("key", "value")
+        }
+
+        cur_ids = input_ids  # [1, seq_len]
+        past_len = 0
+        generated = []
+
+        for _ in range(self.max_new_tokens):
+            cur_len = cur_ids.shape[1]
+            pos_ids = np.arange(past_len, past_len + cur_len, dtype=np.int64).reshape(1, -1)
+            cur_attn = np.ones((1, past_len + cur_len), dtype=np.int64)
+
+            feed = {}
+            if "input_ids" in in_names:
+                feed["input_ids"] = cur_ids
+            if "attention_mask" in in_names:
+                feed["attention_mask"] = cur_attn
+            if "position_ids" in in_names:
+                feed["position_ids"] = pos_ids
+            feed.update(past_kv)
+
+            outputs = self.session.run(None, feed)
+            out_names = [o.name for o in self.session.get_outputs()]
+            out_dict = {name: outputs[i] for i, name in enumerate(out_names)}
+
+            next_token = int(np.argmax(out_dict["logits"][0, -1, :]))
+            generated.append(next_token)
+
+            # present.i.key/value → past_key_values.i.key/value
+            past_kv = {
+                k.replace("present.", "past_key_values."): v
+                for k, v in out_dict.items() if k != "logits"
+            }
+            past_len += cur_len
+            cur_ids = np.array([[next_token]], dtype=np.int64)
+
+            if self.tokenizer.eos_token_id and next_token == self.tokenizer.eos_token_id:
+                break
+
+        return self.tokenizer.decode(generated, skip_special_tokens=True).strip() or None
+
     def _generate_full_seq(self, input_ids, attention_mask):
         """KV 캐시 없이 매 스텝 전체 시퀀스 재계산 (model_with_past 없을 때 폴백)."""
         generated = []
@@ -483,7 +561,9 @@ class QwenLogic:
             else:
                 attention_mask = attention_mask.astype(np.int64)
 
-            if self.session_with_past is not None:
+            if self._is_merged_kv:
+                raw = self._generate_merged_kv(input_ids, attention_mask)
+            elif self.session_with_past is not None:
                 raw = self._generate_with_past(input_ids, attention_mask)
             else:
                 raw = self._generate_full_seq(input_ids, attention_mask)

@@ -61,12 +61,13 @@ def convert_qwen_to_onnx():
         print("(This may take 2-5 minutes depending on GPU availability)")
         
         # Optimum CLI를 통한 변환
-        # optimum-cli export onnx --model Qwen/Qwen2-0.5B-Instruct volumes/models/qwen_05b
+        # text-generation-with-past: model.onnx(KV출력 포함) + model_with_past.onnx 두 파일 생성
+        # → _generate_with_past() KV 캐시 경로 활성화 (full-seq 대비 약 15-20x 빠름)
         cmd = [
             "optimum-cli",
             "export", "onnx",
             "--model", model_id,
-            "--task", "text-generation",  # Causal LM task
+            "--task", "text-generation-with-past",
             str(output_dir)
         ]
         

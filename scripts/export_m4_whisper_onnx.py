@@ -11,7 +11,9 @@ import sys
 from pathlib import Path
 
 
-DEFAULT_MODEL_ID = "openai/whisper-small"
+# SungBeom/whisper-small-ko: Korean AI Hub fine-tune, same architecture as whisper-small,
+# decoder_with_past 사용 가능, 한국어 WER 개선
+DEFAULT_MODEL_ID = "SungBeom/whisper-small-ko"
 DEFAULT_OUTPUT_DIR = Path("./volumes/models/whisper_onnx")
 
 
@@ -31,7 +33,7 @@ def export_whisper(model_id: str, output_dir: Path) -> None:
         "--model",
         model_id,
         "--task",
-        "automatic-speech-recognition",
+        "automatic-speech-recognition-with-past",
         str(output_dir),
     ]
     print("[m4] running:", " ".join(cmd))
