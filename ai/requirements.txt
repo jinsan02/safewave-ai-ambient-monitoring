@@ -1,9 +1,10 @@
 onnxruntime-gpu==1.18.0
-transformers==4.38.2
-tokenizers==0.15.2
+transformers>=4.46.0,<4.48.0
+tokenizers>=0.20.0,<0.22.0
 numpy==1.26.4
 redis==5.0.3
-huggingface-hub==0.21.4
+huggingface-hub>=0.24.0,<1.0
 regex>=2022.1.18
 paho-mqtt==2.1.0
 edge-tts==6.1.12
+optimum>=1.17.0,<1.18.0

@@ -51,6 +51,7 @@ class QwenLogic:
         self._onnx_file = None
         self._model_dir = None
         self._load_attempted = False
+        self.session_with_past = None
         self.feedback_topic_key = os.getenv("MQTT_FEEDBACK_REDIS_KEY", "mqtt:feedback:last")
 
         if redis is not None:
@@ -95,6 +96,17 @@ class QwenLogic:
                 sess_options=session_opts
             )
             _LOGGER.info("qwen_model_loaded path=%s", onnx_path)
+
+            # decoder_with_past 모델 로드 (있으면 사용, 없으면 full-seq 폴백)
+            if model_dir:
+                with_past_path = os.path.join(model_dir, "model_with_past.onnx")
+                if os.path.exists(with_past_path):
+                    self.session_with_past = ort.InferenceSession(
+                        with_past_path,
+                        providers=providers,
+                        sess_options=session_opts,
+                    )
+                    _LOGGER.info("qwen_with_past_loaded path=%s", with_past_path)
 
             # 토크나이저 로드
             if model_dir and os.path.exists(os.path.join(model_dir, "tokenizer.json")):
@@ -294,17 +306,37 @@ class QwenLogic:
         if context_window and context_window.get("current_time"):
             timestamp = f"[{context_window['current_time']}] "
         
+        # 모델별 추론 신뢰도
+        def _fmt_conf(d, key="infer_confidence"):
+            v = d.get(key)
+            return f"{v:.0%}" if v is not None else "?"
+
+        conf_line = (
+            f"M1(낙상)={_fmt_conf(fall)}"
+            f" M2(생체)={_fmt_conf(vital)}"
+            f" M3(환경음)={_fmt_conf(env_sound)}"
+            f" M4(음성)={_fmt_conf(speech_ko)}"
+        )
+        src_line = (
+            f"M1={fall.get('infer_source','?')}"
+            f" M2={vital.get('infer_source','?')}"
+            f" M3={env_sound.get('env_sound_source','?')}"
+            f" M4={speech_ko.get('stt_source','?')}"
+        )
+
         # 프롬프트 구성
         prompt = f"""{timestamp}센서 데이터 분석 요청:
 
 [현재 상황 정보]
-- 낙상 감지: {fall.get('fall_detected', False)} (신뢰도: {fall.get('fall_score', 0):.1%})
+- 낙상 감지: {fall.get('fall_detected', False)} (점수: {fall.get('fall_score', 0):.1%})
 - 심박수: {vital.get('heart_rate', 0):.0f} bpm (정상: 60-100)
 - 호흡수: {vital.get('breathing_rate', 0):.0f} bpm (정상: 12-20)
-- 환경음 분석: {env_sound.get('env_sound_label', 'unknown')} (신뢰도: {env_sound.get('env_sound_confidence', 0):.1%})
+- 환경음 분석: {env_sound.get('env_sound_label', 'unknown')} (레이블신뢰도: {env_sound.get('env_sound_confidence', 0):.1%})
 - 한국어 음성인식: {transcript if transcript else '(없음)'}
 - 음성 감지 점수: {speech_ko.get('stt_confidence', 0):.1%}
 - 핵심 이상 소견: {', '.join(findings) if findings else '(특이사항 없음)'}
+- 모델 추론 신뢰도: {conf_line}
+- 추론 방식: {src_line}
 - {context_text if context_text else '최근 맥락 정보 없음'}
 - {hourly_text if hourly_text else '최근 1시간 시계열 정보 없음'}
 
@@ -372,24 +404,95 @@ class QwenLogic:
         except Exception:
             return None
     
+    def _build_prefill_feed(self, input_ids, attention_mask):
+        seq_len = input_ids.shape[1]
+        position_ids = np.arange(seq_len, dtype=np.int64).reshape(1, -1)
+        valid = {inp.name for inp in self.session.get_inputs()}
+        feed = {}
+        if "input_ids" in valid:
+            feed["input_ids"] = input_ids
+        if "attention_mask" in valid:
+            feed["attention_mask"] = attention_mask
+        if "position_ids" in valid:
+            feed["position_ids"] = position_ids
+        return feed
+
+    def _generate_full_seq(self, input_ids, attention_mask):
+        """KV 캐시 없이 매 스텝 전체 시퀀스 재계산 (model_with_past 없을 때 폴백)."""
+        generated = []
+        for _ in range(self.max_new_tokens):
+            feed = self._build_prefill_feed(input_ids, attention_mask)
+            outputs = self.session.run(None, feed)
+            next_token_id = int(np.argmax(outputs[0][0, -1, :]))
+            generated.append(next_token_id)
+            input_ids = np.concatenate(
+                [input_ids, np.array([[next_token_id]], dtype=np.int64)], axis=1
+            )
+            attention_mask = np.concatenate(
+                [attention_mask, np.ones((1, 1), dtype=np.int64)], axis=1
+            )
+            if self.tokenizer.eos_token_id is not None and next_token_id == self.tokenizer.eos_token_id:
+                break
+        response = self.tokenizer.decode(generated, skip_special_tokens=True).strip()
+        return response if response else None
+
+    def _generate_with_past(self, input_ids, attention_mask):
+        """decoder_with_past KV 캐시 방식: prefill 1회 + 스텝마다 단일 토큰 추론."""
+        # Prefill: 전체 프롬프트 → logits + present KV
+        feed = self._build_prefill_feed(input_ids, attention_mask)
+        prefill_out = self.session.run(None, feed)
+        out_names = [o.name for o in self.session.get_outputs()]
+
+        next_token_id = int(np.argmax(prefill_out[0][0, -1, :]))
+        generated = [next_token_id]
+
+        # present.X.key/value 딕셔너리
+        present_kv = {name: prefill_out[i] for i, name in enumerate(out_names) if name != "logits"}
+
+        if self.tokenizer.eos_token_id and next_token_id == self.tokenizer.eos_token_id:
+            return self.tokenizer.decode(generated, skip_special_tokens=True).strip() or None
+
+        with_past_in_names = {inp.name for inp in self.session_with_past.get_inputs()}
+        with_past_out_names = [o.name for o in self.session_with_past.get_outputs()]
+        past_seq_len = input_ids.shape[1]
+
+        for _ in range(self.max_new_tokens - 1):
+            total_len = past_seq_len + len(generated)
+            step_feed = {}
+            if "input_ids" in with_past_in_names:
+                step_feed["input_ids"] = np.array([[next_token_id]], dtype=np.int64)
+            if "attention_mask" in with_past_in_names:
+                step_feed["attention_mask"] = np.ones((1, total_len), dtype=np.int64)
+            if "position_ids" in with_past_in_names:
+                step_feed["position_ids"] = np.array([[total_len - 1]], dtype=np.int64)
+            # present.X.key → past_key_values.X.key 매핑
+            for inp_name in with_past_in_names:
+                if inp_name in step_feed:
+                    continue
+                present_name = inp_name.replace("past_key_values", "present")
+                if present_name in present_kv:
+                    step_feed[inp_name] = present_kv[present_name]
+
+            step_out = self.session_with_past.run(None, step_feed)
+            next_token_id = int(np.argmax(step_out[0][0, -1, :]))
+            generated.append(next_token_id)
+
+            # present KV 갱신
+            present_kv = {name: step_out[i] for i, name in enumerate(with_past_out_names) if name != "logits"}
+
+            if self.tokenizer.eos_token_id and next_token_id == self.tokenizer.eos_token_id:
+                break
+
+        response = self.tokenizer.decode(generated, skip_special_tokens=True).strip()
+        return response if response else None
+
     def _evaluate_with_qwen(self, prompt_text):
-        """
-        Qwen ONNX 모델을 사용한 응답 생성 (간단한 버전)
-        
-        참고: 실제 LLM 추론은 복잡하므로, 여기서는 규칙 기반 폴백 사용
-        """
         if not self.session or not self.tokenizer:
             return None
-        
         try:
-            # 토크나이징
             inputs = self.tokenizer(
-                prompt_text,
-                return_tensors="np",
-                truncation=True,
-                max_length=512
+                prompt_text, return_tensors="np", truncation=True, max_length=512
             )
-
             input_ids = inputs["input_ids"].astype(np.int64)
             attention_mask = inputs.get("attention_mask")
             if attention_mask is None:
@@ -397,43 +500,9 @@ class QwenLogic:
             else:
                 attention_mask = attention_mask.astype(np.int64)
 
-            # 짧은 greedy 디코딩으로 실제 SLLM 응답을 생성
-            generated_tokens = []
-            max_new_tokens = self.max_new_tokens
-
-            for _ in range(max_new_tokens):
-                seq_len = input_ids.shape[1]
-                position_ids = np.arange(seq_len, dtype=np.int64).reshape(1, -1)
-                if position_ids.shape[0] != input_ids.shape[0]:
-                    position_ids = np.repeat(position_ids, input_ids.shape[0], axis=0)
-
-                feed = {}
-                for inp in self.session.get_inputs():
-                    if inp.name == "input_ids":
-                        feed[inp.name] = input_ids
-                    elif inp.name == "attention_mask":
-                        feed[inp.name] = attention_mask
-                    elif inp.name == "position_ids":
-                        feed[inp.name] = position_ids
-
-                outputs = self.session.run(None, feed)
-                logits = outputs[0]
-                next_token_id = int(np.argmax(logits[0, -1, :]))
-                generated_tokens.append(next_token_id)
-
-                next_token_arr = np.array([[next_token_id]], dtype=np.int64)
-                input_ids = np.concatenate([input_ids, next_token_arr], axis=1)
-                attention_mask = np.concatenate(
-                    [attention_mask, np.ones((attention_mask.shape[0], 1), dtype=np.int64)],
-                    axis=1,
-                )
-
-                if self.tokenizer.eos_token_id is not None and next_token_id == int(self.tokenizer.eos_token_id):
-                    break
-
-            response = self.tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
-            return response if response else None
-            
+            if self.session_with_past is not None:
+                return self._generate_with_past(input_ids, attention_mask)
+            return self._generate_full_seq(input_ids, attention_mask)
         except Exception as e:
             _LOGGER.error("qwen_infer_failed error=%s", e)
             return None

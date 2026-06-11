@@ -14,7 +14,7 @@ import redis
 
 REDIS_HOST = os.getenv("REDIS_HOST", "db")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
-CSI_HZ = 10
+CSI_HZ = 100
 AUDIO_HZ = 0.5
 RUN_SECONDS = int(os.getenv("INJECT_SECONDS", "60"))
 NODE_IDS = [1]
@@ -23,12 +23,17 @@ SAMPLE_RATE = 16000
 AUDIO_BLOCK_SAMPLES = SAMPLE_RATE * 2  # 2초 분량
 
 
-def make_csi_frame(node_id: int, ts_ms: int, frame_idx: int) -> bytes:
-    n = 512
-    t = np.linspace(0.0, 8.0 * math.pi, n) + frame_idx * 0.1
-    noise = np.random.normal(0, 0.05, n).astype(np.float32)
-    wave = (np.sin(t) + noise).astype(np.float32)
-    return wave.tobytes()
+def make_csi_frame(node_id: int, ts_ms: int, frame_idx: int):
+    """788B 패킷의 3블록(각 64 float32)을 시뮬레이션."""
+    t = np.linspace(0.0, 2.0 * math.pi, 64) + frame_idx * 0.1
+    noise = np.random.normal(0, 0.05, 64).astype(np.float32)
+    # block_raw: 광대역 정규화 amplitude (ESP peak-norm 결과 모사)
+    raw64   = np.clip(np.abs(np.sin(t) + noise), 0.0, 1.0).astype(np.float32)
+    # block_resp: 호흡 대역 (0.1–0.6 Hz ESP Butterworth 완료 모사)
+    resp64  = (np.sin(t * 0.3 + frame_idx * 0.02) * 0.5 + noise * 0.1).astype(np.float32)
+    # block_heart: 심박 대역 (0.8–3.0 Hz ESP Butterworth 완료 모사)
+    heart64 = (np.sin(t * 1.2 + frame_idx * 0.05) * 0.3 + noise * 0.05).astype(np.float32)
+    return raw64, resp64, heart64
 
 
 def make_audio_event(node_id: int, ts_ms: int) -> dict:
@@ -76,10 +81,15 @@ def main():
         ts_ms = int(now * 1000)
         node_id = NODE_IDS[frame_idx % len(NODE_IDS)]
 
-        # CSI 주입
-        csi_data = make_csi_frame(node_id, ts_ms, frame_idx)
-        r.xadd("csi:raw", {"node": node_id, "ts_ms": ts_ms, "data": csi_data},
-               maxlen=36000, approximate=True)
+        # CSI 주입 (3-필드)
+        raw64, resp64, heart64 = make_csi_frame(node_id, ts_ms, frame_idx)
+        r.xadd("csi:raw", {
+            "node":       node_id,
+            "ts_ms":      ts_ms,
+            "data_raw":   raw64.tobytes(),
+            "data_resp":  resp64.tobytes(),
+            "data_heart": heart64.tobytes(),
+        }, maxlen=36000, approximate=True)
         # 노드 헬스 키 갱신 (API는 초 단위 last_seen 비교)
         r.set(f"node:{node_id}:last_seen", now, ex=30)
         r.hset(f"node:{node_id}:health", mapping={

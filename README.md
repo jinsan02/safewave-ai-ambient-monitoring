@@ -2,7 +2,7 @@
 
 독거인 안전 모니터링 시스템 — Raspberry Pi 5 + Docker Compose 기반
 
-**현재 릴리즈: ver.0.0.3**
+**현재 릴리즈: v0.1.0**
 
 ---
 
@@ -11,7 +11,6 @@
 - [시스템 개요](#시스템-개요)
 - [서비스 구성](#서비스-구성)
 - [모델 라인업](#모델-라인업)
-- [문서](#문서)
 - [Redis 키 맵](#redis-키-맵)
 - [MQTT 토픽 구조](#mqtt-토픽-구조)
 - [API 엔드포인트](#api-엔드포인트)
@@ -29,11 +28,11 @@
 WiFi CSI와 마이크 음향을 동시에 수집해 AI로 낙상·생체신호·환경음·한국어 음성을 실시간 분석하고, MQTT와 FCM 푸시 알림으로 결과를 전달합니다.
 
 ```
-ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶ ai
-마이크 (오디오) ─────────────▶ audio-sensing ──▶ Redis audio:events ──▶ ai
+ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶ ai-experts (M1~M4)
+마이크 (오디오) ─────────────▶ audio-sensing ──▶ Redis audio:events ──▶ ai-experts
                                                               │
                                         ai:result ◀──────────┤
-                                        ai:emergency ◀────────┤
+                                        ai:emergency ◀────────┤──▶ ai-qwen (M5/Qwen)
                                               │               │
                                         api (FastAPI) ◀───────┘
                                         MQTT (Mosquitto) ◀────┘
@@ -50,7 +49,8 @@ ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶
 | `rp5-sensing` | `./sensing` | 5005/UDP | CSI UDP 수신 + 전처리 |
 | `rp5-audio-sensing` | `./sensing` (audio_main.py) | — | 마이크 VAD 수집 (프로파일: `audio`) |
 | `rp5-mqtt` | eclipse-mosquitto:2 | 1883 | MQTT 브로커 |
-| `rp5-ai` | `./ai` (cpu-runtime / gpu-runtime) | — | M1~M5 추론 |
+| `rp5-ai-experts` | `./ai` (gpu-runtime 기본) | — | M1~M4 전문가 모델 추론 |
+| `rp5-ai-qwen` | `./ai` (gpu-runtime 기본) | — | M5 Qwen SLM 통합 위험도 판단 |
 | `rp5-api` | `./api` | 8000 | FastAPI REST + WebSocket |
 | `rp5-tts-worker` | `./api` (tts_worker.py) | — | TTS 음성 알림 생성 (프로파일: `audio`) |
 | `rp5-ha` | home-assistant:stable | 8123 | Home Assistant 대시보드 |
@@ -61,8 +61,8 @@ ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶
 
 | 타깃 | 베이스 이미지 | 사용 환경 |
 |---|---|---|
-| `cpu-runtime` (기본) | python:3.12-slim-bookworm | Raspberry Pi 5, CPU 전용 |
-| `gpu-runtime` | nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 | 개발 머신 (RTX GPU) |
+| `gpu-runtime` (기본) | nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 | 개발 머신 (RTX GPU) |
+| `cpu-runtime` | python:3.12-slim-bookworm | Raspberry Pi 5, CPU 전용 |
 
 ---
 
@@ -71,10 +71,10 @@ ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶
 | ID | 파일 | 입력 | 출력 |
 |---|---|---|---|
 | M1 | `experts/m1_wifi_pose.py` | CSI (1×1×192×100) | 낙상 위험 점수 (0–1) |
-| M2 | `experts/m2_frenel_vital.py` | CSI | 생체신호 점수 (HR, RR) |
+| M2 | `experts/m2_frenel_vital.py` | CSI 시간 시리즈 (N,) @ 100Hz — per-node deque | 생체신호 점수 (HR, RR) |
 | M3 | `experts/m3_ast_base.py` | 오디오 스펙트로그램 | 환경음 7종 분류 |
 | M4 | `experts/m4_whisper_small.py` | 오디오 PCM (최근 5s) | 한국어 STT |
-| M5 | `logic/qwen_05b.py` | 컨텍스트 JSON | 통합 위험도 판단 |
+| M5 | `logic/qwen_05b.py` | 컨텍스트 JSON | 통합 위험도 판단 (decoder_with_past KV 캐시) |
 
 ### M3 환경음 라벨 (7종)
 
@@ -116,20 +116,11 @@ AudioSet 상위 결과는 `ast_top_class`, `ast_top_confidence`로 함께 반환
 
 ---
 
-## 문서
-
-| 문서 | 대상 | 내용 |
-|------|------|------|
-| [`docs/api-db-spec.html`](docs/api-db-spec.html) | 공유용 HTML | REST/WebSocket/MQTT/Redis 인터랙티브 명세 |
-| [`docs/benchmark_template.md`](docs/benchmark_template.md) | RPi5 실측 | M1~M5 레이턴시, 리소스 스냅샷 템플릿 |
-
----
-
 ## Redis 키 맵
 
 | 키 | 타입 | TTL / 크기 | 설명 |
 |---|---|---|---|
-| `csi:raw` | Stream | MAXLEN 36,000 | CSI 원시 스트림 (10 Hz) |
+| `csi:raw` | Stream | MAXLEN 36,000 | CSI 원시 스트림 (100 Hz, 788B 패킷) |
 | `audio:events` | Stream | MAXLEN 3,600 | VAD 트리거 오디오 이벤트 |
 | `ai:result` | Stream | MAXLEN 36,000 | 추론 통합 스냅샷 |
 | `ai:emergency` | Stream | MAXLEN 3,600 | warning/critical 이벤트 |
@@ -253,6 +244,7 @@ AUDIO_CHANNELS=1
 |---|---|
 | `EXPERT_INFER_TIMEOUT_MS` | 전문가 모델 추론 타임아웃 (기본 1000ms, CPU 느린 환경은 5000~10000) |
 | `VAD_THRESHOLD_DB` | VAD 임계값(dBFS). `-55` ~ `-60`이면 원거리 소리에 민감 |
+| `M2_CSI_WINDOW_FRAMES` | M2 시간축 누적 프레임 수 (기본 300 = 3초 @ 100Hz). 호흡 완전 해상도는 1000프레임(10초) 권장 |
 
 ### 3. 볼륨 및 모델 준비
 
@@ -278,16 +270,22 @@ python scripts/export_m5_qwen_onnx.py
 
 ### 4. 실행
 
-**CPU 모드 (기본 / Raspberry Pi 5):**
+**GPU 모드 기본 (NVIDIA 개발 머신):**
 
 ```bash
 docker compose up -d --build
 ```
 
-**GPU 모드 (NVIDIA 개발 머신):**
+**GPU 리소스 예약 명시 (docker-compose.gpu.yml 오버라이드):**
 
 ```bash
-AI_DOCKER_TARGET=gpu-runtime docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+```
+
+**CPU 모드 (Raspberry Pi 5):**
+
+```bash
+AI_DOCKER_TARGET=cpu-runtime docker compose up -d --build
 ```
 
 **오디오 센싱 + TTS 포함:**
@@ -302,7 +300,8 @@ docker compose --profile audio up -d
 docker compose ps
 curl http://127.0.0.1:8000/
 # {"service":"rp5-api","status":"ok"}
-docker logs rp5-ai --tail 30
+docker logs rp5-ai-experts --tail 30
+docker logs rp5-ai-qwen --tail 30
 ```
 
 ### 6. 더미 데이터 주입 (ESP32 없이 테스트)
@@ -312,8 +311,9 @@ docker logs rp5-ai --tail 30
 $env:MSYS_NO_PATHCONV=1
 docker run --rm --network rp5_rp5-network `
   -v "${PWD}/scripts:/scripts" `
+  -e REDIS_HOST=db `
   python:3.12-slim `
-  python /scripts/dummy_inject.py
+  sh -c "pip install redis -q && python /scripts/dummy_inject.py"
 ```
 
 ---
@@ -322,7 +322,8 @@ docker run --rm --network rp5_rp5-network `
 
 ```bash
 # 로그 확인
-docker compose logs -f ai
+docker compose logs -f ai-experts
+docker compose logs -f ai-qwen
 docker compose logs -f api
 
 # Redis 스트림 길이
@@ -343,21 +344,21 @@ curl http://localhost:8000/nodes/health
 
 ```
 rp5/
-├── docker-compose.yml          # 기본 구성 (CPU)
-├── docker-compose.gpu.yml      # GPU 오버라이드
+├── docker-compose.yml          # 기본 구성 (GPU 기본)
+├── docker-compose.gpu.yml      # GPU 리소스 예약 오버라이드
 ├── mosquitto.conf              # MQTT 브로커 설정
 ├── monitor.html                # 웹 대시보드 (마이크 M3/M4 테스트)
 ├── sensing/
 │   ├── main.py                 # CSI UDP 수신 + 패킷 손실 추적
 │   ├── audio_main.py           # 마이크 VAD 수집 (audio 프로파일)
-│   ├── simulator.py            # CSI/오디오 로컬 시뮬레이터
 │   └── Dockerfile
 ├── ai/
-│   ├── main.py                 # 추론 메인 루프 (MQTT 발행 포함)
+│   ├── main.py                 # 추론 메인 루프 (M1~M4, MQTT 발행)
+│   ├── qwen_service.py         # M5 Qwen 독립 서비스 (ai-qwen 컨테이너)
 │   ├── mqtt_helper.py          # MQTT 연결/발행 헬퍼
 │   ├── experts/                # M1-M4 전문가 모듈
 │   ├── logic/
-│   │   ├── qwen_05b.py         # M5 Qwen SLM
+│   │   ├── qwen_05b.py         # M5 Qwen SLM (decoder_with_past KV 캐시)
 │   │   └── emergency_score.py  # 위험도 도메인 가중치 계산
 │   ├── utils/                  # get_ort_providers, TurboQuant
 │   └── Dockerfile              # cpu-runtime / gpu-runtime 멀티 스테이지
@@ -368,7 +369,10 @@ rp5/
 ├── db/
 │   └── redis.conf
 ├── scripts/
-│   ├── dummy_inject.py         # ESP32 없이 더미 CSI+오디오 주입
+│   ├── dummy_inject.py         # ESP32 없이 더미 CSI+오디오 주입 (100Hz CSI / 0.5Hz audio)
+│   ├── gen_sos_coeffs.py       # Butterworth SOS 계수 생성 → 펌웨어 biquad_coeffs.h
+│   ├── csi_csv_logger.py       # CSI 스트림 CSV 로깅 유틸
+│   ├── test_emergency_score.py # emergency_score 단위 테스트
 │   ├── slm_chat_cli.py         # SLM 대화형 CLI 테스트
 │   ├── slm_chat_demo.py        # SLM 시나리오 데모
 │   ├── tts_worker.py           # TTS 음성 알림 워커
@@ -377,9 +381,6 @@ rp5/
 │   ├── export_m3_ast_onnx.py
 │   ├── export_m4_whisper_onnx.py
 │   └── export_m5_qwen_onnx.py
-├── docs/
-│   ├── api-db-spec.html        # REST/WebSocket/MQTT/Redis 인터랙티브 명세
-│   └── benchmark_template.md   # RPi5 실측 벤치마크 템플릿
 └── volumes/
     └── models/                 # ONNX 모델 파일 (Git 제외)
 ```
@@ -400,28 +401,84 @@ rp5/
 | M3/M4 `expert_timeout` | CPU 추론 > 1s | `.env`에 `EXPERT_INFER_TIMEOUT_MS=5000` |
 | 마이크 권한 오류 | HTTPS/file:// 접근 | `http://127.0.0.1:8081/monitor.html` 사용 |
 | dummy_inject.py 경로 오류 | Git Bash 경로 변환 | `MSYS_NO_PATHCONV=1` 접두어 사용 |
+| `python: not found` (ai-qwen) | Ubuntu 22.04 python3만 존재 | `command: ["python3", ...]` 사용 (이미 적용) |
 
 ---
 
 ## 변경 이력
 
+### v0.1.0 — 첫 시뮬레이션 검증 성공
+
+**AI 서비스 분리:**
+- `rp5-ai` 단일 컨테이너 → `rp5-ai-experts` (M1~M4) + `rp5-ai-qwen` (M5/Qwen) 분리
+  - M5 Qwen SLM이 전문가 모델의 추론 타임아웃에 영향을 주던 문제 해소
+  - `qwen_service.py` 신규 — Redis `ai:result` 구독 + 독립 SLM 루프
+
+**Qwen decoder_with_past (KV 캐시):**
+- `ai/logic/qwen_05b.py` — M4 Whisper와 동일 패턴의 `decoder_with_past` 구현
+  - prefill 1회 실행 → present KV 캐시 추출 → `model_with_past.onnx` 스텝 반복
+  - `present.X.key/value` → `past_key_values.X.key/value` 동적 매핑 (레이어 수 무관)
+  - `model_with_past.onnx` 없으면 자동으로 전체 시퀀스 greedy fallback
+
+**빌드 기본값 변경:**
+- AI 서비스 기본 빌드 타깃: `cpu-runtime` → `gpu-runtime`
+  - NVIDIA 드라이버 없는 환경에서도 CPU 폴백으로 정상 동작 확인
+
+**더미 시뮬레이션 실측값 (CPU 모드, 모델 없음 기준):**
+
+| 항목 | 측정값 |
+|---|---|
+| CSI 주입 속도 | 100 Hz (6,000 패킷 / 60s) |
+| 오디오 이벤트 | ~30 건 / 60s (0.5 Hz) |
+| `csi:raw` 스트림 길이 | ~6,000 엔트리 |
+| `ai:result` 스트림 길이 | ~60 엔트리 (1 Hz 추론 루프) |
+| M1 낙상 점수 범위 | 0.0 – 1.0 (더미 랜덤) |
+| M2 HR/RR 추정 | heuristic fallback (모델 없음) |
+| M3 환경음 라벨 | `no-audio` (오디오 미연결) |
+| M4 STT | `""` (오디오 미연결) |
+| M5 Qwen 판단 | `low` (heuristic fallback) |
+| ai:result 엔트리 평균 레이턴시 | < 50 ms (CPU, ONNX 없음) |
+
+**버그 수정:**
+- `docker-compose.gpu.yml` — 구 `ai:` 서비스명 → `ai-experts` + `ai-qwen` 업데이트
+- `ai-qwen` 컨테이너 `python: not found` — Ubuntu 22.04 호환 `python3` 명시
+
+---
+
+### ver.0.0.4 (병합됨)
+
+**펌웨어 연동 — ESP32-S3 wire contract 확정:**
+- 펌웨어 레포(`safewave-ai-ambient-monitoring-firmware`) 분석으로 788B 고정 UDP 패킷 구조 확정
+- `struct.Struct("<4sBBHIIhH192f")` — 20B 헤더 + float32×64 × 3블록 (raw / resp / heart)
+- ESP32가 0.1–0.6Hz(호흡) / 0.8–3.0Hz(심박) 4차 Butterworth DF-II Transposed IIR 필터를 온디바이스 수행
+- CSI 수집 주파수 100Hz 확정 (`CSI_FS=100`)
+
+**AI 엔진:**
+- `ai/main.py` — M2 시간축 누적 버퍼 추가 (`M2_CSI_WINDOW_FRAMES=300` 환경변수, per-node deque)
+- `ai/experts/m2_frenel_vital.py` — FFT fallback `N < 10` 가드 추가
+
+**스크립트:**
+- `scripts/dummy_inject.py` — `CSI_HZ` 10 → 100 (펌웨어 실측 주파수 반영)
+- `scripts/gen_sos_coeffs.py` 신규
+
+---
+
 ### ver.0.0.3
 
 **AI 엔진:**
 - `ai/logic/emergency_score.py` 신규 — 도메인 가중치 기반 위험도 계산 분리 (fall 40% / vital 30% / sound 15% / speech 15%)
-- `ai/utils/__init__.py` segfault 수정 — `ort.get_available_providers()` 대신 `ORT_USE_GPU` 환경변수로 CUDA EP 제어 (TensorRT JIT 초기화 제거)
-- `ai/logic/qwen_05b.py` segfault 수정 — 동일 패턴 (`_load_model`) 제거, hourly context 캐시 TTL 3s → 10s
-- M3 출력 필드 추가: `ast_top_class`, `ast_top_confidence`, `label`, `confidence` (하위 호환 유지)
-- 심박 warning 임계값 수정: `_HR_WARN_LO` 50 → 55 bpm (서맥 기준 조정)
+- `ai/utils/__init__.py` segfault 수정 — `ORT_USE_GPU` 환경변수로 CUDA EP 제어
+- M3 출력 필드 추가: `ast_top_class`, `ast_top_confidence`, `label`, `confidence`
+- 심박 warning 임계값 수정: `_HR_WARN_LO` 50 → 55 bpm
 
 **센싱:**
-- `sensing/main.py` — `node:N:health` hset + expire pipeline 원자화 (race condition 제거)
+- `sensing/main.py` — `node:N:health` hset + expire pipeline 원자화
 
 **API:**
 - `sys:settings` TTL 보장 — POST `/settings` 저장 시 expire 누락 보완
 
 **스크립트 (신규):**
-- `scripts/dummy_inject.py` — ESP32 없이 더미 CSI + 오디오 이벤트 주입 (10Hz CSI / 0.5Hz audio)
+- `scripts/dummy_inject.py` — ESP32 없이 더미 CSI + 오디오 이벤트 주입
 - `scripts/slm_chat_cli.py` / `slm_chat_demo.py` — M5 SLM 대화형 테스트 도구
 - `scripts/tts_worker.py` — MQTT 구독 기반 TTS 음성 알림 워커
 
@@ -442,25 +499,16 @@ rp5/
 **센싱:**
 - UDP 패킷 시퀀스 번호 파싱 추가
 - 노드별 패킷 수신/손실/loss_rate 통계 (`node:N:health` Hash)
-- 오디오 센싱 서비스 신규 (`sensing/audio_main.py`)
 
 **API:**
 - `POST /audio/events` — 오디오 이벤트 수동 주입
 - `GET /system/redis-memory`, `GET /system/health` 신규
 - FCM alert_worker 비정상 종료 시 자동 재시작
 
-**버그 수정:**
-- `MINUTE_AGG_TTL_SECONDS` 기본값 3900 → 3600 (TTL 규칙 위반)
-- `audio:events` 필드 타입 `str` → `int` (sensing/AI 형식 통일)
-- Qwen `critical_count` 조건 순서 역전 (unreachable elif 제거)
-- Qwen 전체 `print()` → `logging.getLogger` 구조화 로그
-
 **신규 파일:**
 - `docker-compose.gpu.yml` — GPU 리소스 예약 오버라이드
 - `mosquitto.conf` — MQTT 브로커 설정
 - `ai/mqtt_helper.py` — MQTT 연결/발행 헬퍼
-- `docs/api-db-spec.html` — 전체 API/DB 명세 (공유용 HTML)
-- `.github/workflows/docker-build.yml` — CI 빌드 검증
 
 ### ver.0.0.1
 

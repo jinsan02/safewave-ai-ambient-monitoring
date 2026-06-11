@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import Any
 
@@ -10,7 +11,6 @@ import redis as _redis
 
 from experts import m1_wifi_pose, m2_frenel_vital, m3_ast_base, m4_whisper_small
 from mqtt_helper import make_client, publish_json, topic
-from logic.qwen_05b import QwenLogic
 from logic.emergency_score import compute_emergency_score
 from utils import TurboQuant
 
@@ -25,7 +25,7 @@ EXPERT_LATEST_KEYS = {
     "env_sound": "ai:m3:latest",
     "speech_ko": "ai:m4:latest",
 }
-RESULT_STREAM_MAXLEN = int(os.getenv("RESULT_STREAM_MAXLEN", "36000"))
+RESULT_STREAM_MAXLEN = int(os.getenv("RESULT_STREAM_MAXLEN", "1_800_000"))  # 5노드 × 100Hz × 1hr
 EMERGENCY_STREAM_MAXLEN = int(os.getenv("EMERGENCY_STREAM_MAXLEN", "3600"))
 CONTEXT_WINDOW_MINUTES = int(os.getenv("CONTEXT_WINDOW_MINUTES", "10"))
 MINUTE_AGG_TTL_SECONDS = int(os.getenv("MINUTE_AGG_TTL_SECONDS", "3600"))
@@ -34,6 +34,8 @@ M3_AUDIO_WINDOW_MS = int(os.getenv("M3_AUDIO_WINDOW_MS", "3000"))
 M4_AUDIO_WINDOW_MS = int(os.getenv("M4_AUDIO_WINDOW_MS", "5000"))
 SLM_MIN_INTERVAL_MS = int(os.getenv("SLM_MIN_INTERVAL_MS", "3000"))
 STREAM_START_ID = os.getenv("CSI_STREAM_START_ID", "0-0")
+M2_CSI_WINDOW_FRAMES = int(os.getenv("M2_CSI_WINDOW_FRAMES", "300"))
+# 300프레임 = 3초 @ 100Hz; 호흡(0.1Hz) 감지 최소 10초 필요하나 실측 튜닝 전 초기값
 CSI_BACKLOG_SKIP_STREAK = int(os.getenv("CSI_BACKLOG_SKIP_STREAK", "5"))
 EXPERT_INFER_TIMEOUT_MS = int(os.getenv("EXPERT_INFER_TIMEOUT_MS", "1000"))
 MQTT_ENABLED = os.getenv("MQTT_ENABLED", "1").lower() not in {"0", "false", "no"}
@@ -149,18 +151,20 @@ class AIEngine:
             "env_sound": env_sound_model,
             "speech_ko": speech_model,
         }
-        _log(logging.INFO, "engine_init_step", step="qwen_logic")
-        self.qwen_logic = QwenLogic(
-            os.path.join(model_dir, os.getenv("SLM_MODEL", "qwen_05b.onnx"))
-        )
         self.turbo_quant = TurboQuant()
         self._executor = ThreadPoolExecutor(max_workers=4)
         # CUDA JIT 첫 추론 워밍업 (수 초 소요, 이후 infer는 <1ms)
         _log(logging.INFO, "engine_init_step", step="gpu_warmup")
         _warmup = np.sin(np.linspace(0.0, 8.0 * np.pi, 512)).astype(np.float32)
+        _warmup_per_expert = {
+            "fall":      _warmup,
+            "vital":     {"resp": _warmup, "heart": _warmup},  # M2 런타임 포맷과 일치
+            "env_sound": _warmup,
+            "speech_ko": _warmup,
+        }
         for _name, _expert in self.experts.items():
             try:
-                _expert.infer(_warmup)
+                _expert.infer(_warmup_per_expert[_name])
             except Exception as _e:
                 _log(logging.WARNING, "warmup_failed", expert=_name, error=str(_e))
         _log(logging.INFO, "engine_init_completed")
@@ -185,6 +189,7 @@ class AIEngine:
                 "source": "no-audio",
                 "activity": "silence",
                 "activity_confidence": 0.0,
+                "infer_confidence": 0.0,
             }
         if name == "speech_ko":
             return {
@@ -196,6 +201,7 @@ class AIEngine:
                 "keywords": [],
                 "occupied": False,
                 "occupancy_score": 0.0,
+                "infer_confidence": 0.0,
             }
         return {}
 
@@ -223,8 +229,11 @@ class AIEngine:
             name: self._executor.submit(self._run_expert, name, optimized, expert_inputs)
             for name in self.experts
         }
-        timeout_sec = max(0.1, EXPERT_INFER_TIMEOUT_MS / 1000.0)
+        # speech_ko(Whisper)는 decoder autoregressive 생성으로 다른 모델보다 느림 — 5s 허용
+        _timeouts = {name: max(0.1, EXPERT_INFER_TIMEOUT_MS / 1000.0) for name in futures}
+        _timeouts["speech_ko"] = 10.0
         for name, future in futures.items():
+            timeout_sec = _timeouts[name]
             try:
                 result_name, output, elapsed_ms = future.result(timeout=timeout_sec)
                 results[result_name] = output
@@ -240,15 +249,6 @@ class AIEngine:
 
         return results, latency_ms
 
-    def fuse_results(self, expert_results, context_window=None):
-        fused = self.qwen_logic.evaluate(expert_results, context_window=context_window)
-        return fused
-
-    def process_data(self, data, expert_inputs=None, context_window=None):
-        results, latency_ms = self.process_experts(data, expert_inputs=expert_inputs)
-        fused = self.fuse_results(results, context_window=context_window)
-        fused["expert_latency_ms"] = latency_ms
-        return fused
 
 
 def _json_loads(raw: Any) -> dict:
@@ -307,6 +307,36 @@ def _load_settings(r) -> dict:
     except Exception:
         pass
     return {"risk_threshold": 0.6, "active_nodes": [1, 2, 3, 4, 5, 6], "ai_enabled": True}
+
+
+_settings_cache: dict = {}
+_settings_cache_ts: float = 0.0
+_SETTINGS_CACHE_TTL_S: float = 1.0
+
+
+def _load_cached_settings(r) -> dict:
+    """1초 TTL 캐시 — xread 배치마다 Redis GET을 초당 1회로 줄임."""
+    global _settings_cache, _settings_cache_ts
+    if time.time() - _settings_cache_ts < _SETTINGS_CACHE_TTL_S:
+        return _settings_cache
+    _settings_cache = _load_settings(r)
+    _settings_cache_ts = time.time()
+    return _settings_cache
+
+
+_ctx_cache: dict = {}
+_ctx_cache_ts: float = 0.0
+_CTX_CACHE_TTL_S: float = 1.0
+
+
+def _load_cached_context_window(r, ts_ms: int) -> dict:
+    """1초 TTL 캐시 — 100Hz 루프에서 XREVRANGE를 초당 1회로 줄임."""
+    global _ctx_cache, _ctx_cache_ts
+    if time.time() - _ctx_cache_ts < _CTX_CACHE_TTL_S:
+        return _ctx_cache
+    _ctx_cache = _build_context_window(r, ts_ms)
+    _ctx_cache_ts = time.time()
+    return _ctx_cache
 
 
 def _apply_threshold(result: dict, threshold: float) -> dict:
@@ -420,9 +450,12 @@ def _merge_audio_window(events: list[dict], window_ms: int) -> dict | None:
     }
 
 
-def _build_expert_inputs(default_data, audio_events: list[dict]) -> tuple[dict, dict | None]:
+def _build_expert_inputs(raw_data, resp_data, heart_data,
+                         audio_events: list[dict]) -> tuple[dict, dict | None]:
     latest_audio = audio_events[-1] if audio_events else None
     expert_inputs = {
+        "fall":      raw_data,                                                       # M1 입력
+        "vital":     {"resp": resp_data, "heart": heart_data},                      # M2 입력
         "env_sound": _merge_audio_window(audio_events, M3_AUDIO_WINDOW_MS),
         "speech_ko": _merge_audio_window(audio_events, M4_AUDIO_WINDOW_MS) or latest_audio,
     }
@@ -496,6 +529,7 @@ def _build_snapshot(ts_ms: int, node_id: int, result: dict, audio_result: dict |
         "ai_enabled": ai_enabled,
         "context_window": context_window,
         "slm_invoked": bool(result.get("slm_invoked", False)),
+        "slm_needed": bool(result.get("slm_needed", False)),
         "is_outlier": bool(result.get("is_outlier", False)),
         "correlated_with_history": bool(result.get("correlated_with_history", False)),
         "qwen_reason": result.get("qwen_reason") or result.get("slm_skip_reason"),
@@ -568,7 +602,15 @@ def _update_minute_aggregate(r, snapshot: dict):
 
 def _write_snapshot(r, snapshot: dict):
     payload = json.dumps(snapshot, ensure_ascii=False)
-    r.xadd(RESULT_STREAM, {"data": payload}, maxlen=RESULT_STREAM_MAXLEN, approximate=True)
+    r.xadd(
+        RESULT_STREAM,
+        {
+            "data":       payload,
+            "slm_needed": "True" if snapshot.get("slm_needed") else "False",
+        },
+        maxlen=RESULT_STREAM_MAXLEN,
+        approximate=True,
+    )
     _update_minute_aggregate(r, snapshot)
 
     if snapshot.get("risk_level") in {"warning", "critical"}:
@@ -598,20 +640,18 @@ def _write_expert_latest(r, expert_name: str, node_id: int, ts_ms: int, output: 
 
 
 
-def _decode_csi_payload(raw: Any) -> np.ndarray:
-    if not raw:
-        return np.sin(np.linspace(0.0, 8.0 * np.pi, 512)).astype(np.float32)
-    if not isinstance(raw, (bytes, bytearray, memoryview)):
-        return np.sin(np.linspace(0.0, 8.0 * np.pi, 512)).astype(np.float32)
+def _decode_csi_field(raw: Any, expected: int = 64) -> np.ndarray:
+    """csi:raw 단일 블록 필드(기본 64 float32) 디코딩."""
+    if not raw or not isinstance(raw, (bytes, bytearray, memoryview)):
+        return np.zeros(expected, dtype=np.float32)
     raw_bytes = bytes(raw)
     usable = (len(raw_bytes) // 4) * 4
     if usable <= 0:
-        return np.sin(np.linspace(0.0, 8.0 * np.pi, 512)).astype(np.float32)
-    data = np.frombuffer(raw_bytes[:usable], dtype=np.float32)
-    # 비정상적으로 짧은 트리거 payload는 전문가 입력으로 부적합하므로 기본 파형으로 대체.
-    if data.size < 64:
-        return np.sin(np.linspace(0.0, 8.0 * np.pi, 512)).astype(np.float32)
-    return data
+        return np.zeros(expected, dtype=np.float32)
+    arr = np.frombuffer(raw_bytes[:usable], dtype=np.float32)
+    if arr.size < expected:
+        return np.pad(arr, (0, expected - arr.size)).astype(np.float32)
+    return arr[:expected].copy()
 
 
 def _connect_redis(redis_host: str, redis_port: int):
@@ -637,9 +677,11 @@ if __name__ == "__main__":
     last_id = STREAM_START_ID
     last_slm_invoked_at_ms = 0
     _backlog_streak = 0
+    _node_resp_buf:  dict[int, deque] = {}
+    _node_heart_buf: dict[int, deque] = {}
     while True:
         try:
-            settings = _load_settings(r)
+            settings = _load_cached_settings(r)
             active_nodes = set(settings.get("active_nodes", [1, 2, 3, 4, 5, 6]))
             threshold = float(settings.get("risk_threshold", 0.6))
             ai_enabled = bool(settings.get("ai_enabled", True))
@@ -665,7 +707,7 @@ if __name__ == "__main__":
                         continue
 
                     if not ai_enabled:
-                        context_window = _build_context_window(r, ts_ms)
+                        context_window = _load_cached_context_window(r, ts_ms)
                         audio_result = _load_recent_audio(r, node_id, ts_ms)
                         result = {
                             "risk_level": "normal",
@@ -678,14 +720,28 @@ if __name__ == "__main__":
                         last_id = msg_id
                         continue
 
-                    raw = fields.get(b"data", b"")
-                    input_data = _decode_csi_payload(raw)
+                    # 3-필드 읽기. 구형 단일 data 필드는 지원하지 않음.
+                    raw_data   = _decode_csi_field(fields.get(b"data_raw"))
+                    resp_data  = _decode_csi_field(fields.get(b"data_resp"))
+                    heart_data = _decode_csi_field(fields.get(b"data_heart"))
+                    if b"data_raw" not in fields:
+                        _log(logging.WARNING, "csi_missing_fields",
+                             node_id=node_id, msg_id=str(msg_id),
+                             present=list(k.decode() for k in fields if k != b""))
 
-                    context_window = _build_context_window(r, ts_ms)
+                    # M2 시간축 누적: per-node deque, 64채널 평균 → (N,) 시간 시리즈
+                    _node_resp_buf.setdefault(node_id, deque(maxlen=M2_CSI_WINDOW_FRAMES)).append(resp_data)
+                    _node_heart_buf.setdefault(node_id, deque(maxlen=M2_CSI_WINDOW_FRAMES)).append(heart_data)
+                    resp_series  = np.mean(np.stack(_node_resp_buf[node_id]),  axis=1)
+                    heart_series = np.mean(np.stack(_node_heart_buf[node_id]), axis=1)
+
+                    context_window = _load_cached_context_window(r, ts_ms)
                     audio_events = _load_recent_audio_events(r, node_id, ts_ms, M4_AUDIO_WINDOW_MS)
-                    expert_inputs, audio_result = _build_expert_inputs(input_data, audio_events)
+                    expert_inputs, audio_result = _build_expert_inputs(
+                        raw_data, resp_series, heart_series, audio_events
+                    )
                     expert_results, expert_latency_ms = ai_engine.process_experts(
-                        input_data,
+                        raw_data,
                         expert_inputs=expert_inputs,
                     )
                     for expert_name, output in expert_results.items():
@@ -716,27 +772,24 @@ if __name__ == "__main__":
                     now_ms = int(time.time() * 1000)
                     if invoke_slm and (now_ms - last_slm_invoked_at_ms) < SLM_MIN_INTERVAL_MS:
                         invoke_slm = False
-
                     if invoke_slm:
-                        result = ai_engine.fuse_results(expert_results, context_window=context_window)
-                        result["slm_invoked"] = True
-                        result["emergency_breakdown"] = emg_breakdown
                         last_slm_invoked_at_ms = now_ms
-                    else:
-                        skip_reason = "below_threshold"
-                        if emg_score >= threshold:
-                            skip_reason = "cooldown"
-                        result = {
-                            "emergency": False,
-                            "risk_level": "normal",
-                            "risk_score": round(float(emg_score), 4),
-                            "experts": expert_results,
-                            "context_used": False,
-                            "qwen_infer_ms": None,
-                            "slm_invoked": False,
-                            "slm_skip_reason": skip_reason,
-                            "emergency_breakdown": emg_breakdown,
-                        }
+
+                    skip_reason = None if invoke_slm else (
+                        "below_threshold" if emg_score < threshold else "cooldown"
+                    )
+                    result = {
+                        "risk_score":          round(float(emg_score), 4),
+                        "risk_level":          "normal",   # _apply_threshold가 덮어씀
+                        "emergency":           False,       # _apply_threshold가 덮어씀
+                        "experts":             expert_results,
+                        "context_used":        False,
+                        "qwen_infer_ms":       None,
+                        "slm_invoked":         False,       # ai-qwen 컨테이너가 채움
+                        "slm_needed":          invoke_slm,  # ai-qwen 트리거 신호
+                        "slm_skip_reason":     skip_reason,
+                        "emergency_breakdown": emg_breakdown,
+                    }
 
                     result["expert_latency_ms"] = expert_latency_ms
                     result = _apply_threshold(result, threshold)

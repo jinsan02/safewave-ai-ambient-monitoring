@@ -59,11 +59,11 @@ services:
     networks:
       - rp5-network
 
-  ai:
+  ai-experts:
     build:
       context: ./ai
-      target: ${AI_DOCKER_TARGET:-cpu-runtime}
-    container_name: rp5-ai
+      target: ${AI_DOCKER_TARGET:-gpu-runtime}
+    container_name: rp5-ai-experts
     restart: always
     depends_on:
       - db
@@ -80,6 +80,25 @@ services:
     networks:
       - rp5-network
 
+  ai-qwen:
+    build:
+      context: ./ai
+      target: ${AI_DOCKER_TARGET:-gpu-runtime}
+    container_name: rp5-ai-qwen
+    restart: always
+    depends_on:
+      - db
+      - ai-experts
+    env_file: .env
+    environment:
+      - REDIS_HOST=db
+      - SLM_MIN_INTERVAL_MS=3000
+    volumes:
+      - ./volumes/models:/app/models
+    command: ["python3", "qwen_service.py"]
+    networks:
+      - rp5-network
+
   api:
     build: ./api
     container_name: rp5-api
@@ -87,7 +106,7 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      - ai
+      - ai-experts
     env_file: .env
     volumes:
       - ./api/auth:/app/auth:ro

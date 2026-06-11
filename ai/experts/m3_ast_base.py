@@ -122,12 +122,14 @@ class EnvSoundAnalysisModel:
             confidence = float(np.clip(0.5 * confidence + 0.5 * float(onnx["onnx_confidence"]), 0.0, 1.0))
 
         source = "onnx" if onnx is not None else "heuristic"
+        infer_conf = 0.80 if onnx is not None else 0.50
         result = {
             "env_sound_label": label,
             "env_sound_confidence": confidence,
             "env_sound_source": source,
             "activity": label,
             "activity_confidence": confidence,
+            "infer_confidence": infer_conf,
         }
         if onnx is not None:
             result.update(onnx)  # onnx_top_class, ast_top_class, onnx_confidence, ast_top_confidence

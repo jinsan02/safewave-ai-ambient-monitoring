@@ -12,15 +12,13 @@ import time
 import numpy as np
 import redis
 
-from filters import preprocess_csi
-
 # ── 환경 변수 ────────────────────────────────────────────────
 UDP_IP       = "0.0.0.0"
 UDP_PORT     = int(os.getenv("UDP_PORT", 5005))
 REDIS_HOST   = os.getenv("REDIS_HOST", "127.0.0.1")
 REDIS_PORT   = int(os.getenv("REDIS_PORT", 6379))
 STREAM_NAME  = "csi:raw"
-STREAM_MAXLEN = 36_000          # ~1시간 @ 10 Hz, approximate trim
+STREAM_MAXLEN = int(os.getenv("CSI_STREAM_MAXLEN", "1_800_000"))  # 5노드 × 100Hz × 1hr
 FS           = float(os.getenv("CSI_FS", 100.0))   # 샘플링 주파수
 
 
@@ -37,38 +35,23 @@ def connect_redis() -> redis.Redis:
             time.sleep(2)
 
 
-# ── 패킷 파싱 ────────────────────────────────────────────────
-_PKT_MAGIC      = b"CSI!"
-_PKT_NEW_SIZE   = 20                          # "<4sBBHIIhH"
-_PKT_NEW_STRUCT = struct.Struct("<4sBBHIIhH")
-_PKT_OLD_SIZE   = 8
+# ── 패킷 파싱 (788B 고정 — 방식B 확정) ─────────────────────────
+_PKT_MAGIC   = b"CSI!"
+_STRUCT      = struct.Struct("<4sBBHIIhH192f")  # 788B
+_STRUCT_SIZE = _STRUCT.size                      # 788
 
 
 def parse_packet(raw_bytes: bytes):
     """
-    신규(20B): magic"CSI!" + node_id(B) + rsv(B) + n_samples(H) + seq_num(u32) + ts_ms(u32) + rssi(i16) + rsv2(H)
-    구형(8B):  node_id(B) + seq(B) + n_samples(H) + ts_ms(u32)  [레거시 폴백]
-    반환: (node_id, ts_ms, samples, seq, rssi)  — rssi는 구형 패킷일 때 None
+    788B 고정 패킷: magic"CSI!" + 20B 헤더 + 192 float32 (3블록×64).
+    반환: (node_id, ts_ms, raw64, resp64, heart64, seq, rssi)
+    magic 불일치 또는 크기 미달 → 전부 None (폐기)
     """
-    if len(raw_bytes) >= _PKT_NEW_SIZE and raw_bytes[:4] == _PKT_MAGIC:
-        _, node_id, _rsv, n_samples, seq, ts_ms, rssi, _rsv2 = _PKT_NEW_STRUCT.unpack_from(raw_bytes)
-        payload = raw_bytes[_PKT_NEW_SIZE:]
-    elif len(raw_bytes) >= _PKT_OLD_SIZE:
-        node_id   = raw_bytes[0]
-        seq       = raw_bytes[1]
-        n_samples = struct.unpack_from("<H", raw_bytes, 2)[0]
-        ts_ms     = struct.unpack_from("<I", raw_bytes, 4)[0]
-        rssi      = None
-        payload   = raw_bytes[_PKT_OLD_SIZE:]
-    else:
-        return None, None, None, None, None
-
-    expected = n_samples * 4
-    if len(payload) < expected:
-        return None, None, None, None, None
-
-    samples = np.frombuffer(payload[:expected], dtype=np.float32).copy()
-    return node_id, ts_ms, samples, seq, rssi
+    if len(raw_bytes) < _STRUCT_SIZE or raw_bytes[:4] != _PKT_MAGIC:
+        return None, None, None, None, None, None, None
+    _, node_id, _rsv, _n, seq, ts_ms, rssi, _rsv2, *floats = _STRUCT.unpack(raw_bytes[:_STRUCT_SIZE])
+    arr = np.asarray(floats, dtype=np.float32)
+    return node_id, ts_ms, arr[:64], arr[64:128], arr[128:], seq, rssi
 
 
 # ── 수신 + 적재 루프 ─────────────────────────────────────────
@@ -81,24 +64,20 @@ def receive_loop(sock: socket.socket, r: redis.Redis):
     while True:
         try:
             data, addr = sock.recvfrom(4096)
-            node_id, ts_ms, samples, seq, rssi = parse_packet(data)
+            node_id, ts_ms, raw64, resp64, heart64, seq, rssi = parse_packet(data)
 
-            if samples is None:
-                # 헤더 없는 레거시 패킷: 전체를 float32 배열로 처리
-                samples = np.frombuffer(data, dtype=np.float32).copy()
-                node_id = 0
-                ts_ms   = int(time.time() * 1000) & 0xFFFFFFFF
-                seq  = None
-                rssi = None
-
-            processed = preprocess_csi(samples, fs=FS)
+            if raw64 is None:
+                stats["err"] += 1
+                continue
 
             r.xadd(
                 STREAM_NAME,
                 {
-                    "node":  node_id,
-                    "ts_ms": ts_ms,
-                    "data":  processed.tobytes(),
+                    "node":       node_id,
+                    "ts_ms":      ts_ms,
+                    "data_raw":   raw64.tobytes(),
+                    "data_resp":  resp64.tobytes(),
+                    "data_heart": heart64.tobytes(),
                 },
                 maxlen=STREAM_MAXLEN,
                 approximate=True,
@@ -113,11 +92,10 @@ def receive_loop(sock: socket.socket, r: redis.Redis):
                 state["rx"] += 1
                 if seq is not None:
                     prev = node_seq_state.get(node_id)
-                    # 신규 포맷(rssi 포함)은 uint32 롤오버, 구형은 uint8 롤오버
-                    seq_wrap = (1 << 32) if rssi is not None else 256
                     if prev is not None and seq != prev:
-                        step = (int(seq) - int(prev)) % seq_wrap
-                        if step > 1:
+                        step = (int(seq) - int(prev)) % (1 << 32)  # uint32
+                        # step > 10000: 100초치 초과 → 재부팅 추정, 카운터 오염 방지
+                        if 1 < step <= 10000:
                             state["lost"] += (step - 1)
                     node_seq_state[node_id] = int(seq)
 
@@ -130,8 +108,7 @@ def receive_loop(sock: socket.socket, r: redis.Redis):
                     "lost": state["lost"],
                     "loss_rate": round(loss_rate, 6),
                 }
-                if rssi is not None:
-                    health_map["rssi"] = int(rssi)
+                health_map["rssi"] = int(rssi)
                 pipe = r.pipeline()
                 pipe.hset(f"node:{node_id}:health", mapping=health_map)
                 pipe.expire(f"node:{node_id}:health", 3600)

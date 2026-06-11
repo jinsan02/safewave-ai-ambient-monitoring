@@ -31,6 +31,11 @@ _CRITICAL_KEYWORDS = frozenset(["살려", "도와", "아파", "응급", "위험"
 _DOMAIN_WEIGHTS = {"fall": 0.40, "vital": 0.30, "sound": 0.15, "speech": 0.15}
 
 
+def _conf_weight(confidence: float) -> float:
+    """추론 신뢰도(0~1) → 점수 가중치 [0.5, 1.0]. 낮은 신뢰도 시 중립 방향으로 감쇠."""
+    return 0.5 + 0.5 * float(np.clip(confidence, 0.0, 1.0))
+
+
 def _vital_component(val: float, crit_lo: float, warn_lo: float, warn_hi: float, crit_hi: float) -> float:
     """단일 생체신호 값의 이상 점수를 반환한다."""
     if val <= 0.0:
@@ -55,7 +60,7 @@ def compute_emergency_score(expert_results: dict) -> tuple[float, dict]:
     Returns:
         (score, breakdown)
           - score: float 0.0~1.0 응급지수
-          - breakdown: {"fall", "vital", "sound", "speech"} 도메인별 점수
+          - breakdown: {"fall", "vital", "sound", "speech", "conf_fall", "conf_vital", "conf_sound", "conf_speech"}
     """
     fall_out   = expert_results.get("fall")      or {}
     vital_out  = expert_results.get("vital")     or {}
@@ -63,22 +68,26 @@ def compute_emergency_score(expert_results: dict) -> tuple[float, dict]:
     speech_out = expert_results.get("speech_ko") or {}
 
     # ── M1: 낙상 점수 ────────────────────────────────────────────
-    fall_c = float(np.clip(fall_out.get("fall_score", 0.0), 0.0, 1.0))
+    fall_conf = float(np.clip(fall_out.get("infer_confidence", 1.0), 0.0, 1.0))
+    fall_c = float(np.clip(fall_out.get("fall_score", 0.0), 0.0, 1.0)) * _conf_weight(fall_conf)
 
     # ── M2: 생체신호 이상 점수 ────────────────────────────────────
+    vital_conf = float(np.clip(vital_out.get("infer_confidence", 1.0), 0.0, 1.0))
     hr = float(vital_out.get("heart_rate", 0.0))
     rr = float(vital_out.get("breathing_rate", 0.0))
     vital_c = max(
         _vital_component(hr, _HR_CRIT_LO, _HR_WARN_LO, _HR_WARN_HI, _HR_CRIT_HI),
         _vital_component(rr, _RR_CRIT_LO, _RR_WARN_LO, _RR_WARN_HI, _RR_CRIT_HI),
-    )
+    ) * _conf_weight(vital_conf)
 
     # ── M3: 환경음 위험 점수 ──────────────────────────────────────
+    sound_conf = float(np.clip(sound_out.get("infer_confidence", 1.0), 0.0, 1.0))
     label = str(sound_out.get("label") or sound_out.get("env_sound_label") or "unknown")
     conf  = float(sound_out.get("confidence") or sound_out.get("env_sound_confidence") or 0.0)
-    sound_c = float(np.clip(_SOUND_WEIGHTS.get(label, 0.10) * conf, 0.0, 1.0))
+    sound_c = float(np.clip(_SOUND_WEIGHTS.get(label, 0.10) * conf, 0.0, 1.0)) * _conf_weight(sound_conf)
 
     # ── M4: 음성 응급 키워드 점수 ────────────────────────────────
+    speech_conf = float(np.clip(speech_out.get("infer_confidence", 1.0), 0.0, 1.0))
     keywords = list(speech_out.get("keywords") or [])
     stt_conf = float(speech_out.get("stt_confidence", 0.0))
     kw_hits  = len(_CRITICAL_KEYWORDS.intersection(keywords))
@@ -89,18 +98,24 @@ def compute_emergency_score(expert_results: dict) -> tuple[float, dict]:
         speech_c = 0.15
     else:
         speech_c = 0.0
+    speech_c = speech_c * _conf_weight(speech_conf)
 
     breakdown = {
-        "fall":   round(fall_c,   4),
-        "vital":  round(vital_c,  4),
-        "sound":  round(sound_c,  4),
-        "speech": round(float(speech_c), 4),
+        "fall":        round(fall_c,   4),
+        "vital":       round(vital_c,  4),
+        "sound":       round(sound_c,  4),
+        "speech":      round(float(speech_c), 4),
+        "conf_fall":   round(fall_conf,   3),
+        "conf_vital":  round(vital_conf,  3),
+        "conf_sound":  round(sound_conf,  3),
+        "conf_speech": round(speech_conf, 3),
     }
 
     score = sum(_DOMAIN_WEIGHTS[k] * breakdown[k] for k in _DOMAIN_WEIGHTS)
 
     # 복합 위험 보정: 2개 이상 도메인이 경계값(0.5) 이상이면 동시 이상 패턴으로 가산
-    if sum(1 for v in breakdown.values() if v >= 0.5) >= 2:
+    _domain_scores = (breakdown["fall"], breakdown["vital"], breakdown["sound"], breakdown["speech"])
+    if sum(1 for v in _domain_scores if v >= 0.5) >= 2:
         score = min(1.0, score * 1.2)
 
     return float(np.clip(score, 0.0, 1.0)), breakdown

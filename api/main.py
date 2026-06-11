@@ -429,16 +429,24 @@ async def ws_monitor(websocket: WebSocket):
     await websocket.accept()
     r = await _ensure_redis()
     last_id = "$"
+    last_sent = 0.0
+    WS_MIN_INTERVAL = 0.25  # 4Hz — 브라우저 DOM 포화 방지
 
     try:
         while True:
-            entries = await r.xread({RESULT_STREAM: last_id}, count=10, block=1000)
+            entries = await r.xread({RESULT_STREAM: last_id}, count=50, block=1000)
             if entries:
+                latest_msg_id = last_id
+                latest_payload = None
                 for _stream, messages in entries:
                     for msg_id, fields in messages:
-                        payload = _parse_result_payload(fields.get("data", ""))
-                        await websocket.send_json(_normalize_snapshot(payload, msg_id))
-                        last_id = msg_id
+                        latest_payload = _parse_result_payload(fields.get("data", ""))
+                        latest_msg_id = msg_id
+                last_id = latest_msg_id
+                now = time.time()
+                if latest_payload and (now - last_sent) >= WS_MIN_INTERVAL:
+                    await websocket.send_json(_normalize_snapshot(latest_payload, latest_msg_id))
+                    last_sent = now
             else:
                 await websocket.send_json({"ping": True})
 

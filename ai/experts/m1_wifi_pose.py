@@ -48,12 +48,12 @@ class WifiPoseModel:
         else:
             score = float(output_arr.reshape(-1)[0])
         score = float(np.clip(score, 0.0, 1.0))
-        return {"fall_score": score, "fall_detected": score >= 0.7}
+        return {"fall_score": score, "fall_detected": score >= 0.7, "infer_source": "onnx", "infer_confidence": 0.75}
 
     def _infer_fallback(self, data):
         variance = float(np.var(data))
         score = float(np.clip(variance * 10.0, 0.0, 1.0))
-        return {"fall_score": score, "fall_detected": score >= 0.7}
+        return {"fall_score": score, "fall_detected": score >= 0.7, "infer_source": "heuristic", "infer_confidence": 0.40}
 
     def infer(self, sensor_data):
         data = self._preprocess(sensor_data)

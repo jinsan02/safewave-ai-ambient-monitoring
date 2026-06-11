@@ -1,7 +1,16 @@
 # GPU 환경 오버라이드 — NVIDIA GPU가 있는 개발 머신이나 eGPU 사용 시
 # 사용법: AI_DOCKER_TARGET=gpu-runtime docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 services:
-  ai:
+  ai-experts:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  ai-qwen:
     deploy:
       resources:
         reservations:

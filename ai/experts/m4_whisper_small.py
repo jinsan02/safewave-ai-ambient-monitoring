@@ -33,7 +33,8 @@ class WhisperSmallModel:
         if os.path.exists(self.effective_model_path):
             self.session = ort.InferenceSession(self.effective_model_path, providers=get_ort_providers())
 
-        # STT 파이프라인은 첫 필요 시점에 지연 초기화한다.
+        # ASR 파이프라인을 시작 시점에 즉시 초기화 (lazy init 시 1s 타임아웃 초과로 전체 모델 블로킹)
+        self._init_asr_pipeline()
 
     def _init_asr_pipeline(self):
         self._asr_init_attempted = True
@@ -52,8 +53,9 @@ class WhisperSmallModel:
             if os.path.exists(dec_past):
                 kwargs["decoder_with_past_file_name"] = "decoder_with_past_model.onnx"
             else:
-                # decoder_with_past가 없는 2-file(encoder+decoder) 구성은 cache 비활성화가 필요하다.
+                # decoder_with_past가 없는 2-file 구성: cache 비활성화 + io_binding 비활성화
                 kwargs["use_cache"] = False
+                kwargs["use_io_binding"] = False
 
             if providers[0] != "CPUExecutionProvider":
                 kwargs["provider"] = providers[0]
@@ -65,6 +67,8 @@ class WhisperSmallModel:
                 tokenizer=processor.tokenizer,
                 feature_extractor=processor.feature_extractor,
             )
+            # asr_pipe가 encoder+decoder를 모두 보유 → 단독 encoder 세션 해제 (337MB 절감)
+            self.session = None
         except Exception:
             self.asr_pipe = None
 
@@ -124,7 +128,8 @@ class WhisperSmallModel:
         try:
             result = self.asr_pipe(
                 {"array": waveform.astype(np.float32), "sampling_rate": 16000},
-                generate_kwargs={"language": "ko", "task": "transcribe"},
+                generate_kwargs={"language": "ko", "task": "transcribe",
+                                 "num_beams": 1, "max_new_tokens": 128},
             )
             if isinstance(result, dict):
                 text = str(result.get("text", "")).strip()
@@ -170,14 +175,23 @@ class WhisperSmallModel:
 
         speech_detected = bool(text) or occupancy_score >= 0.2
         keywords = self._extract_keywords(text)
+        stt_conf_val = float(np.clip(stt_conf if stt_conf is not None else 0.0, 0.0, 1.0))
+
+        if source == "upstream-text":
+            infer_conf = 0.99
+        elif source == "whisper-stt":
+            infer_conf = max(0.55, stt_conf_val)
+        else:  # fallback / None
+            infer_conf = min(0.45, stt_conf_val)
 
         return {
             "transcript_ko": text,
             "speech_detected": speech_detected,
-            "stt_confidence": float(np.clip(stt_conf if stt_conf is not None else 0.0, 0.0, 1.0)),
+            "stt_confidence": stt_conf_val,
             "stt_source": source,
             "language": "ko",
             "keywords": keywords,
+            "infer_confidence": round(infer_conf, 3),
             # 하위 호환 키 (기존 occupancy UI/로직 유지)
             "occupied": speech_detected,
             "occupancy_score": float(np.clip(occupancy_score, 0.0, 1.0)),
