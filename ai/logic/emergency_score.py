@@ -30,6 +30,16 @@ _CRITICAL_KEYWORDS = frozenset(["살려", "도와", "아파", "응급", "위험"
 # 도메인 가중치 (합 = 1.0)
 _DOMAIN_WEIGHTS = {"fall": 0.40, "vital": 0.30, "sound": 0.15, "speech": 0.15}
 
+# 복합 위험 보정 배율 (활성 도메인 수 기준)
+_COMPOSITE_BOOST = {2: 1.20, 3: 1.35, 4: 1.50}
+
+# M2 생체신호 극한값 단일 에스컬레이션: vital_component==1.0이면 score 최솟값
+_VITAL_CRIT_BYPASS = 0.65
+
+# M4 긴급 키워드 + M1 낙상 의심 동시 발생 시 score 보너스
+_KEYWORD_FALL_BONUS = 0.15
+_KEYWORD_FALL_SCORE_MIN = 0.25
+
 
 def _conf_weight(confidence: float) -> float:
     """추론 신뢰도(0~1) → 점수 가중치 [0.5, 1.0]. 낮은 신뢰도 시 중립 방향으로 감쇠."""
@@ -52,7 +62,12 @@ def compute_emergency_score(expert_results: dict) -> tuple[float, dict]:
     M1-M4 출력에서 응급지수(0.0-1.0)를 계산한다.
 
     도메인 가중치: fall 40% + vital 30% + sound 15% + speech 15%
-    2개 이상 도메인이 0.5 이상이면 복합 위험 보정(×1.2, 상한 1.0)을 적용한다.
+    복합 위험 보정(활성 도메인 수 비례):
+      2도메인 >=0.5 -> x1.20 / 3도메인 -> x1.35 / 4도메인 -> x1.50 (상한 1.0)
+    M2 생체신호 극한값 단일 에스컬레이션:
+      vital_component==1.0 (심박/호흡 위기 범위) -> score 최솟값 0.65
+    M4 긴급 키워드 + M1 낙상 의심 동시 발생:
+      keyword>=1 & fall_score>=0.25 -> score +0.15
 
     Args:
         expert_results: ai/main.py process_experts() 반환값
@@ -60,7 +75,7 @@ def compute_emergency_score(expert_results: dict) -> tuple[float, dict]:
     Returns:
         (score, breakdown)
           - score: float 0.0~1.0 응급지수
-          - breakdown: {"fall", "vital", "sound", "speech", "conf_fall", "conf_vital", "conf_sound", "conf_speech"}
+          - breakdown: {"fall", "vital", "sound", "speech", "conf_fall", ...}
     """
     fall_out   = expert_results.get("fall")      or {}
     vital_out  = expert_results.get("vital")     or {}
@@ -75,10 +90,11 @@ def compute_emergency_score(expert_results: dict) -> tuple[float, dict]:
     vital_conf = float(np.clip(vital_out.get("infer_confidence", 1.0), 0.0, 1.0))
     hr = float(vital_out.get("heart_rate", 0.0))
     rr = float(vital_out.get("breathing_rate", 0.0))
-    vital_c = max(
+    _raw_vital_comp = max(
         _vital_component(hr, _HR_CRIT_LO, _HR_WARN_LO, _HR_WARN_HI, _HR_CRIT_HI),
         _vital_component(rr, _RR_CRIT_LO, _RR_WARN_LO, _RR_WARN_HI, _RR_CRIT_HI),
-    ) * _conf_weight(vital_conf)
+    )
+    vital_c = _raw_vital_comp * _conf_weight(vital_conf)
 
     # ── M3: 환경음 위험 점수 ──────────────────────────────────────
     sound_conf = float(np.clip(sound_out.get("infer_confidence", 1.0), 0.0, 1.0))
@@ -113,9 +129,22 @@ def compute_emergency_score(expert_results: dict) -> tuple[float, dict]:
 
     score = sum(_DOMAIN_WEIGHTS[k] * breakdown[k] for k in _DOMAIN_WEIGHTS)
 
-    # 복합 위험 보정: 2개 이상 도메인이 경계값(0.5) 이상이면 동시 이상 패턴으로 가산
+    # ── 복합 위험 보정: 활성 도메인 수에 비례한 차등 배율 ──────────────
     _domain_scores = (breakdown["fall"], breakdown["vital"], breakdown["sound"], breakdown["speech"])
-    if sum(1 for v in _domain_scores if v >= 0.5) >= 2:
-        score = min(1.0, score * 1.2)
+    _active = sum(1 for v in _domain_scores if v >= 0.5)
+    if _active >= 2:
+        score = min(1.0, score * _COMPOSITE_BOOST.get(_active, 1.50))
+
+    # ── M4 긴급 키워드 + M1 낙상 의심 동시 발생 보너스 ─────────────────
+    _fall_score_raw = float(fall_out.get("fall_score", 0.0))
+    if kw_hits >= 1 and _fall_score_raw >= _KEYWORD_FALL_SCORE_MIN:
+        score = min(1.0, score + _KEYWORD_FALL_BONUS)
+        breakdown["keyword_fall_bonus"] = True
+
+    # ── M2 생체신호 극한값 단일 에스컬레이션 ────────────────────────────
+    # vital_component==1.0: 심박/호흡이 위기 범위 → score 최솟값 0.65 보장
+    if _raw_vital_comp >= 1.0:
+        score = max(score, _VITAL_CRIT_BYPASS)
+        breakdown["vital_bypass"] = True
 
     return float(np.clip(score, 0.0, 1.0)), breakdown

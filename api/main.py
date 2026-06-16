@@ -168,6 +168,9 @@ TOKEN_TTL_SECONDS = int(os.getenv("TOKEN_TTL_SECONDS", "3600"))
 SETTINGS_TTL_SECONDS = int(os.getenv("SETTINGS_TTL_SECONDS", "3600"))
 ALERT_DEDUP_TTL_SECONDS = int(os.getenv("ALERT_DEDUP_TTL_SECONDS", "3600"))
 AUDIO_STREAM_MAXLEN = int(os.getenv("AUDIO_STREAM_MAXLEN", "3600"))
+TTS_SPEAK_QUEUE     = "tts:speak:queue"
+VOICE_RESP_PREFIX   = "user:voice_response:"
+PHASE2_TIMEOUT_SEC  = int(os.getenv("VOICE_RESPONSE_TIMEOUT_SEC", "15"))
 AUDIO_CLIP_KEY_PREFIX = "ai:clip:"
 AUDIO_CLIP_TTL_SECONDS = int(os.getenv("AUDIO_CLIP_TTL_SECONDS", "3600"))
 AUDIO_CLIP_POST_WAIT_MS = int(os.getenv("AUDIO_CLIP_POST_WAIT_MS", "15000"))
@@ -314,7 +317,103 @@ async def _capture_audio_clip(redis_client, ts_ms: int, node_id: int):
         _log(logging.WARNING, "audio_clip_failed", ts_ms=ts_ms, error=str(exc))
 
 
-async def _alert_worker(redis_client):
+def _build_emergency_tts(payload: dict) -> str:
+    reason = (payload.get("summary") or "").strip()
+    if reason:
+        return f"위험 상황이 감지됐습니다. {reason}. 괜찮으시면 말씀해 주세요."
+    return "위험 상황이 감지됐습니다. 괜찮으시면 말씀해 주세요."
+
+
+async def _get_phase2_transcript(redis_client, after_id: str, timeout: int) -> str | None:
+    """ai:result 스트림에서 speech_ko가 있는 첫 항목의 transcript를 반환. timeout초 내 없으면 None."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    last_id = after_id
+    while loop.time() < deadline:
+        remaining = deadline - loop.time()
+        block_ms = min(int(remaining * 1000), 2000)
+        if block_ms <= 0:
+            break
+        try:
+            entries = await redis_client.xread(
+                {RESULT_STREAM: last_id}, count=5, block=block_ms
+            )
+            if not entries:
+                continue
+            for _, msgs in entries:
+                for msg_id, fields in msgs:
+                    last_id = msg_id
+                    data = _parse_result_payload(fields.get("data", ""))
+                    speech = (data.get("experts") or {}).get("speech_ko") or {}
+                    if speech.get("speech_detected"):
+                        return str(speech.get("transcript_ko", "")).strip()
+        except Exception:
+            await asyncio.sleep(0.5)
+    return None
+
+
+def _classify_phase2(transcript: str | None) -> str:
+    """transcript 기반 의도 분류. 긴급 키워드 우선, 무응답 → call_emergency."""
+    if not transcript:
+        return "call_emergency"
+    emg_kw = {"아파", "도와", "살려", "119", "응급", "위험", "불러"}
+    safe_kw = {"괜찮", "아니야", "아니", "안 다쳤", "없어", "멀쩡"}
+    if any(kw in transcript for kw in emg_kw):
+        return "call_emergency"
+    if any(kw in transcript for kw in safe_kw):
+        return "cancel_alarm"
+    return "call_emergency"
+
+
+async def _handle_single_emergency(redis_client, msg_id: str, payload: dict):
+    node_id = payload.get("node_id", 0)
+
+    asyncio.create_task(
+        _capture_audio_clip(redis_client, payload["ts_ms"], node_id)
+    )
+
+    tts_text = _build_emergency_tts(payload)
+    resp_key = f"{VOICE_RESP_PREFIX}{node_id}"
+    await redis_client.delete(resp_key)
+    await redis_client.lpush(
+        TTS_SPEAK_QUEUE,
+        json.dumps({"text": tts_text, "node_id": node_id,
+                    "ts_ms": payload["ts_ms"]}, ensure_ascii=False),
+    )
+    _log(logging.INFO, "tts_queued", node_id=node_id, text=tts_text)
+
+    await redis_client.blpop(resp_key, timeout=15)
+
+    # Phase 2: TTS 재생 후 ai:result 스트림에서 STT transcript 추출 → 의도 분류
+    after_entries = await redis_client.xrevrange(RESULT_STREAM, count=1)
+    after_id = after_entries[0][0] if after_entries else "$"
+    transcript = await _get_phase2_transcript(redis_client, after_id, timeout=PHASE2_TIMEOUT_SEC)
+    intent = _classify_phase2(transcript)
+    _log(logging.INFO, "phase2_result", node_id=node_id, transcript=transcript, intent=intent)
+
+    for device_id, token in await _list_registered_tokens(redis_client):
+        dedupe_key = f"notify:sent:{msg_id}:{device_id}"
+        claimed = await redis_client.set(dedupe_key, "1", ex=ALERT_DEDUP_TTL_SECONDS, nx=True)
+        if not claimed:
+            continue
+        try:
+            if intent == "cancel_alarm":
+                await asyncio.to_thread(
+                    send_risk_notification,
+                    token, payload["risk_score"], "warning", False,
+                    {"summary": "대상자 음성 응답 확인됨", "ts_ms": payload["ts_ms"]},
+                )
+            else:
+                await asyncio.to_thread(
+                    send_risk_notification,
+                    token, payload["risk_score"], payload["risk_level"], True,
+                    {"summary": payload["summary"], "ts_ms": payload["ts_ms"]},
+                )
+        except Exception as exc:
+            _log(logging.ERROR, "fcm_send_failed", device_id=device_id, error=str(exc))
+
+
+async def _alert_worker():
     last_id = "$"
     while True:
         try:
@@ -331,27 +430,7 @@ async def _alert_worker(redis_client):
                     if payload["risk_level"] != "critical":
                         continue
 
-                    # 응급 오디오 클립 캡처 (비블로킹)
-                    asyncio.create_task(
-                        _capture_audio_clip(redis_client, payload["ts_ms"], payload["node_id"])
-                    )
-
-                    for device_id, token in await _list_registered_tokens(redis_client):
-                        dedupe_key = f"notify:sent:{msg_id}:{device_id}"
-                        claimed = await redis_client.set(dedupe_key, "1", ex=ALERT_DEDUP_TTL_SECONDS, nx=True)
-                        if not claimed:
-                            continue
-                        try:
-                            await asyncio.to_thread(
-                                send_risk_notification,
-                                token,
-                                payload["risk_score"],
-                                payload["risk_level"],
-                                True,
-                                {"summary": payload["summary"], "ts_ms": payload["ts_ms"]},
-                            )
-                        except Exception as exc:
-                            _log(logging.ERROR, "fcm_send_failed", device_id=device_id, error=str(exc))
+                    asyncio.create_task(_handle_single_emergency(redis_client, msg_id, payload))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -374,11 +453,11 @@ async def startup():
         exc = task.exception()
         if exc is not None:
             _log(logging.ERROR, "alert_worker_crashed", error=str(exc), action="restarting")
-        new_task = asyncio.create_task(_alert_worker(app.state.redis))
+        new_task = asyncio.create_task(_alert_worker())
         new_task.add_done_callback(_restart_alert_worker)
         app.state.alert_worker = new_task
 
-    task = asyncio.create_task(_alert_worker(app.state.redis))
+    task = asyncio.create_task(_alert_worker())
     task.add_done_callback(_restart_alert_worker)
     app.state.alert_worker = task
     _log(logging.INFO, "startup_completed", redis_host=REDIS_HOST, redis_port=REDIS_PORT)

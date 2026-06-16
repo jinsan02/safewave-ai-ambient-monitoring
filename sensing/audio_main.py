@@ -57,12 +57,11 @@ def rms_dbfs(samples: np.ndarray) -> float:
 
 def xadd_audio_event(r: redis.Redis, waveform: np.ndarray, peak_db: float):
     ts_ms = int(time.time() * 1000)
-    payload = {
+    meta = {
         "sample_rate": AUDIO_SAMPLE_RATE,
         "channels": AUDIO_CHANNELS,
         "duration_ms": int(len(waveform) * 1000 / AUDIO_SAMPLE_RATE),
         "peak_db": round(float(peak_db), 2),
-        "waveform": waveform.astype(np.float32).tolist(),
     }
 
     r.xadd(
@@ -70,7 +69,8 @@ def xadd_audio_event(r: redis.Redis, waveform: np.ndarray, peak_db: float):
         {
             "node": AUDIO_NODE_ID,
             "ts_ms": ts_ms,
-            "data": json.dumps(payload, ensure_ascii=False),
+            "data": json.dumps(meta, ensure_ascii=False),
+            "waveform": waveform.astype(np.float32).tobytes(),
         },
         maxlen=AUDIO_STREAM_MAXLEN,
         approximate=True,

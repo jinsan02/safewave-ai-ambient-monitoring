@@ -6,10 +6,7 @@ import json
 import numpy as np
 import onnxruntime as ort
 
-try:
-    import redis
-except Exception:
-    redis = None
+from utils import safe_float as _safe_float, stream_id_ts_ms as _stream_id_ts_ms
 
 _LOGGER = logging.getLogger("rp5.ai.qwen")
 
@@ -37,15 +34,15 @@ class QwenLogic:
         self.model_path = model_path
         self.session = None
         self.tokenizer = None
-        self.max_new_tokens = int(os.getenv("QWEN_MAX_NEW_TOKENS", "128"))
-        self.max_new_tokens = max(96, min(192, self.max_new_tokens))
+        self.max_new_tokens = int(os.getenv("QWEN_MAX_NEW_TOKENS", "56"))
+        self.max_new_tokens = max(40, min(80, self.max_new_tokens))
         self.hourly_window_ms = int(os.getenv("SLM_HOURLY_WINDOW_MS", "3600000"))
         self.hourly_result_scan_limit = int(os.getenv("SLM_HOURLY_RESULT_SCAN_LIMIT", "1800"))
         self.hourly_emergency_scan_limit = int(os.getenv("SLM_HOURLY_EMERGENCY_SCAN_LIMIT", "600"))
         self.hourly_speech_sample_limit = int(os.getenv("SLM_HOURLY_SPEECH_SAMPLE_LIMIT", "8"))
         self.hourly_event_sample_limit = int(os.getenv("SLM_HOURLY_EVENT_SAMPLE_LIMIT", "8"))
         self.hourly_cache_ms = int(os.getenv("SLM_HOURLY_CACHE_MS", "10000"))
-        self.redis_client = None
+        self.redis_client = None  # qwen_service.py가 외부에서 주입
         self._hourly_cache_at_ms = 0
         self._hourly_cache_data = None
         self._onnx_file = None
@@ -55,18 +52,6 @@ class QwenLogic:
         self._is_merged_kv = False  # optimum 2.x single-file merged KV format
         self.feedback_topic_key = os.getenv("MQTT_FEEDBACK_REDIS_KEY", "mqtt:feedback:last")
 
-        if redis is not None:
-            try:
-                self.redis_client = redis.Redis(
-                    host=os.getenv("REDIS_HOST", "db"),
-                    port=int(os.getenv("REDIS_PORT", "6379")),
-                    decode_responses=False,
-                    socket_connect_timeout=1,
-                    socket_timeout=1,
-                )
-            except Exception:
-                self.redis_client = None
-        
         # 폴더인지 파일인지 확인
         if os.path.isdir(self.model_path):
             self._onnx_file = os.path.join(self.model_path, "model.onnx")
@@ -131,29 +116,6 @@ class QwenLogic:
             _LOGGER.error("qwen_model_load_failed error=%s", e)
             self.session = None
 
-    def _safe_float(self, value, default=0.0):
-        try:
-            if isinstance(value, dict):
-                for key in ("value", "score", "mean", "avg"):
-                    if key in value:
-                        return float(value[key])
-                return default
-            if isinstance(value, (list, tuple)):
-                if not value:
-                    return default
-                return float(value[0])
-            return float(value)
-        except Exception:
-            return default
-
-    def _stream_id_ts_ms(self, stream_id):
-        if isinstance(stream_id, bytes):
-            stream_id = stream_id.decode("utf-8", errors="ignore")
-        try:
-            return int(str(stream_id).split("-")[0])
-        except Exception:
-            return int(time.time() * 1000)
-
     def _series_trend_summary(self, series, label, unit):
         if len(series) < 3:
             return f"{label}: 데이터 부족"
@@ -205,7 +167,7 @@ class QwenLogic:
         speech_seen = set()
 
         for msg_id, fields in result_entries:
-            ts_ms = self._stream_id_ts_ms(msg_id)
+            ts_ms = _stream_id_ts_ms(msg_id)
             if ts_ms < since_ts_ms:
                 break
 
@@ -225,8 +187,8 @@ class QwenLogic:
 
             experts = payload.get("experts", {})
             vital = experts.get("vital", {}) if isinstance(experts, dict) else {}
-            hr = self._safe_float(vital.get("heart_rate"), default=-1.0)
-            rr = self._safe_float(vital.get("breathing_rate"), default=-1.0)
+            hr = _safe_float(vital.get("heart_rate"), default=-1.0)
+            rr = _safe_float(vital.get("breathing_rate"), default=-1.0)
             if hr >= 0.0:
                 heart_rates.append(hr)
             if rr >= 0.0:
@@ -241,7 +203,7 @@ class QwenLogic:
             context["sampled_result_points"] += 1
 
         for msg_id, fields in emergency_entries:
-            ts_ms = self._stream_id_ts_ms(msg_id)
+            ts_ms = _stream_id_ts_ms(msg_id)
             if ts_ms < since_ts_ms:
                 break
 
@@ -264,7 +226,7 @@ class QwenLogic:
         return context
     
     def _build_analysis_prompt(self, expert_results, context_window=None, hourly_context=None):
-        """few-shot 예시로 Qwen-0.5B가 실제 값을 생성하도록 유도."""
+        """6개 few-shot 예시 + [현재] 상태로 구성된 단일 사용자 프롬프트를 반환."""
         fall = expert_results.get("fall", {})
         vital = expert_results.get("vital", {})
         env_sound = expert_results.get("env_sound", {})
@@ -280,6 +242,8 @@ class QwenLogic:
         findings = []
         if fall_detected:
             findings.append("낙상감지")
+        elif fall_score >= 0.5:
+            findings.append(f"낙상위험({fall_score:.0%})")
         if hr and (hr < 60 or hr > 100):
             findings.append(f"심박이상(hr={hr:.0f})")
         if rr and (rr < 12 or rr > 25):
@@ -305,14 +269,22 @@ class QwenLogic:
 
         return (
             "[예시]\n"
-            "낙상:False(2%), 심박:72, 호흡:15, 환경음:silence, 이상소견:정상\n"
-            '-> {"risk_score":0.1,"risk_level":"normal","is_outlier":false,'
-            '"correlated_with_history":false,"reason":"정상범위"}\n\n'
-            "낙상:True(91%), 심박:45, 호흡:8, 환경음:impact, 이상소견:낙상감지,심박이상,위험음\n"
-            '-> {"risk_score":0.95,"risk_level":"critical","is_outlier":false,'
-            '"correlated_with_history":false,"reason":"낙상+심박이상+위험음"}\n\n'
-            f"[현재] 낙상:{fall_detected}({fall_score:.0%}), 심박:{hr:.0f}, 호흡:{rr:.0f}, "
-            f"환경음:{env_label}, 이상소견:{findings_str}{ctx_note}\n"
+            "낙상:False(3%),심박:72,호흡:15,환경:silence,소견:정상\n"
+            '->{"risk_score":0.1,"risk_level":"normal","reason":"정상"}\n\n'
+            # alarm 카운터: 알람음만 있고 낙상·활력징후 정상 → normal
+            "낙상:False(5%),심박:72,호흡:15,환경:alarm,소견:위험음(alarm)\n"
+            '->{"risk_score":0.2,"risk_level":"normal","reason":"알람음 있으나 낙상·활력징후 정상"}\n\n'
+            # fall_det 카운터: 낮은 신뢰도 낙상감지, 생체신호 정상 → normal
+            "낙상:True(32%),심박:72,호흡:15,환경:silence,소견:낙상감지\n"
+            '->{"risk_score":0.4,"risk_level":"normal","reason":"낙상감지 신뢰도낮음 활력징후정상"}\n\n'
+            "낙상:False(58%),심박:108,호흡:22,환경:noise,소견:낙상위험(58%),심박이상,호흡이상\n"
+            '->{"risk_score":0.65,"risk_level":"warning","reason":"낙상위험+심박+호흡 경계"}\n\n'
+            "낙상:False(2%),심박:33,호흡:5,환경:silence,소견:심박위기\n"
+            '->{"risk_score":0.85,"risk_level":"critical","reason":"심박위기"}\n\n'
+            "낙상:True(91%),심박:33,호흡:5,환경:alarm,소견:낙상감지,심박이상,위험음(alarm)\n"
+            '->{"risk_score":0.95,"risk_level":"critical","reason":"낙상+심박위기+알람"}\n\n'
+            f"[현재] 낙상:{fall_detected}({fall_score:.0%}),심박:{hr:.0f},호흡:{rr:.0f},"
+            f"환경:{env_label},소견:{findings_str}{ctx_note}\n"
             "->"
         )
     
@@ -350,7 +322,7 @@ class QwenLogic:
             if start < 0 or end < start:
                 return None
             obj = json.loads(response_text[start:end + 1])
-            score = self._safe_float(obj.get("risk_score"), default=-1.0)
+            score = _safe_float(obj.get("risk_score"), default=-1.0)
             if score < 0.0:
                 return None
             score = float(np.clip(score, 0.0, 1.0))
@@ -360,8 +332,8 @@ class QwenLogic:
             return {
                 "risk_score": score,
                 "risk_level": level,
-                "is_outlier": bool(obj.get("is_outlier", False)),
-                "correlated_with_history": bool(obj.get("correlated_with_history", False)),
+                "is_outlier": False,
+                "correlated_with_history": False,
                 "reason": str(obj.get("reason", "")).strip(),
             }
         except Exception:
@@ -526,10 +498,8 @@ class QwenLogic:
             return None
         try:
             system_content = (
-                "독거인 안전 모니터링 AI. 센서 데이터 분석 후 JSON만 출력.\n"
-                '스키마: {"risk_score":float,"risk_level":"normal|warning|critical",'
-                '"is_outlier":bool,"correlated_with_history":bool,"reason":"str"}\n'
-                "normal(<0.6), warning(0.6~0.85), critical(≥0.85)"
+                "독거인 안전 모니터링 AI. JSON만 출력.\n"
+                '{"risk_score":float,"risk_level":"normal|warning|critical","reason":"str"}'
             )
 
             if hasattr(self.tokenizer, "apply_chat_template"):
@@ -541,7 +511,6 @@ class QwenLogic:
                     messages, tokenize=False, add_generation_prompt=True
                 )
             else:
-                # apply_chat_template 없을 때 Qwen-Instruct 포맷 직접 구성
                 formatted = (
                     f"<|im_start|>system\n{system_content}<|im_end|>\n"
                     f"<|im_start|>user\n{prompt_text}<|im_end|>\n"
@@ -587,30 +556,13 @@ class QwenLogic:
         
         risk = 0.0
 
-        def _as_float(value, default=0.0):
-            try:
-                if isinstance(value, dict):
-                    for key in ("value", "score", "mean", "avg"):
-                        if key in value:
-                            return float(value[key])
-                    return default
-                if isinstance(value, (list, tuple)):
-                    if not value:
-                        return default
-                    return float(value[0])
-                return float(value)
-            except Exception:
-                return default
-        
-        # 낙상 감지: 매우 높은 위험
         if fall.get("fall_detected", False):
             risk = max(risk, 0.9)
         else:
-            risk += _as_float(fall.get("fall_score", 0.0), 0.0) * 0.3
-        
-        # 생체신호 이상: 중간~높은 위험
-        hr = _as_float(vital.get("heart_rate", 70.0), 70.0)
-        rr = _as_float(vital.get("breathing_rate", 16.0), 16.0)
+            risk += _safe_float(fall.get("fall_score", 0.0), 0.0) * 0.3
+
+        hr = _safe_float(vital.get("heart_rate", 70.0), 70.0)
+        rr = _safe_float(vital.get("breathing_rate", 16.0), 16.0)
         
         if hr < 50 or hr > 120 or rr < 10 or rr > 30:
             risk = max(risk, 0.75)
@@ -630,27 +582,13 @@ class QwenLogic:
         return float(np.clip(risk, 0.0, 1.0))
     
     def _apply_context_window(self, risk_score, context_window):
-        """
-        시간 시리즈 맥락 적용
-        
-        최근 연속 경고/긴급 상태를 고려하여 위험도 조정
-        """
         if not context_window:
             return risk_score
-        
-        critical_count = int(context_window.get("recent_critical_count", 0))
+
         warning_count = int(context_window.get("recent_warning_count", 0))
-        
-        # 최근 긴급 상태가 연속이면 높음
-        if critical_count > 1:
-            risk_score = max(risk_score, 0.9)
-        elif critical_count > 0:
-            risk_score = max(risk_score, 0.85)
-        
-        # 최근 경고가 3번 이상 연속이면 위험도 상향
         if warning_count >= 3:
             risk_score = min(1.0, risk_score + 0.1)
-        
+
         return float(np.clip(risk_score, 0.0, 1.0))
 
     def _apply_hourly_fallback_weight(self, risk_score, hourly_context, expert_results):
@@ -693,7 +631,7 @@ class QwenLogic:
             return float(np.clip(risk_score, 0.0, 1.0))
 
         feedback = str(payload.get("feedback", "")).lower().strip()
-        delta = self._safe_float(payload.get("delta"), default=0.0)
+        delta = _safe_float(payload.get("delta"), default=0.0)
         if delta == 0.0:
             if feedback in {"up", "missed_alert", "positive"}:
                 delta = 0.08
@@ -785,8 +723,25 @@ class QwenLogic:
             if parsed_response.get("reason"):
                 result["qwen_reason"] = parsed_response["reason"]
             result["risk_level"] = parsed_response["risk_level"]
-        
+
         if qwen_response:
             result["qwen_response"] = qwen_response
-        
+
+        # env_label이 alarm/impact가 아닌데 reason에 "알람" 포함 시 제거 (0.5B 할루시네이션 방지)
+        _env_so = (expert_results or {}).get("env_sound") or {}
+        _env_l = str(_env_so.get("env_sound_label") or _env_so.get("label") or "")
+        if _env_l not in {"alarm", "impact"} and result.get("qwen_reason"):
+            result["qwen_reason"] = re.sub(r"\+?알람", "", result["qwen_reason"]).strip("+").strip()
+
+        # vital 극한값(HR<=35 or >=130 / RR<=4 or >=35)일 때 Qwen "normal" 다운그레이드 방지
+        # emergency_score가 vital_bypass로 에스컬레이션한 케이스를 Qwen이 되돌리지 않도록 함
+        _vital = (expert_results or {}).get("vital") or {}
+        _hr = float(_vital.get("heart_rate", 0) or 0)
+        _rr = float(_vital.get("breathing_rate", 0) or 0)
+        _vital_crisis = (0 < _hr <= 35) or _hr >= 130 or (0 < _rr <= 4) or _rr >= 35
+        if _vital_crisis and result.get("risk_level") == "normal":
+            result["risk_level"] = "warning"
+            result["risk_score"] = max(result.get("risk_score", 0.0), 0.65)
+            result["vital_override"] = True
+
         return result

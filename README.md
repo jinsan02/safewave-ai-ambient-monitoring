@@ -2,7 +2,7 @@
 
 독거인 안전 모니터링 시스템 — Raspberry Pi 5 + Docker Compose 기반
 
-**현재 릴리즈: v0.1.0**
+**현재 릴리즈: v0.1.1**
 
 ---
 
@@ -131,6 +131,9 @@ AudioSet 상위 결과는 `ast_top_class`, `ast_top_confidence`로 함께 반환
 | `sys:settings` | Hash | TTL 3600s | 앱 설정값 |
 | `fcm:token:*` | String | TTL 3600s | FCM 등록 기기 토큰 |
 | `mqtt:feedback:last` | String | TTL 3600s | MQTT 피드백 마지막 값 |
+| `tts:speak:queue` | List | — | TTS 발화 요청 큐 (`tts_worker.py` BLPOP 소비) |
+| `user:voice_response:N` | String | TTL 5s | TTS 재생 완료 신호 (노드별, Phase 2 응급 확인 트리거) |
+| `notify:sent:{msg_id}:{device_id}` | String | TTL 3600s | FCM 중복 발송 방지 dedupe 키 |
 
 모든 데이터는 메모리에만 유지되며, 컨테이너 재시작 시 이력이 복구되지 않습니다.
 
@@ -147,6 +150,26 @@ AudioSet 상위 결과는 `ast_top_class`, `ast_top_confidence`로 함께 반환
 | `safewave/feedback` | 구독자 → ai | 피드백 (Redis에 저장) |
 
 Home Assistant MQTT 통합 설정은 `docs/api-db-spec.html` 참조.
+
+---
+
+## 응급 알림 흐름 (Phase 2 Active Verification)
+
+`ai:emergency`에 critical 이벤트가 들어오면 `api/main.py`의 `_alert_worker`가 즉시 FCM을 보내지 않고, 1차로 음성 확인을 시도합니다.
+
+```
+ai:emergency (critical)
+  → TTS 발화 큐 적재 (tts:speak:queue)
+  → tts_worker.py가 "괜찮으세요?" 음성 재생 → user:voice_response:N 신호
+  → api가 ai:result 스트림에서 STT(M4) 응답 대기 (PHASE2_TIMEOUT_SEC, 기본 15s)
+  → transcript 키워드 분류
+      - 응급 키워드("아파","도와","살려","119" 등) → call_emergency
+      - 안전 키워드("괜찮","아니야","없어" 등)     → cancel_alarm
+      - 무응답/timeout                              → call_emergency (fail-safe)
+  → FCM 발송 (cancel_alarm: warning 알림 / call_emergency: critical 알림)
+```
+
+각 응급 이벤트는 `asyncio.create_task`로 비동기 처리되어 다음 이벤트의 큐 처리를 막지 않습니다.
 
 ---
 
@@ -373,9 +396,16 @@ rp5/
 │   ├── gen_sos_coeffs.py       # Butterworth SOS 계수 생성 → 펌웨어 biquad_coeffs.h
 │   ├── csi_csv_logger.py       # CSI 스트림 CSV 로깅 유틸
 │   ├── test_emergency_score.py # emergency_score 단위 테스트
+│   ├── test_pipeline_integration.py # M1~M4 → emergency_score → Qwen 경계값 통합 테스트
+│   ├── eval_qwen_accuracy.py   # Qwen 프롬프트/few-shot 정확도 평가 (100케이스 채점)
+│   ├── qwen_eval_dataset.json  # 평가용 100케이스 정답셋 (ground truth)
+│   ├── benchmark_gpu.py        # M1~M5 GPU 추론 레이턴시 벤치마크
+│   ├── analyze_csi.py          # CSI 실측 로그 분석 (data/csi/*.csv)
+│   ├── analyze_csi_by_node.py  # 노드별 CSI 구간 비교 분석
+│   ├── analyze_nodes.py        # 노드 구성/상태 요약
 │   ├── slm_chat_cli.py         # SLM 대화형 CLI 테스트
 │   ├── slm_chat_demo.py        # SLM 시나리오 데모
-│   ├── tts_worker.py           # TTS 음성 알림 워커
+│   ├── tts_worker.py           # TTS 음성 알림 워커 (MQTT 구독 + Redis 큐 소비)
 │   ├── export_m1_wifi_pose_onnx.py
 │   ├── export_m2_frenel_vital_onnx.py
 │   ├── export_m3_ast_onnx.py
@@ -406,6 +436,51 @@ rp5/
 ---
 
 ## 변경 이력
+
+### v0.1.1 — 2026-06-16
+
+**`emergency_score.py` 위험도 산식 고도화:**
+- 복합 위험 보정 차등화: 2도메인 동시 이상 ×1.20 / 3도메인 ×1.35 / 4도메인 ×1.50 (기존 일괄 ×1.2)
+- `vital_bypass`: M2 심박/호흡이 위기 범위(`vital_component==1.0`)면 score 최소값 0.65 보장 — 단일 생체신호 위기를 다른 도메인 점수로 희석되지 않게 함
+- `keyword_fall_bonus`: M4 응급 키워드(`살려/도와/아파/응급/위험` 등) + M1 낙상 의심(`fall_score≥0.25`) 동시 발생 시 +0.15 가산
+
+**Qwen-0.5B (`logic/qwen_05b.py`) 프롬프트 개선:**
+- few-shot 5개 → 6개로 확장: alarm 카운터 예시(알람음 단독 → normal), fall_det 카운터 예시(낮은 신뢰도 낙상감지 → normal) 추가해 0.5B의 패턴 과적합(할루시네이션) 완화
+- JSON 출력 스키마 단순화: `is_outlier`/`correlated_with_history` 필드 제거 (0.5B가 일관되게 생성 못 해 항상 `false`로 고정되던 죽은 필드)
+- `max_new_tokens` 128 → 56 (생성 속도 개선, 출력은 JSON 한 줄이면 충분)
+- `_apply_context_window`의 critical 강제 승급 로직 제거 — 최근 이력만으로 risk_level을 덮어쓰지 않고 모델 판단 우선
+- env_label이 `alarm`/`impact`가 아닐 때 `qwen_reason`에서 "알람" 텍스트 후처리 제거 (환경음과 무관한 할루시네이션 텍스트 필터)
+- **검증 결과** (`scripts/eval_qwen_accuracy.py`, 100케이스): Exact match 71%, Adjacent(±1) 81%, Critical recall 100%, Safe fail 0%, Normal FP rate 26.8%
+- multi-turn ChatML 포맷 시도 → FP율 53.5%로 악화되어 폐기, single-turn 텍스트 패턴 유지가 0.5B에 더 적합함을 확인
+
+**`api/main.py` Phase 2 Active Verification 신규:**
+- 응급 이벤트 발생 시 즉시 FCM 발송하지 않고 TTS "괜찮으세요?" 음성 확인 → STT 응답 대기 → 키워드 기반 의도 분류(`cancel_alarm`/`call_emergency`) → 최종 FCM 발송
+- 무응답/timeout(15s)은 fail-safe로 `call_emergency` 처리
+- `_alert_worker` 직렬 블로킹 제거: 응급 이벤트별로 `asyncio.create_task`로 분리해 다음 이벤트 큐 처리가 막히지 않게 함
+
+**`ai/utils/__init__.py` 공통 유틸 통합:**
+- `safe_float`, `stream_id_ts_ms`, `json_loads`, `build_context_window`, `get_session_opts` 추가 — `qwen_05b.py`/`qwen_service.py`/`ai/main.py`에 중복 구현되어 있던 동일 함수 통합
+- 미사용 `TurboQuant` no-op 클래스 제거
+
+**TTS 음성 알림 (`scripts/tts_worker.py`):**
+- MQTT 구독(`safewave/ai/result`) 기반 경고 알림 + Redis `tts:speak:queue` 기반 응급 알림 발화 분리
+- `docker-compose.yml` — `audio` 프로파일에서 분리해 항상 기동, Redis 의존성 추가, `/dev/snd` 오디오 디바이스 마운트
+
+**모델 추론 안정화:**
+- `m1_wifi_pose.py` — 입력 reshape을 ONNX 세션의 실제 input shape에서 동적으로 읽도록 수정 (하드코딩된 192×100 제거)
+- `m3_ast_base.py`/`m4_whisper_small.py` — `get_session_opts()` 적용, GPU 모드에서 CPU-only 연산 Memcpy 경고 억제
+- `sensing/main.py` — 패킷 손실 카운터 모듈러 연산을 펌웨어 struct(`uint16`)와 일치시킴 (기존 uint32 불일치로 손실률 오계산)
+- `sensing/audio_main.py` — waveform을 JSON 배열 대신 raw bytes(`tobytes()`)로 전송, 페이로드 경량화
+
+**대시보드 (`monitor.html`):** M1/M2 실시간 로그와 M3/M4 음성 로그 분리, 음성 로그는 5초 throttle + 내용 변경 시에만 출력 (중복 라인 방지)
+
+**평가/분석 도구 신규 (`scripts/`):**
+- `eval_qwen_accuracy.py` + `qwen_eval_dataset.json` — Qwen 프롬프트 회귀 테스트용 100케이스 정답셋, exact/adjacent/safe-fail/FP rate 자동 채점
+- `test_pipeline_integration.py` — M1~M4 → emergency_score → Qwen 경계값 통합 테스트
+- `benchmark_gpu.py` — M1~M5 GPU 추론 레이턴시 벤치마크
+- `analyze_csi.py` / `analyze_csi_by_node.py` / `analyze_nodes.py` — ESP32 실측 CSI 로그 분석 도구
+
+---
 
 ### v0.1.0 — 첫 시뮬레이션 검증 성공
 

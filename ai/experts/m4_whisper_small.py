@@ -9,7 +9,7 @@ import os
 import numpy as np
 import onnxruntime as ort
 
-from utils import get_ort_providers
+from utils import get_ort_providers, get_session_opts
 
 try:
     from optimum.onnxruntime import ORTModelForSpeechSeq2Seq
@@ -31,7 +31,11 @@ class WhisperSmallModel:
             self.effective_model_path = os.path.join(self.model_path, "encoder_model.onnx")
 
         if os.path.exists(self.effective_model_path):
-            self.session = ort.InferenceSession(self.effective_model_path, providers=get_ort_providers())
+            self.session = ort.InferenceSession(
+                self.effective_model_path,
+                providers=get_ort_providers(),
+                sess_options=get_session_opts(),
+            )
 
         # ASR 파이프라인을 시작 시점에 즉시 초기화 (lazy init 시 1s 타임아웃 초과로 전체 모델 블로킹)
         self._init_asr_pipeline()

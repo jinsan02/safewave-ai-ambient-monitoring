@@ -10,17 +10,21 @@ import json
 import logging
 import os
 import time
-from typing import Any
 
 import redis as _redis
 
 from logic.qwen_05b import QwenLogic
+from utils import (
+    stream_id_ts_ms as _stream_id_ts_ms,
+    json_loads as _json_loads,
+    build_context_window,
+)
 
 
 RESULT_STREAM    = "ai:result"
 EMERGENCY_STREAM = "ai:emergency"
 EMERGENCY_STREAM_MAXLEN = int(os.getenv("EMERGENCY_STREAM_MAXLEN", "3600"))
-SLM_MIN_INTERVAL_MS     = int(os.getenv("SLM_MIN_INTERVAL_MS", "3000"))
+SLM_MIN_INTERVAL_MS     = int(os.getenv("SLM_MIN_INTERVAL_MS", "5000"))
 CONTEXT_WINDOW_MINUTES  = int(os.getenv("CONTEXT_WINDOW_MINUTES", "10"))
 MODEL_PATH = os.getenv("MODEL_PATH", "/app/models")
 SLM_MODEL  = os.getenv("SLM_MODEL",  "qwen_05b.onnx")
@@ -55,61 +59,8 @@ def _connect_redis() -> _redis.Redis:
             time.sleep(2)
 
 
-def _json_loads(raw: Any) -> dict:
-    if not raw:
-        return {}
-    if isinstance(raw, bytes):
-        raw = raw.decode("utf-8", errors="ignore")
-    try:
-        return json.loads(raw)
-    except Exception:
-        return {}
-
-
-def _stream_id_ts_ms(stream_id: Any) -> int:
-    if isinstance(stream_id, bytes):
-        stream_id = stream_id.decode("utf-8", errors="ignore")
-    try:
-        return int(str(stream_id).split("-")[0])
-    except Exception:
-        return int(time.time() * 1000)
-
-
 def _build_context_window(r: _redis.Redis, ts_ms: int) -> dict:
-    """ai:emergency에서 최근 CONTEXT_WINDOW_MINUTES 분 위험 이력 수집."""
-    since_ms = ts_ms - (CONTEXT_WINDOW_MINUTES * 60 * 1000)
-    warning_count = critical_count = 0
-    recent_events: list[str] = []
-    try:
-        entries = r.xrevrange(EMERGENCY_STREAM, count=128)
-    except Exception:
-        entries = []
-    for msg_id, fields in entries:
-        if _stream_id_ts_ms(msg_id) < since_ms:
-            break
-        payload = _json_loads(fields.get(b"data", b""))
-        level = payload.get("risk_level", "normal")
-        if level == "critical":
-            critical_count += 1
-        elif level == "warning":
-            warning_count += 1
-        summary = payload.get("summary")
-        if summary and len(recent_events) < 5:
-            recent_events.append(summary)
-    parts = []
-    if critical_count:
-        parts.append(f"critical {critical_count}")
-    if warning_count:
-        parts.append(f"warning {warning_count}")
-    if recent_events:
-        parts.append("recent=" + " | ".join(recent_events))
-    return {
-        "window_minutes":       CONTEXT_WINDOW_MINUTES,
-        "recent_warning_count":  warning_count,
-        "recent_critical_count": critical_count,
-        "recent_events":         recent_events,
-        "text":                  "; ".join(parts),
-    }
+    return build_context_window(r, ts_ms, EMERGENCY_STREAM, CONTEXT_WINDOW_MINUTES)
 
 
 def _warmup_qwen(qwen: QwenLogic):
@@ -194,7 +145,8 @@ def run():
                         _log(logging.INFO, "qwen_invoked",
                              node_id=snapshot.get("node_id", 0),
                              risk_score=snapshot.get("risk_score", 0.0),
-                             risk_level=fused.get("risk_level", "?"))
+                             risk_level=fused.get("risk_level", "?"),
+                             qwen_infer_ms=fused.get("qwen_infer_ms"))
                     except Exception as exc:
                         _log(logging.ERROR, "qwen_failed", error=str(exc))
 

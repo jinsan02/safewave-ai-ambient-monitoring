@@ -93,7 +93,7 @@ def receive_loop(sock: socket.socket, r: redis.Redis):
                 if seq is not None:
                     prev = node_seq_state.get(node_id)
                     if prev is not None and seq != prev:
-                        step = (int(seq) - int(prev)) % (1 << 32)  # uint32
+                        step = (int(seq) - int(prev)) % 65536  # uint16 (struct H)
                         # step > 10000: 100초치 초과 → 재부팅 추정, 카운터 오염 방지
                         if 1 < step <= 10000:
                             state["lost"] += (step - 1)

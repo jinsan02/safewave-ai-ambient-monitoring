@@ -27,14 +27,17 @@ class WifiPoseModel:
         data = np.asarray(sensor_data, dtype=np.float32)
         if data.ndim == 4:
             return data
-
+        if self.session is not None:
+            _, _, n_ch, n_t = self.session.get_inputs()[0].shape
+        else:
+            n_ch, n_t = 192, 100
         flat = data.reshape(-1)
-        target = 192 * 100
+        target = n_ch * n_t
         if flat.size < target:
             flat = np.pad(flat, (0, target - flat.size), mode="constant")
         else:
             flat = flat[:target]
-        return flat.reshape(1, 1, 192, 100)
+        return flat.reshape(1, 1, n_ch, n_t)
 
     def _infer_onnx(self, data):
         input_name = self.session.get_inputs()[0].name

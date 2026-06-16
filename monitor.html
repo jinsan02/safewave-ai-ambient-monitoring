@@ -194,6 +194,8 @@
     let micSampleRate = 48000;
     let minuteChart = null;
     let hourChart = null;
+    let _lastAudioLogMs = 0;
+    let _lastAudioKey = '';
 
     const micStartBtn = document.getElementById('mic-start');
     const micStopBtn = document.getElementById('mic-stop');
@@ -544,17 +546,38 @@
         reasonEl.textContent = slmInvoked ? 'SLM 호출됨 (상세 reason 없음)' : 'SLM 스킵됨';
       }
 
-      // 로그 추가
+      // ── 로그 ──────────────────────────────────────────────
       const log = document.getElementById('log');
       const t = new Date().toLocaleTimeString();
-      const line = document.createElement('div');
-      line.className = 'log-line ' + level;
+
+      // M1/M2: 매 메시지 (초당 1회 서버 push 기준)
+      const csiLine = document.createElement('div');
+      csiLine.className = 'log-line ' + level;
       if (SPEECH_ONLY) {
-        line.textContent = `[${t}] stt_score=${(ex.speech_ko?.stt_confidence||0).toFixed(2)}  text=${(ex.speech_ko?.transcript_ko||'(없음)')}`;
+        const sttScore = (ex.speech_ko?.stt_confidence || 0).toFixed(2);
+        const sttText  = ex.speech_ko?.transcript_ko || '(없음)';
+        csiLine.textContent = `[${t}] stt_score=${sttScore}  text=${sttText}`;
       } else {
-        line.textContent = `[${t}] ${level.toUpperCase()}  risk=${score}  slm=${slmInvoked}  fall=${ex.fall?.fall_detected}  HR=${(ex.vital?.heart_rate||0).toFixed(0)}bpm  sound=${ex.env_sound?.env_sound_label}  stt=${(ex.speech_ko?.transcript_ko||'').slice(0,12)}`;
+        csiLine.textContent = `[${t}] ${level.toUpperCase()}  risk=${score}  fall=${ex.fall?.fall_detected}  HR=${(ex.vital?.heart_rate||0).toFixed(0)}bpm  RR=${(ex.vital?.breathing_rate||0).toFixed(0)}/min`;
       }
-      log.prepend(line);
+      log.prepend(csiLine);
+
+      // M3/M4 음성: 5초마다 + 내용 변경 시에만 (중복 방지)
+      if (!SPEECH_ONLY) {
+        const transcript = (ex.speech_ko?.transcript_ko || '').trim();
+        const soundLabel = ex.env_sound?.env_sound_label || '';
+        const audioKey   = `${soundLabel}|${transcript}`;
+        const now = Date.now();
+        if (now - _lastAudioLogMs >= 5000 && audioKey !== _lastAudioKey && audioKey !== '|') {
+          const audioLine = document.createElement('div');
+          audioLine.className = 'log-line ' + (transcript ? 'warning' : 'normal');
+          audioLine.textContent = `[${t}] [음성/환경] sound=${soundLabel || '—'}  stt="${transcript.slice(0, 30) || '—'}"`;
+          log.prepend(audioLine);
+          _lastAudioLogMs = now;
+          _lastAudioKey   = audioKey;
+        }
+      }
+
       // 최대 100줄
       while (log.children.length > 100) log.removeChild(log.lastChild);
     }

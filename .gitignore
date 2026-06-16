@@ -17,6 +17,7 @@ __pycache__/
 
 docs/
 data/
+reports/
 
 # Claude Code
 CLAUDE.md

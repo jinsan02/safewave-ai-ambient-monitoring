@@ -1,21 +1,100 @@
+import json
 import os
+import time
+from typing import Any
 
 import numpy as np
 import onnxruntime as ort
 
 
 def get_ort_providers():
-	# ort.get_available_providers()는 TensorRT/CUDA EP 라이브러리를 즉시 초기화하여
-	# GPU 드라이버 미설치 환경(RPi5, 개발PC)에서 segfault를 일으킴.
-	# ORT_USE_GPU=1 환경변수로 명시 요청된 경우에만 CUDA 시도.
+	# ORT_USE_GPU=1: CUDA EP 시도 → 드라이버 없으면 ORT가 CPU로 자동 fallback.
+	# RPi5(CUDA 없음)에서는 기본값 0 유지 (docker-compose.yml 기본값 0, gpu.yml 오버라이드 1).
 	if os.getenv("ORT_USE_GPU", "0") == "1":
-		return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+		return [
+			("CUDAExecutionProvider", {"do_copy_in_default_stream": True}),
+			"CPUExecutionProvider",
+		]
 	return ["CPUExecutionProvider"]
 
 
-class TurboQuant:
-	def optimize(self, data):
-		array = np.asarray(data, dtype=np.float32)
-		if array.size == 0:
-			return np.zeros(128, dtype=np.float32)
-		return array
+def get_session_opts() -> ort.SessionOptions:
+	opts = ort.SessionOptions()
+	opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+	# GPU 모드에서 일부 모델의 CPU-only 연산으로 인한 Memcpy 노드 경고를 억제.
+	# 실제 추론은 GPU에서 정상 수행되며 경고는 정보성 메시지.
+	if os.getenv("ORT_USE_GPU", "0") == "1":
+		opts.log_severity_level = 3  # ERROR 이상만 출력 (WARNING 억제)
+	return opts
+
+
+def stream_id_ts_ms(stream_id: Any) -> int:
+	if isinstance(stream_id, bytes):
+		stream_id = stream_id.decode("utf-8", errors="ignore")
+	try:
+		return int(str(stream_id).split("-")[0])
+	except Exception:
+		return int(time.time() * 1000)
+
+
+def safe_float(value: Any, default: float = 0.0) -> float:
+	try:
+		if isinstance(value, dict):
+			for key in ("value", "score", "mean", "avg"):
+				if key in value:
+					return float(value[key])
+			return default
+		if isinstance(value, (list, tuple)):
+			if not value:
+				return default
+			return float(value[0])
+		return float(value)
+	except Exception:
+		return default
+
+
+def json_loads(raw: Any) -> dict:
+	if not raw:
+		return {}
+	if isinstance(raw, bytes):
+		raw = raw.decode("utf-8", errors="ignore")
+	try:
+		return json.loads(raw)
+	except Exception:
+		return {}
+
+
+def build_context_window(r: Any, ts_ms: int, emergency_stream: str, window_minutes: int) -> dict:
+	since_ms = ts_ms - (window_minutes * 60 * 1000)
+	warning_count = critical_count = 0
+	recent_events: list[str] = []
+	try:
+		entries = r.xrevrange(emergency_stream, count=128)
+	except Exception:
+		entries = []
+	for msg_id, fields in entries:
+		if stream_id_ts_ms(msg_id) < since_ms:
+			break
+		payload = json_loads(fields.get(b"data", b""))
+		level = payload.get("risk_level", "normal")
+		if level == "critical":
+			critical_count += 1
+		elif level == "warning":
+			warning_count += 1
+		summary = payload.get("summary")
+		if summary and len(recent_events) < 5:
+			recent_events.append(summary)
+	parts = []
+	if critical_count:
+		parts.append(f"critical {critical_count}")
+	if warning_count:
+		parts.append(f"warning {warning_count}")
+	if recent_events:
+		parts.append("recent=" + " | ".join(recent_events))
+	return {
+		"window_minutes":        window_minutes,
+		"recent_warning_count":  warning_count,
+		"recent_critical_count": critical_count,
+		"recent_events":         recent_events,
+		"text":                  "; ".join(parts),
+	}

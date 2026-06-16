@@ -1,34 +1,53 @@
 """MQTT 기반 경량 TTS 워커.
 
-ai/result를 구독해서 warning/critical 이벤트에 대해 한국어 안내 음성을 생성한다.
-생성된 파일은 volumes/logs/tts 아래에 저장되고, 상태는 MQTT로 다시 발행한다.
+두 가지 경로로 TTS를 처리한다:
+1. MQTT safewave/ai/result 구독 → warning/critical 이벤트 시 자동 안내음 (쿨다운 적용)
+2. Redis tts:speak:queue BLPOP → _alert_worker가 직접 요청한 응급 TTS (쿨다운 없음)
+
+생성된 MP3는 volumes/logs/tts 에 저장하고 mpg123으로 즉시 재생한다.
+재생 완료 후 user:voice_response:{node_id} 키를 설정해 _alert_worker가 응답 감지할 수 있게 한다.
 """
 
 import asyncio
 import json
 import os
-import sys
 from datetime import datetime
 from pathlib import Path
 
 import edge_tts
 import paho.mqtt.client as mqtt
-
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "ai"))
-
-from mqtt_helper import make_client, publish_json, topic
+import redis.asyncio as aioredis
 
 
-MQTT_HOST = os.getenv("MQTT_HOST", "mqtt")
-MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
-MQTT_CLIENT_ID = os.getenv("MQTT_TTS_CLIENT_ID", "rp5-tts-worker")
-RESULT_TOPIC = topic("ai/result")
-FEEDBACK_TOPIC = topic("feedback")
-TTS_STATUS_TOPIC = topic("tts/status")
-VOICE = os.getenv("TTS_VOICE", "ko-KR-SunHiNeural")
+MQTT_HOST       = os.getenv("MQTT_HOST", "mqtt")
+MQTT_PORT       = int(os.getenv("MQTT_PORT", "1883"))
+MQTT_CLIENT_ID  = os.getenv("MQTT_TTS_CLIENT_ID", "rp5-tts-worker")
+MQTT_BASE_TOPIC = os.getenv("MQTT_BASE_TOPIC", "safewave")
+REDIS_HOST      = os.getenv("REDIS_HOST", "db")
+REDIS_PORT      = int(os.getenv("REDIS_PORT", "6379"))
+
+RESULT_TOPIC     = f"{MQTT_BASE_TOPIC}/ai/result"
+FEEDBACK_TOPIC   = f"{MQTT_BASE_TOPIC}/feedback"
+TTS_STATUS_TOPIC = f"{MQTT_BASE_TOPIC}/tts/status"
+
+
+def _make_client(client_id: str) -> mqtt.Client:
+    return mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv311)
+
+
+def _publish_json(client: mqtt.Client, topic_str: str, payload: dict):
+    try:
+        client.publish(topic_str, json.dumps(payload, ensure_ascii=False))
+    except Exception as exc:
+        print(f"[tts] mqtt publish error: {exc}")
+
+VOICE        = os.getenv("TTS_VOICE", "ko-KR-SunHiNeural")
 COOLDOWN_SEC = int(os.getenv("TTS_COOLDOWN_SEC", "120"))
-OUT_DIR = Path(os.getenv("TTS_OUTPUT_DIR", "volumes/logs/tts"))
+OUT_DIR      = Path(os.getenv("TTS_OUTPUT_DIR", "volumes/logs/tts"))
+
+TTS_SPEAK_QUEUE      = "tts:speak:queue"
+VOICE_RESP_PREFIX    = "user:voice_response:"
+VOICE_RESP_TTL_SEC   = 5
 
 
 def should_speak(payload: dict) -> bool:
@@ -45,35 +64,61 @@ async def synthesize(text: str) -> Path:
     return out_path
 
 
-async def speak_warning(client: mqtt.Client, payload: dict):
-    node_id = int(payload.get("node_id", 0) or 0)
-    text = "괜찮으세요? 도움이 필요하시면 말씀해 주세요."
+async def play_audio(path: Path):
+    """mpg123으로 MP3 재생. 하드웨어 없으면 무시."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "mpg123", "-q", str(path),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await proc.wait()
+    except FileNotFoundError:
+        print("[tts] mpg123 not found — audio playback skipped")
+    except Exception as exc:
+        print(f"[tts] playback error: {exc}")
+
+
+async def speak_and_signal(
+    r: aioredis.Redis,
+    client: mqtt.Client,
+    text: str,
+    node_id: int,
+    payload: dict | None = None,
+):
+    """TTS 합성 → 재생 → 응답 대기 신호 설정."""
     out_path = await synthesize(text)
-    publish_json(
+    await play_audio(out_path)
+
+    resp_key = f"{VOICE_RESP_PREFIX}{node_id}"
+    await r.lpush(resp_key, "1")
+    await r.expire(resp_key, VOICE_RESP_TTL_SEC)
+
+    _publish_json(
         client,
         TTS_STATUS_TOPIC,
         {
             "node_id": node_id,
             "text": text,
             "file": str(out_path),
-            "risk_level": payload.get("risk_level"),
-            "risk_score": payload.get("risk_score"),
+            "risk_level": (payload or {}).get("risk_level"),
+            "risk_score": (payload or {}).get("risk_score"),
         },
     )
 
 
-async def main():
-    client = make_client(MQTT_CLIENT_ID)
+async def _mqtt_loop(client: mqtt.Client, r: aioredis.Redis):
+    """MQTT safewave/ai/result → 쿨다운 적용 자동 TTS."""
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[dict] = asyncio.Queue()
     last_spoke_at: dict[int, float] = {}
 
-    def on_connect(_client, _userdata, _flags, rc):
+    def on_connect(_c, _u, _f, rc):
         print(f"[tts] MQTT connected rc={rc}")
-        _client.subscribe(RESULT_TOPIC)
-        _client.subscribe(FEEDBACK_TOPIC)
+        _c.subscribe(RESULT_TOPIC)
+        _c.subscribe(FEEDBACK_TOPIC)
 
-    def on_message(_client, _userdata, msg):
+    def on_message(_c, _u, msg):
         try:
             payload = json.loads(msg.payload.decode("utf-8", errors="ignore"))
         except Exception:
@@ -82,33 +127,75 @@ async def main():
 
     client.on_connect = on_connect
     client.on_message = on_message
-    client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
+    try:
+        client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
+    except Exception as exc:
+        print(f"[tts] MQTT connect failed: {exc} — MQTT loop disabled")
+        return
     client.loop_start()
 
-    print("[tts] worker started")
     while True:
         item = await queue.get()
-        topic_name = item["topic"]
-        payload = item["payload"]
-
-        if topic_name == FEEDBACK_TOPIC:
-            print(f"[tts] feedback received: {payload}")
+        if item["topic"] == FEEDBACK_TOPIC:
             continue
-
+        payload = item["payload"]
         if not should_speak(payload):
             continue
-
         node_id = int(payload.get("node_id", 0) or 0)
-        now = asyncio.get_running_loop().time()
+        now = loop.time()
         if now - last_spoke_at.get(node_id, 0.0) < COOLDOWN_SEC:
             continue
-
         last_spoke_at[node_id] = now
+        text = "괜찮으세요? 도움이 필요하시면 말씀해 주세요."
         try:
-            await speak_warning(client, payload)
+            await speak_and_signal(r, client, text, node_id, payload)
         except Exception as exc:
-            publish_json(client, TTS_STATUS_TOPIC, {"error": str(exc), "node_id": node_id})
-            print(f"[tts] synth failed: {exc}")
+            _publish_json(client, TTS_STATUS_TOPIC, {"error": str(exc), "node_id": node_id})
+            print(f"[tts] mqtt synth failed: {exc}")
+
+
+async def _redis_speak_loop(client: mqtt.Client, r: aioredis.Redis):
+    """Redis tts:speak:queue → 쿨다운 없는 응급 직접 TTS."""
+    print("[tts] redis speak loop started")
+    while True:
+        try:
+            item = await r.blpop(TTS_SPEAK_QUEUE, timeout=5)
+            if not item:
+                continue
+            _, raw = item
+            data = json.loads(raw)
+            text    = data.get("text", "위험 상황이 감지됐습니다. 괜찮으시면 말씀해 주세요.")
+            node_id = int(data.get("node_id", 0))
+            try:
+                await speak_and_signal(r, client, text, node_id)
+                print(f"[tts] emergency spoke node={node_id}")
+            except Exception as exc:
+                print(f"[tts] redis speak failed: {exc}")
+        except Exception as exc:
+            print(f"[tts] redis loop error: {exc}")
+            await asyncio.sleep(2)
+
+
+async def _connect_redis() -> aioredis.Redis:
+    while True:
+        try:
+            r = aioredis.Redis(host=REDIS_HOST, port=REDIS_PORT,
+                               decode_responses=True, socket_connect_timeout=3)
+            await r.ping()
+            print(f"[tts] Redis connected: {REDIS_HOST}:{REDIS_PORT}")
+            return r
+        except Exception as exc:
+            print(f"[tts] Redis not ready ({exc}), retry in 2s...")
+            await asyncio.sleep(2)
+
+
+async def main():
+    r = await _connect_redis()
+    client = _make_client(MQTT_CLIENT_ID)
+    await asyncio.gather(
+        _mqtt_loop(client, r),
+        _redis_speak_loop(client, r),
+    )
 
 
 if __name__ == "__main__":

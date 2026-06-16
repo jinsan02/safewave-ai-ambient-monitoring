@@ -1,0 +1,4801 @@
+{
+  "version": "1.0",
+  "total": 100,
+  "cases": [
+    {
+      "id": "A-01",
+      "category": "pure_normal",
+      "scenario": "완전 정상 기본",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.95,
+          "env_sound_confidence": 0.95,
+          "infer_confidence": 0.95
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.007,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.95,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "A-02",
+      "category": "pure_normal",
+      "scenario": "활동중 정상 HR90",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.05,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 90.0,
+          "breathing_rate": 18.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "noise",
+          "env_sound_label": "noise",
+          "confidence": 0.6,
+          "env_sound_confidence": 0.6,
+          "infer_confidence": 0.6
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.0319,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0438,
+          "vital": 0.0,
+          "sound": 0.096,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.6,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "A-03",
+      "category": "pure_normal",
+      "scenario": "취침 정상 HR62",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.01,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 62.0,
+          "breathing_rate": 13.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.95,
+          "env_sound_confidence": 0.95,
+          "infer_confidence": 0.95
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.0035,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0088,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.95,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "A-04",
+      "category": "pure_normal",
+      "scenario": "TV 시청 정상",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.04,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 75.0,
+          "breathing_rate": 16.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "speech",
+          "env_sound_label": "speech",
+          "confidence": 0.8,
+          "env_sound_confidence": 0.8,
+          "infer_confidence": 0.8
+        },
+        "speech_ko": {
+          "transcript_ko": "뉴스 나와",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.0422,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.035,
+          "vital": 0.0,
+          "sound": 0.072,
+          "speech": 0.1162,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.8,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "A-05",
+      "category": "pure_normal",
+      "scenario": "음악 정상",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.03,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 78.0,
+          "breathing_rate": 14.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "music",
+          "env_sound_label": "music",
+          "confidence": 0.7,
+          "env_sound_confidence": 0.7,
+          "infer_confidence": 0.7
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.0149,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0262,
+          "vital": 0.0,
+          "sound": 0.0297,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.7,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "A-06",
+      "category": "pure_normal",
+      "scenario": "fall 신뢰도 낮음 정상",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.1,
+          "fall_detected": false,
+          "infer_confidence": 0.4
+        },
+        "vital": {
+          "heart_rate": 70.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.028,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.07,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.4,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "A-07",
+      "category": "pure_normal",
+      "scenario": "전 신뢰도 낮음 정상",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.05,
+          "fall_detected": false,
+          "infer_confidence": 0.5
+        },
+        "vital": {
+          "heart_rate": 80.0,
+          "breathing_rate": 16.0,
+          "infer_confidence": 0.5
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.5,
+          "env_sound_confidence": 0.5,
+          "infer_confidence": 0.5
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.015,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0375,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.5,
+          "conf_vital": 0.5,
+          "conf_sound": 0.5,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "A-08",
+      "category": "pure_normal",
+      "scenario": "HR95 경계 아래",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.08,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 95.0,
+          "breathing_rate": 20.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.95,
+          "env_sound_confidence": 0.95,
+          "infer_confidence": 0.95
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.028,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.07,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.95,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "A-09",
+      "category": "pure_normal",
+      "scenario": "RR21 경계 아래",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 21.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.95,
+          "env_sound_confidence": 0.95,
+          "infer_confidence": 0.95
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.007,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.95,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "A-10",
+      "category": "pure_normal",
+      "scenario": "일반 대화 비응급",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.03,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 75.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "speech",
+          "env_sound_label": "speech",
+          "confidence": 0.8,
+          "env_sound_confidence": 0.8,
+          "infer_confidence": 0.8
+        },
+        "speech_ko": {
+          "transcript_ko": "배고파요",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.0387,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0262,
+          "vital": 0.0,
+          "sound": 0.072,
+          "speech": 0.1162,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.8,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "A-11",
+      "category": "pure_normal",
+      "scenario": "fall 0.15 정상 범주",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.15,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 68.0,
+          "breathing_rate": 14.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.0525,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.1313,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "A-12",
+      "category": "pure_normal",
+      "scenario": "HR65 정상 하한",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 65.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.95,
+          "env_sound_confidence": 0.95,
+          "infer_confidence": 0.95
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.007,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.95,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "A-13",
+      "category": "pure_normal",
+      "scenario": "RR12 정상 하한",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 12.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.95,
+          "env_sound_confidence": 0.95,
+          "infer_confidence": 0.95
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.007,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.95,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "A-14",
+      "category": "pure_normal",
+      "scenario": "noise 낮은 신호",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.06,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 80.0,
+          "breathing_rate": 16.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "noise",
+          "env_sound_label": "noise",
+          "confidence": 0.3,
+          "env_sound_confidence": 0.3,
+          "infer_confidence": 0.3
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.0269,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0525,
+          "vital": 0.0,
+          "sound": 0.039,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.3,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "A-15",
+      "category": "pure_normal",
+      "scenario": "기상 직후 HR98",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.07,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 98.0,
+          "breathing_rate": 19.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.85,
+          "env_sound_confidence": 0.85,
+          "infer_confidence": 0.85
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.0245,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0613,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.85,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "A-16",
+      "category": "pure_normal",
+      "scenario": "fall 0.20 경계 정상",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.2,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.95,
+          "env_sound_confidence": 0.95,
+          "infer_confidence": 0.95
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.07,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.175,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.95,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "A-17",
+      "category": "pure_normal",
+      "scenario": "speech 일반 대화",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.03,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "speech",
+          "env_sound_label": "speech",
+          "confidence": 0.7,
+          "env_sound_confidence": 0.7,
+          "infer_confidence": 0.7
+        },
+        "speech_ko": {
+          "transcript_ko": "오늘 날씨",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.0368,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0262,
+          "vital": 0.0,
+          "sound": 0.0595,
+          "speech": 0.1162,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.7,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "A-18",
+      "category": "pure_normal",
+      "scenario": "모든 신뢰도 최고",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 1.0
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 1.0
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 1.0,
+          "env_sound_confidence": 1.0,
+          "infer_confidence": 1.0
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.008,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.02,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 1.0,
+          "conf_vital": 1.0,
+          "conf_sound": 1.0,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "A-19",
+      "category": "pure_normal",
+      "scenario": "HR56 warn 경계 바로 위",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 56.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.95,
+          "env_sound_confidence": 0.95,
+          "infer_confidence": 0.95
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.007,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.95,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "A-20",
+      "category": "pure_normal",
+      "scenario": "RR11 warn 경계 바로 위",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 11.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.95,
+          "env_sound_confidence": 0.95,
+          "infer_confidence": 0.95
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.007,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.95,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "B-01",
+      "category": "fall_only",
+      "scenario": "낙상 위험 50%",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.5,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.175,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.4375,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "B-02",
+      "category": "fall_only",
+      "scenario": "낙상 위험 75%",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.75,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.2625,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.6562,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "B-03",
+      "category": "fall_only",
+      "scenario": "낙상 감지 True",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.9,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.315,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.7875,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "B-04",
+      "category": "fall_only",
+      "scenario": "낙상 최고 99%",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.99,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.3465,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.8662,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "B-05",
+      "category": "fall_only",
+      "scenario": "낙상 60% 신뢰도 높음",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.6,
+          "fall_detected": false,
+          "infer_confidence": 0.9
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.228,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.57,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.9,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "B-06",
+      "category": "fall_only",
+      "scenario": "낙상 감지 신뢰도 낮음",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.85,
+          "fall_detected": true,
+          "infer_confidence": 0.4
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.238,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.595,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.4,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "B-07",
+      "category": "fall_only",
+      "scenario": "낙상 70% RR 약간 높음",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.7,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 80.0,
+          "breathing_rate": 20.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.245,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.6125,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "B-08",
+      "category": "fall_only",
+      "scenario": "낙상 30% 저위험",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.3,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.105,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.2625,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "B-09",
+      "category": "fall_only",
+      "scenario": "낙상 40% 저위험",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.4,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.14,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.35,
+          "vital": 0.0,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "B-10",
+      "category": "fall_only",
+      "scenario": "낙상 감지 noise 배경",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.95,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 78.0,
+          "breathing_rate": 16.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "noise",
+          "env_sound_label": "noise",
+          "confidence": 0.4,
+          "env_sound_confidence": 0.4,
+          "infer_confidence": 0.4
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.3409,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.8312,
+          "vital": 0.0,
+          "sound": 0.056,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.4,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "C-01",
+      "category": "vital_warn_only",
+      "scenario": "HR54 경고",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 54.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.1473,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.4675,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "C-02",
+      "category": "vital_warn_only",
+      "scenario": "HR108 경고",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 108.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.1473,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.4675,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "C-03",
+      "category": "vital_warn_only",
+      "scenario": "RR9 경고",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 9.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.1473,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.4675,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "C-04",
+      "category": "vital_warn_only",
+      "scenario": "RR24 경고",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 24.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.1473,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.4675,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "C-05",
+      "category": "vital_warn_only",
+      "scenario": "HR50 신뢰도 낮음",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 50.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.5
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.1307,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.4125,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.5,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "C-06",
+      "category": "vital_warn_only",
+      "scenario": "HR120 fall 소량",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.15,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 120.0,
+          "breathing_rate": 18.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.1928,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.1313,
+          "vital": 0.4675,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "C-07",
+      "category": "vital_warn_only",
+      "scenario": "RR8 경고",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 75.0,
+          "breathing_rate": 8.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.1473,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.4675,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "C-08",
+      "category": "vital_warn_only",
+      "scenario": "HR110+RR23 모두 경고",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 110.0,
+          "breathing_rate": 23.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.1473,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.4675,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "D-01",
+      "category": "vital_crisis_solo",
+      "scenario": "HR33 극한 서맥",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 33.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.65,
+        "risk_level": "warning",
+        "vital_bypass": true,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.85,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "D-02",
+      "category": "vital_crisis_solo",
+      "scenario": "HR20 극한 서맥",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 20.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.65,
+        "risk_level": "warning",
+        "vital_bypass": true,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.85,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "D-03",
+      "category": "vital_crisis_solo",
+      "scenario": "HR140 극한 빈맥",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 140.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.65,
+        "risk_level": "warning",
+        "vital_bypass": true,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.85,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "D-04",
+      "category": "vital_crisis_solo",
+      "scenario": "HR160 극한 빈맥",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 160.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.65,
+        "risk_level": "warning",
+        "vital_bypass": true,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.85,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "D-05",
+      "category": "vital_crisis_solo",
+      "scenario": "RR3 무호흡",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 3.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.65,
+        "risk_level": "warning",
+        "vital_bypass": true,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.85,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "D-06",
+      "category": "vital_crisis_solo",
+      "scenario": "RR2 심한 무호흡",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 2.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.65,
+        "risk_level": "warning",
+        "vital_bypass": true,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.85,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "D-07",
+      "category": "vital_crisis_solo",
+      "scenario": "RR40 빈호흡",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 40.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.65,
+        "risk_level": "warning",
+        "vital_bypass": true,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.85,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "D-08",
+      "category": "vital_crisis_solo",
+      "scenario": "HR35 경계(위기)",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 35.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.65,
+        "risk_level": "warning",
+        "vital_bypass": true,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.85,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "D-09",
+      "category": "vital_crisis_solo",
+      "scenario": "HR130 경계(위기)",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 130.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.65,
+        "risk_level": "warning",
+        "vital_bypass": true,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.85,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "D-10",
+      "category": "vital_crisis_solo",
+      "scenario": "RR4 경계(위기)",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 4.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.65,
+        "risk_level": "warning",
+        "vital_bypass": true,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.85,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "D-11",
+      "category": "vital_crisis_solo",
+      "scenario": "HR28+RR5 이중 위기",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 28.0,
+          "breathing_rate": 5.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.65,
+        "risk_level": "warning",
+        "vital_bypass": true,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.85,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "D-12",
+      "category": "vital_crisis_solo",
+      "scenario": "HR33 vital_bypass 낮은신뢰도",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 33.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.5
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.65,
+        "risk_level": "warning",
+        "vital_bypass": true,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.75,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.5,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "E-01",
+      "category": "two_domain",
+      "scenario": "fall70+vital warn HR",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.7,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 108.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.3853,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.6125,
+          "vital": 0.4675,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "E-02",
+      "category": "two_domain",
+      "scenario": "fall 감지+vital warn HR",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.85,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 110.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.4378,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.7438,
+          "vital": 0.4675,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "E-03",
+      "category": "two_domain",
+      "scenario": "fall60+alarm",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.6,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.85,
+          "env_sound_confidence": 0.85,
+          "infer_confidence": 0.85
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.3794,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.525,
+          "vital": 0.0,
+          "sound": 0.7076,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.85,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "E-04",
+      "category": "two_domain",
+      "scenario": "fall 감지+impact",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.9,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "impact",
+          "env_sound_label": "impact",
+          "confidence": 0.8,
+          "env_sound_confidence": 0.8,
+          "infer_confidence": 0.8
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.3852,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.7875,
+          "vital": 0.0,
+          "sound": 0.468,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.8,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "E-05",
+      "category": "two_domain",
+      "scenario": "vital warn+alarm",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 115.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.88,
+          "env_sound_confidence": 0.88,
+          "infer_confidence": 0.88
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.2589,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.4675,
+          "sound": 0.7445,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.88,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "E-06",
+      "category": "two_domain",
+      "scenario": "vital warn+살려",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 110.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "speech",
+          "env_sound_label": "speech",
+          "confidence": 0.8,
+          "env_sound_confidence": 0.8,
+          "infer_confidence": 0.8
+        },
+        "speech_ko": {
+          "transcript_ko": "살려주세요",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "살려"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.2028,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.4675,
+          "sound": 0.072,
+          "speech": 0.2984,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.8,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "E-07",
+      "category": "two_domain",
+      "scenario": "fall65+살려",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.65,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "speech",
+          "env_sound_label": "speech",
+          "confidence": 0.8,
+          "env_sound_confidence": 0.8,
+          "infer_confidence": 0.8
+        },
+        "speech_ko": {
+          "transcript_ko": "살려",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "살려"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.433,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.5687,
+          "vital": 0.0,
+          "sound": 0.072,
+          "speech": 0.2984,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.8,
+          "conf_speech": 0.55,
+          "keyword_fall_bonus": true
+        }
+      }
+    },
+    {
+      "id": "E-08",
+      "category": "two_domain",
+      "scenario": "fall55+RR warn",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.55,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 8.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.3328,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.4813,
+          "vital": 0.4675,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "E-09",
+      "category": "two_domain",
+      "scenario": "fall 감지+impact",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.8,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "impact",
+          "env_sound_label": "impact",
+          "confidence": 0.75,
+          "env_sound_confidence": 0.75,
+          "infer_confidence": 0.75
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.344,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.7,
+          "vital": 0.0,
+          "sound": 0.4266,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.75,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "E-10",
+      "category": "two_domain",
+      "scenario": "vital warn+noise",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 108.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "noise",
+          "env_sound_label": "noise",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.1729,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.4675,
+          "sound": 0.171,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "E-11",
+      "category": "two_domain",
+      "scenario": "fall60+도와줘",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.6,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "speech",
+          "env_sound_label": "speech",
+          "confidence": 0.8,
+          "env_sound_confidence": 0.8,
+          "infer_confidence": 0.8
+        },
+        "speech_ko": {
+          "transcript_ko": "도와줘",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "도와"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.4156,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.525,
+          "vital": 0.0,
+          "sound": 0.072,
+          "speech": 0.2984,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.8,
+          "conf_speech": 0.55,
+          "keyword_fall_bonus": true
+        }
+      }
+    },
+    {
+      "id": "E-12",
+      "category": "two_domain",
+      "scenario": "vital crisis+fall20 (bypass)",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.2,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 33.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.65,
+        "risk_level": "warning",
+        "vital_bypass": true,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.175,
+          "vital": 0.85,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "F-01",
+      "category": "three_domain",
+      "scenario": "fall+vital warn+alarm",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.8,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 108.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.88,
+          "env_sound_confidence": 0.88,
+          "infer_confidence": 0.88
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.6383,
+        "risk_level": "warning",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.7,
+          "vital": 0.4675,
+          "sound": 0.7445,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.88,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "F-02",
+      "category": "three_domain",
+      "scenario": "fall+vital warn+살려",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.75,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 110.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "speech",
+          "env_sound_label": "speech",
+          "confidence": 0.8,
+          "env_sound_confidence": 0.8,
+          "infer_confidence": 0.8
+        },
+        "speech_ko": {
+          "transcript_ko": "살려",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "살려"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.6083,
+        "risk_level": "warning",
+        "vital_bypass": false,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.6562,
+          "vital": 0.4675,
+          "sound": 0.072,
+          "speech": 0.2984,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.8,
+          "conf_speech": 0.55,
+          "keyword_fall_bonus": true
+        }
+      }
+    },
+    {
+      "id": "F-03",
+      "category": "three_domain",
+      "scenario": "fall+alarm+응급",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.8,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.88,
+          "env_sound_confidence": 0.88,
+          "infer_confidence": 0.88
+        },
+        "speech_ko": {
+          "transcript_ko": "응급",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "응급"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.6737,
+        "risk_level": "warning",
+        "vital_bypass": false,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.7,
+          "vital": 0.0,
+          "sound": 0.7445,
+          "speech": 0.2984,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.88,
+          "conf_speech": 0.55,
+          "keyword_fall_bonus": true
+        }
+      }
+    },
+    {
+      "id": "F-04",
+      "category": "three_domain",
+      "scenario": "vital crisis+fall+alarm",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.6,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 33.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.88,
+          "env_sound_confidence": 0.88,
+          "infer_confidence": 0.88
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.7785,
+        "risk_level": "warning",
+        "vital_bypass": true,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.525,
+          "vital": 0.85,
+          "sound": 0.7445,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.88,
+          "conf_speech": 0.55,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "F-05",
+      "category": "three_domain",
+      "scenario": "vital crisis+fall+살려",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.7,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 33.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "speech",
+          "env_sound_label": "speech",
+          "confidence": 0.8,
+          "env_sound_confidence": 0.8,
+          "infer_confidence": 0.8
+        },
+        "speech_ko": {
+          "transcript_ko": "살려",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "살려"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.8167,
+        "risk_level": "warning",
+        "vital_bypass": true,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.6125,
+          "vital": 0.85,
+          "sound": 0.072,
+          "speech": 0.2984,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.8,
+          "conf_speech": 0.55,
+          "keyword_fall_bonus": true,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "F-06",
+      "category": "three_domain",
+      "scenario": "vital warn+alarm+위험",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 115.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "위험해",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "위험"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.3074,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.4675,
+          "sound": 0.7695,
+          "speech": 0.2984,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "F-07",
+      "category": "three_domain",
+      "scenario": "fall+RR warn+alarm",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.75,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 8.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.85,
+          "env_sound_confidence": 0.85,
+          "infer_confidence": 0.85
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.6106,
+        "risk_level": "warning",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.6562,
+          "vital": 0.4675,
+          "sound": 0.7076,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.85,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "F-08",
+      "category": "three_domain",
+      "scenario": "fall+impact+119",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.85,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "impact",
+          "env_sound_label": "impact",
+          "confidence": 0.8,
+          "env_sound_confidence": 0.8,
+          "infer_confidence": 0.8
+        },
+        "speech_ko": {
+          "transcript_ko": "119",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "119"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.5625,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.7438,
+          "vital": 0.0,
+          "sound": 0.468,
+          "speech": 0.2984,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.8,
+          "conf_speech": 0.55,
+          "keyword_fall_bonus": true
+        }
+      }
+    },
+    {
+      "id": "G-01",
+      "category": "four_domain",
+      "scenario": "4도메인 표준 — HR33 fall감지 alarm 살려",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.95,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 33.0,
+          "breathing_rate": 5.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.92,
+          "env_sound_confidence": 0.92,
+          "infer_confidence": 0.92
+        },
+        "speech_ko": {
+          "transcript_ko": "살려 응급",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "살려",
+            "응급"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 1.0,
+        "risk_level": "critical",
+        "vital_bypass": true,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.8312,
+          "vital": 0.85,
+          "sound": 0.7949,
+          "speech": 0.3836,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.92,
+          "conf_speech": 0.55,
+          "keyword_fall_bonus": true,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "G-02",
+      "category": "four_domain",
+      "scenario": "4도메인 HR 빈맥",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.88,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 145.0,
+          "breathing_rate": 28.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.88,
+          "env_sound_confidence": 0.88,
+          "infer_confidence": 0.88
+        },
+        "speech_ko": {
+          "transcript_ko": "살려",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "살려"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 1.0,
+        "risk_level": "critical",
+        "vital_bypass": true,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.77,
+          "vital": 0.85,
+          "sound": 0.7445,
+          "speech": 0.2984,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.88,
+          "conf_speech": 0.55,
+          "keyword_fall_bonus": true,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "G-03",
+      "category": "four_domain",
+      "scenario": "4도메인 fall 최고",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.99,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 33.0,
+          "breathing_rate": 5.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.95,
+          "env_sound_confidence": 0.95,
+          "infer_confidence": 0.95
+        },
+        "speech_ko": {
+          "transcript_ko": "위험",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "위험"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 1.0,
+        "risk_level": "critical",
+        "vital_bypass": true,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.8662,
+          "vital": 0.85,
+          "sound": 0.8336,
+          "speech": 0.2984,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.95,
+          "conf_speech": 0.55,
+          "keyword_fall_bonus": true,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "G-04",
+      "category": "four_domain",
+      "scenario": "4도메인 신뢰도 낮음",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.9,
+          "fall_detected": true,
+          "infer_confidence": 0.65
+        },
+        "vital": {
+          "heart_rate": 33.0,
+          "breathing_rate": 5.0,
+          "infer_confidence": 0.6
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.8,
+          "env_sound_confidence": 0.8,
+          "infer_confidence": 0.8
+        },
+        "speech_ko": {
+          "transcript_ko": "살려",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "살려"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 1.0,
+        "risk_level": "critical",
+        "vital_bypass": true,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.7425,
+          "vital": 0.8,
+          "sound": 0.648,
+          "speech": 0.2984,
+          "conf_fall": 0.65,
+          "conf_vital": 0.6,
+          "conf_sound": 0.8,
+          "conf_speech": 0.55,
+          "keyword_fall_bonus": true,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "G-05",
+      "category": "four_domain",
+      "scenario": "4도메인 화재",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.92,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 140.0,
+          "breathing_rate": 35.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "불 화재",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "불",
+            "화재"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 1.0,
+        "risk_level": "critical",
+        "vital_bypass": true,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.805,
+          "vital": 0.85,
+          "sound": 0.7695,
+          "speech": 0.3836,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55,
+          "keyword_fall_bonus": true,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "G-06",
+      "category": "four_domain",
+      "scenario": "4도메인 무호흡+빈맥",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.95,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 150.0,
+          "breathing_rate": 2.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.92,
+          "env_sound_confidence": 0.92,
+          "infer_confidence": 0.92
+        },
+        "speech_ko": {
+          "transcript_ko": "응급 119",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "응급",
+            "119"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 1.0,
+        "risk_level": "critical",
+        "vital_bypass": true,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.8312,
+          "vital": 0.85,
+          "sound": 0.7949,
+          "speech": 0.3836,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.92,
+          "conf_speech": 0.55,
+          "keyword_fall_bonus": true,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "H-01",
+      "category": "keyword_fall",
+      "scenario": "살려+fall30 보너스",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.3,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "speech",
+          "env_sound_label": "speech",
+          "confidence": 0.8,
+          "env_sound_confidence": 0.8,
+          "infer_confidence": 0.8
+        },
+        "speech_ko": {
+          "transcript_ko": "살려줘",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "살려"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.3106,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.2625,
+          "vital": 0.0,
+          "sound": 0.072,
+          "speech": 0.2984,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.8,
+          "conf_speech": 0.55,
+          "keyword_fall_bonus": true
+        }
+      }
+    },
+    {
+      "id": "H-02",
+      "category": "keyword_fall",
+      "scenario": "도와+fall50 보너스",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.5,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "speech",
+          "env_sound_label": "speech",
+          "confidence": 0.8,
+          "env_sound_confidence": 0.8,
+          "infer_confidence": 0.8
+        },
+        "speech_ko": {
+          "transcript_ko": "도와줘",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "도와"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.3806,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.4375,
+          "vital": 0.0,
+          "sound": 0.072,
+          "speech": 0.2984,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.8,
+          "conf_speech": 0.55,
+          "keyword_fall_bonus": true
+        }
+      }
+    },
+    {
+      "id": "H-03",
+      "category": "keyword_fall",
+      "scenario": "응급+fall80 보너스",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.8,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "speech",
+          "env_sound_label": "speech",
+          "confidence": 0.8,
+          "env_sound_confidence": 0.8,
+          "infer_confidence": 0.8
+        },
+        "speech_ko": {
+          "transcript_ko": "응급",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "응급"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.4856,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.7,
+          "vital": 0.0,
+          "sound": 0.072,
+          "speech": 0.2984,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.8,
+          "conf_speech": 0.55,
+          "keyword_fall_bonus": true
+        }
+      }
+    },
+    {
+      "id": "H-04",
+      "category": "keyword_fall",
+      "scenario": "키워드 단독 fall20 보너스없음",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.2,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "speech",
+          "env_sound_label": "speech",
+          "confidence": 0.8,
+          "env_sound_confidence": 0.8,
+          "infer_confidence": 0.8
+        },
+        "speech_ko": {
+          "transcript_ko": "살려",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "살려"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.1256,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.175,
+          "vital": 0.0,
+          "sound": 0.072,
+          "speech": 0.2984,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.8,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "H-05",
+      "category": "keyword_fall",
+      "scenario": "119+fall60 보너스",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.6,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "speech",
+          "env_sound_label": "speech",
+          "confidence": 0.8,
+          "env_sound_confidence": 0.8,
+          "infer_confidence": 0.8
+        },
+        "speech_ko": {
+          "transcript_ko": "119",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "119"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.4156,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.525,
+          "vital": 0.0,
+          "sound": 0.072,
+          "speech": 0.2984,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.8,
+          "conf_speech": 0.55,
+          "keyword_fall_bonus": true
+        }
+      }
+    },
+    {
+      "id": "H-06",
+      "category": "keyword_fall",
+      "scenario": "넘어+fall40 보너스",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.4,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "speech",
+          "env_sound_label": "speech",
+          "confidence": 0.8,
+          "env_sound_confidence": 0.8,
+          "infer_confidence": 0.8
+        },
+        "speech_ko": {
+          "transcript_ko": "넘어졌어",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "넘어"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.3456,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.35,
+          "vital": 0.0,
+          "sound": 0.072,
+          "speech": 0.2984,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.8,
+          "conf_speech": 0.55,
+          "keyword_fall_bonus": true
+        }
+      }
+    },
+    {
+      "id": "H-07",
+      "category": "keyword_fall",
+      "scenario": "아파+fall30 보너스",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.3,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "speech",
+          "env_sound_label": "speech",
+          "confidence": 0.8,
+          "env_sound_confidence": 0.8,
+          "infer_confidence": 0.8
+        },
+        "speech_ko": {
+          "transcript_ko": "너무 아파",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "아파"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.3106,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.2625,
+          "vital": 0.0,
+          "sound": 0.072,
+          "speech": 0.2984,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.8,
+          "conf_speech": 0.55,
+          "keyword_fall_bonus": true
+        }
+      }
+    },
+    {
+      "id": "H-08",
+      "category": "keyword_fall",
+      "scenario": "키워드2+fall 감지",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.9,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "speech",
+          "env_sound_label": "speech",
+          "confidence": 0.8,
+          "env_sound_confidence": 0.8,
+          "infer_confidence": 0.8
+        },
+        "speech_ko": {
+          "transcript_ko": "살려 응급",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [
+            "살려",
+            "응급"
+          ],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.5333,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.7875,
+          "vital": 0.0,
+          "sound": 0.072,
+          "speech": 0.3836,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.8,
+          "conf_speech": 0.55,
+          "keyword_fall_bonus": true
+        }
+      }
+    },
+    {
+      "id": "I-01",
+      "category": "alarm_sound",
+      "scenario": "alarm 단독 기타 정상",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.1224,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.0,
+          "sound": 0.7695,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "I-02",
+      "category": "alarm_sound",
+      "scenario": "alarm+fall 소량",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.2,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.85,
+          "env_sound_confidence": 0.85,
+          "infer_confidence": 0.85
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.1761,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.175,
+          "vital": 0.0,
+          "sound": 0.7076,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.85,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "I-03",
+      "category": "alarm_sound",
+      "scenario": "alarm 낮은 신뢰도",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.4,
+          "env_sound_confidence": 0.4,
+          "infer_confidence": 0.4
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.0448,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.0,
+          "sound": 0.252,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.4,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "I-04",
+      "category": "alarm_sound",
+      "scenario": "impact+fall55",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.55,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "impact",
+          "env_sound_label": "impact",
+          "confidence": 0.8,
+          "env_sound_confidence": 0.8,
+          "infer_confidence": 0.8
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.2627,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.4813,
+          "vital": 0.0,
+          "sound": 0.468,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.8,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "I-05",
+      "category": "alarm_sound",
+      "scenario": "alarm+vital warn",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 115.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.88,
+          "env_sound_confidence": 0.88,
+          "infer_confidence": 0.88
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.2589,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.4675,
+          "sound": 0.7445,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.88,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "I-06",
+      "category": "alarm_sound",
+      "scenario": "alarm+speech 일반",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.85,
+          "env_sound_confidence": 0.85,
+          "infer_confidence": 0.85
+        },
+        "speech_ko": {
+          "transcript_ko": "안녕",
+          "speech_detected": true,
+          "stt_confidence": 0.55,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.1306,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.0,
+          "sound": 0.7076,
+          "speech": 0.1162,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.85,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "I-07",
+      "category": "alarm_sound",
+      "scenario": "impact 단독",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "impact",
+          "env_sound_label": "impact",
+          "confidence": 0.85,
+          "env_sound_confidence": 0.85,
+          "infer_confidence": 0.85
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.0837,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.0,
+          "sound": 0.5111,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.85,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "I-08",
+      "category": "alarm_sound",
+      "scenario": "alarm+fall 감지",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.92,
+          "fall_detected": true,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.5249,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.805,
+          "vital": 0.0,
+          "sound": 0.7695,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "J-01",
+      "category": "edge",
+      "scenario": "HR36 위기 경계 바로 위(warn)",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 36.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.1473,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.4675,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "J-02",
+      "category": "edge",
+      "scenario": "HR34 위기 범위(bypass)",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 34.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.65,
+        "risk_level": "warning",
+        "vital_bypass": true,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.85,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "J-03",
+      "category": "edge",
+      "scenario": "RR5 위기 범위(bypass)",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 5.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.1473,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.4675,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "J-04",
+      "category": "edge",
+      "scenario": "RR36 위기 범위(bypass)",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 36.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.65,
+        "risk_level": "warning",
+        "vital_bypass": true,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.85,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "J-05",
+      "category": "edge",
+      "scenario": "HR100 정상 상한 정확히",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 100.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "silence",
+          "env_sound_label": "silence",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.1473,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.4675,
+          "sound": 0.0,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "J-06",
+      "category": "edge",
+      "scenario": "전 신뢰도 0.5 중립",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.95,
+          "fall_detected": true,
+          "infer_confidence": 0.5
+        },
+        "vital": {
+          "heart_rate": 33.0,
+          "breathing_rate": 5.0,
+          "infer_confidence": 0.5
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.5,
+          "env_sound_confidence": 0.5,
+          "infer_confidence": 0.5
+        },
+        "speech_ko": {
+          "transcript_ko": "살려",
+          "speech_detected": true,
+          "stt_confidence": 0.5,
+          "keywords": [
+            "살려"
+          ],
+          "infer_confidence": 0.5
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.87,
+        "risk_level": "critical",
+        "vital_bypass": true,
+        "keyword_fall_bonus": true,
+        "breakdown": {
+          "fall": 0.7125,
+          "vital": 0.75,
+          "sound": 0.3375,
+          "speech": 0.2625,
+          "conf_fall": 0.5,
+          "conf_vital": 0.5,
+          "conf_sound": 0.5,
+          "conf_speech": 0.5,
+          "keyword_fall_bonus": true,
+          "vital_bypass": true
+        }
+      }
+    },
+    {
+      "id": "J-07",
+      "category": "edge",
+      "scenario": "fall50+alarm 경계 복합",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.5,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 72.0,
+          "breathing_rate": 15.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.88,
+          "env_sound_confidence": 0.88,
+          "infer_confidence": 0.88
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.2867,
+        "risk_level": "normal",
+        "vital_bypass": false,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.4375,
+          "vital": 0.0,
+          "sound": 0.7445,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.88,
+          "conf_speech": 0.55
+        }
+      }
+    },
+    {
+      "id": "J-08",
+      "category": "edge",
+      "scenario": "vital crisis+alarm 복합 위기",
+      "expert_results": {
+        "fall": {
+          "fall_score": 0.02,
+          "fall_detected": false,
+          "infer_confidence": 0.75
+        },
+        "vital": {
+          "heart_rate": 33.0,
+          "breathing_rate": 4.0,
+          "infer_confidence": 0.7
+        },
+        "env_sound": {
+          "label": "alarm",
+          "env_sound_label": "alarm",
+          "confidence": 0.9,
+          "env_sound_confidence": 0.9,
+          "infer_confidence": 0.9
+        },
+        "speech_ko": {
+          "transcript_ko": "",
+          "speech_detected": false,
+          "stt_confidence": 0.0,
+          "keywords": [],
+          "infer_confidence": 0.55
+        }
+      },
+      "ground_truth": {
+        "emg_score": 0.65,
+        "risk_level": "warning",
+        "vital_bypass": true,
+        "keyword_fall_bonus": false,
+        "breakdown": {
+          "fall": 0.0175,
+          "vital": 0.85,
+          "sound": 0.7695,
+          "speech": 0.0,
+          "conf_fall": 0.75,
+          "conf_vital": 0.7,
+          "conf_sound": 0.9,
+          "conf_speech": 0.55,
+          "vital_bypass": true
+        }
+      }
+    }
+  ]
+}

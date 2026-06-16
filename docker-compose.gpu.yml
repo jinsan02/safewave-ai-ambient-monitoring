@@ -2,6 +2,8 @@
 # 사용법: AI_DOCKER_TARGET=gpu-runtime docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 services:
   ai-experts:
+    environment:
+      - ORT_USE_GPU=1
     deploy:
       resources:
         reservations:
@@ -11,6 +13,8 @@ services:
               capabilities: [gpu]
 
   ai-qwen:
+    environment:
+      - ORT_USE_GPU=1
     deploy:
       resources:
         reservations:

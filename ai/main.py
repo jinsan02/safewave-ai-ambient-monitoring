@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import threading
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
@@ -12,12 +13,18 @@ import redis as _redis
 from experts import m1_wifi_pose, m2_frenel_vital, m3_ast_base, m4_whisper_small
 from mqtt_helper import make_client, publish_json, topic
 from logic.emergency_score import compute_emergency_score
-from utils import TurboQuant
+from utils import (
+    stream_id_ts_ms as _stream_id_ts_ms,
+    safe_float as _safe_float,
+    json_loads as _json_loads,
+    build_context_window,
+)
 
 
 RESULT_STREAM = "ai:result"
 EMERGENCY_STREAM = "ai:emergency"
-AUDIO_STREAM = "audio:events"
+AUDIO_STREAM        = "audio:events"
+AUDIO_RESULT_STREAM = os.getenv("AUDIO_RESULT_STREAM", "audio:result")
 MINUTE_AGG_PREFIX = "agg:minute:"
 EXPERT_LATEST_KEYS = {
     "fall": "ai:m1:latest",
@@ -25,17 +32,18 @@ EXPERT_LATEST_KEYS = {
     "env_sound": "ai:m3:latest",
     "speech_ko": "ai:m4:latest",
 }
-RESULT_STREAM_MAXLEN = int(os.getenv("RESULT_STREAM_MAXLEN", "1_800_000"))  # 5노드 × 100Hz × 1hr
-EMERGENCY_STREAM_MAXLEN = int(os.getenv("EMERGENCY_STREAM_MAXLEN", "3600"))
+RESULT_STREAM_MAXLEN = int(os.getenv("RESULT_STREAM_MAXLEN", "18_000"))  # 5노드 × 100Hz × 36s 롤링; Qwen·API 실시간 소비
 CONTEXT_WINDOW_MINUTES = int(os.getenv("CONTEXT_WINDOW_MINUTES", "10"))
 MINUTE_AGG_TTL_SECONDS = int(os.getenv("MINUTE_AGG_TTL_SECONDS", "3600"))
 EXPERT_LATEST_TTL_SECONDS = int(os.getenv("EXPERT_LATEST_TTL_SECONDS", "3600"))
 M3_AUDIO_WINDOW_MS = int(os.getenv("M3_AUDIO_WINDOW_MS", "3000"))
 M4_AUDIO_WINDOW_MS = int(os.getenv("M4_AUDIO_WINDOW_MS", "5000"))
-SLM_MIN_INTERVAL_MS = int(os.getenv("SLM_MIN_INTERVAL_MS", "3000"))
+SLM_MIN_INTERVAL_MS = int(os.getenv("SLM_MIN_INTERVAL_MS", "5000"))
 STREAM_START_ID = os.getenv("CSI_STREAM_START_ID", "0-0")
-M2_CSI_WINDOW_FRAMES = int(os.getenv("M2_CSI_WINDOW_FRAMES", "300"))
-# 300프레임 = 3초 @ 100Hz; 호흡(0.1Hz) 감지 최소 10초 필요하나 실측 튜닝 전 초기값
+M1_CSI_WINDOW_FRAMES = int(os.getenv("M1_CSI_WINDOW_FRAMES", "100"))
+M1_MAX_NODES         = int(os.getenv("M1_MAX_NODES", "3"))   # 현재 모델: 3노드×64=192ch / 5노드 모델 재훈련 후 5로 변경
+M2_CSI_WINDOW_FRAMES = int(os.getenv("M2_CSI_WINDOW_FRAMES", "1000"))
+# 1000프레임 = 10초 @ 100Hz; FFT bin 폭 0.1 Hz → 호흡 대역(0.1-0.6 Hz) 5 bin
 CSI_BACKLOG_SKIP_STREAK = int(os.getenv("CSI_BACKLOG_SKIP_STREAK", "5"))
 EXPERT_INFER_TIMEOUT_MS = int(os.getenv("EXPERT_INFER_TIMEOUT_MS", "1000"))
 MQTT_ENABLED = os.getenv("MQTT_ENABLED", "1").lower() not in {"0", "false", "no"}
@@ -151,7 +159,6 @@ class AIEngine:
             "env_sound": env_sound_model,
             "speech_ko": speech_model,
         }
-        self.turbo_quant = TurboQuant()
         self._executor = ThreadPoolExecutor(max_workers=4)
         # CUDA JIT 첫 추론 워밍업 (수 초 소요, 이후 infer는 <1ms)
         _log(logging.INFO, "engine_init_step", step="gpu_warmup")
@@ -221,7 +228,7 @@ class AIEngine:
         return name, output, (time.perf_counter() - started) * 1000.0
 
     def process_experts(self, data, expert_inputs=None):
-        optimized = self.turbo_quant.optimize(data)
+        optimized = data
         results = {}
         latency_ms: dict[str, float] = {}
 
@@ -229,9 +236,11 @@ class AIEngine:
             name: self._executor.submit(self._run_expert, name, optimized, expert_inputs)
             for name in self.experts
         }
-        # speech_ko(Whisper)는 decoder autoregressive 생성으로 다른 모델보다 느림 — 5s 허용
+        # M3(AST): RPi5 CPU ~3-5s 실측 → 5s 허용
+        # M4(Whisper): encoder ~4-6s + decoder/token ~1s; 짧은 응답(5토큰) ~9s → 15s 허용
         _timeouts = {name: max(0.1, EXPERT_INFER_TIMEOUT_MS / 1000.0) for name in futures}
-        _timeouts["speech_ko"] = 10.0
+        _timeouts["env_sound"]  = float(os.getenv("M3_INFER_TIMEOUT_SEC", "5"))
+        _timeouts["speech_ko"]  = float(os.getenv("M4_INFER_TIMEOUT_SEC", "15"))
         for name, future in futures.items():
             timeout_sec = _timeouts[name]
             try:
@@ -251,26 +260,6 @@ class AIEngine:
 
 
 
-def _json_loads(raw: Any) -> dict:
-    if not raw:
-        return {}
-    if isinstance(raw, bytes):
-        raw = raw.decode("utf-8", errors="ignore")
-    try:
-        return json.loads(raw)
-    except Exception:
-        return {}
-
-
-def _stream_id_ts_ms(stream_id: Any) -> int:
-    if isinstance(stream_id, bytes):
-        stream_id = stream_id.decode("utf-8", errors="ignore")
-    try:
-        return int(str(stream_id).split("-")[0])
-    except Exception:
-        return int(time.time() * 1000)
-
-
 def _normalize_ts_ms(raw_ts_ms: int, stream_id: Any) -> int:
     stream_ts_ms = _stream_id_ts_ms(stream_id)
     if raw_ts_ms < 1_000_000_000_000:
@@ -280,22 +269,6 @@ def _normalize_ts_ms(raw_ts_ms: int, stream_id: Any) -> int:
     if abs(raw_ts_ms - stream_ts_ms) > 15_000:
         return stream_ts_ms
     return raw_ts_ms
-
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        if isinstance(value, dict):
-            for key in ("value", "score", "mean", "avg"):
-                if key in value:
-                    return float(value[key])
-            return default
-        if isinstance(value, (list, tuple)):
-            if not value:
-                return default
-            return float(value[0])
-        return float(value)
-    except Exception:
-        return default
 
 
 def _load_settings(r) -> dict:
@@ -405,11 +378,90 @@ def _load_recent_audio_events(r, node_id: int, ts_ms: int, window_ms: int) -> li
 
         payload = _json_loads(fields.get(b"data", b""))
         if payload:
+            raw_wav = fields.get(b"waveform", b"")
+            if raw_wav:
+                payload["waveform"] = np.frombuffer(raw_wav, dtype=np.float32)
             payload["ts_ms"] = event_ts_ms
             matched.append(payload)
 
     matched.reverse()
     return matched
+
+
+def _load_latest_audio_result(r) -> dict | None:
+    """audio:result 스트림에서 최신 M3/M4 처리 결과 1건 조회."""
+    try:
+        entries = r.xrevrange(AUDIO_RESULT_STREAM, count=1)
+        if not entries:
+            return None
+        _, fields = entries[0]
+        return _json_loads(fields.get(b"data", b""))
+    except Exception:
+        return None
+
+
+def _audio_worker_loop(r, ai_engine) -> None:
+    """M3(AST)+M4(Whisper) 독립 데몬 스레드.
+    audio:events 구독 → M3/M4 순차 실행 → audio:result 저장.
+    CSI 루프와 ThreadPoolExecutor를 공유하지 않으므로 CSI 처리 지연 없음.
+    """
+    _log(logging.INFO, "audio_worker_started")
+    last_id = "$"
+    m3 = ai_engine.experts.get("env_sound")
+    m4 = ai_engine.experts.get("speech_ko")
+    while True:
+        try:
+            entries = r.xread({AUDIO_STREAM: last_id}, count=1, block=5000)
+            if not entries:
+                continue
+            for _, messages in entries:
+                for msg_id, fields in messages:
+                    last_id = msg_id
+                    ts_ms = _stream_id_ts_ms(msg_id)
+
+                    meta = _json_loads(fields.get(b"data", b"")) or {}
+                    raw_wav = fields.get(b"waveform", b"")
+                    audio_in = dict(meta)
+                    if raw_wav:
+                        audio_in["waveform"] = np.frombuffer(raw_wav, dtype=np.float32)
+                    audio_in["ts_ms"] = ts_ms
+
+                    m3_result, m4_result = {}, {}
+                    if m3:
+                        try:
+                            # M3._preprocess는 numpy array를 기대함 — dict에서 waveform 직접 추출
+                            wav = audio_in.get("waveform")
+                            m3_wav = np.asarray(wav, dtype=np.float32).reshape(-1) if wav is not None else np.zeros(1, dtype=np.float32)
+                            m3_result = m3.infer(m3_wav) or {}
+                        except Exception as exc:
+                            _log(logging.WARNING, "audio_m3_failed", error=str(exc))
+                    if m4:
+                        try:
+                            m4_result = m4.infer(audio_in) or {}
+                        except Exception as exc:
+                            _log(logging.WARNING, "audio_m4_failed", error=str(exc))
+
+                    payload = {
+                        "ts_ms":       ts_ms,
+                        "sample_rate": meta.get("sample_rate"),
+                        "duration_ms": meta.get("duration_ms"),
+                        "peak_db":     meta.get("peak_db"),
+                        "env_sound":   m3_result,
+                        "speech_ko":   m4_result,
+                    }
+                    r.xadd(
+                        AUDIO_RESULT_STREAM,
+                        {"data": json.dumps(payload, ensure_ascii=False, default=str)},
+                        maxlen=600,
+                        approximate=True,
+                    )
+                    _log(logging.INFO, "audio_result_written",
+                         ts_ms=ts_ms,
+                         env_label=m3_result.get("env_sound_label", ""),
+                         transcript=str(m4_result.get("transcript_ko", ""))[:30])
+        except Exception as exc:
+            _log(logging.ERROR, "audio_worker_error", error=str(exc))
+            time.sleep(1)
 
 
 def _merge_audio_window(events: list[dict], window_ms: int) -> dict | None:
@@ -463,47 +515,7 @@ def _build_expert_inputs(raw_data, resp_data, heart_data,
 
 
 def _build_context_window(r, ts_ms: int) -> dict:
-    since_ms = ts_ms - (CONTEXT_WINDOW_MINUTES * 60 * 1000)
-    warning_count = 0
-    critical_count = 0
-    recent_events: list[str] = []
-
-    try:
-        entries = r.xrevrange(EMERGENCY_STREAM, count=128)
-    except Exception:
-        entries = []
-
-    for msg_id, fields in entries:
-        event_ts_ms = _stream_id_ts_ms(msg_id)
-        if event_ts_ms < since_ms:
-            break
-
-        payload = _json_loads(fields.get(b"data", b""))
-        level = payload.get("risk_level", "normal")
-        if level == "critical":
-            critical_count += 1
-        elif level == "warning":
-            warning_count += 1
-
-        summary = payload.get("summary")
-        if summary and len(recent_events) < 5:
-            recent_events.append(summary)
-
-    parts = []
-    if critical_count:
-        parts.append(f"critical {critical_count}")
-    if warning_count:
-        parts.append(f"warning {warning_count}")
-    if recent_events:
-        parts.append("recent=" + " | ".join(recent_events))
-
-    return {
-        "window_minutes": CONTEXT_WINDOW_MINUTES,
-        "recent_warning_count": warning_count,
-        "recent_critical_count": critical_count,
-        "recent_events": recent_events,
-        "text": "; ".join(parts),
-    }
+    return build_context_window(r, ts_ms, EMERGENCY_STREAM, CONTEXT_WINDOW_MINUTES)
 
 
 def _build_snapshot(ts_ms: int, node_id: int, result: dict, audio_result: dict | None,
@@ -513,11 +525,13 @@ def _build_snapshot(ts_ms: int, node_id: int, result: dict, audio_result: dict |
     emergency = bool(result.get("emergency", False))
     experts = result.get("experts", {})
 
+    _AUDIO_META_KEYS = {"ts_ms", "sample_rate", "channels", "duration_ms", "peak_db"}
+    audio_meta = {k: v for k, v in audio_result.items() if k in _AUDIO_META_KEYS} if audio_result else None
     return {
         "ts_ms": int(ts_ms),
         "node_id": int(node_id),
         "experts": experts,
-        "audio": audio_result,
+        "audio": audio_meta,
         "risk": {
             "score": round(risk_score, 4),
             "level": risk_level,
@@ -539,39 +553,6 @@ def _build_snapshot(ts_ms: int, node_id: int, result: dict, audio_result: dict |
         },
         "expert_latency_ms": result.get("expert_latency_ms", {}),
         "emergency_breakdown": result.get("emergency_breakdown"),
-    }
-
-
-def _build_emergency_summary(snapshot: dict) -> dict:
-    experts = snapshot.get("experts", {})
-    vital = experts.get("vital", {})
-    env_sound = experts.get("env_sound", {})
-    speech_ko = experts.get("speech_ko", {})
-
-    summary_parts = [
-        f"node {snapshot.get('node_id', 0)}",
-        snapshot.get("risk_level", "normal"),
-        f"score {snapshot.get('risk_score', 0.0):.2f}",
-    ]
-    heart_rate = _safe_float(vital.get("heart_rate"), default=-1.0)
-    breathing_rate = _safe_float(vital.get("breathing_rate"), default=-1.0)
-    if heart_rate >= 0.0:
-        summary_parts.append(f"hr {heart_rate:.1f}")
-    if breathing_rate >= 0.0:
-        summary_parts.append(f"rr {breathing_rate:.1f}")
-    if env_sound.get("env_sound_label"):
-        summary_parts.append(f"sound {env_sound['env_sound_label']}")
-    transcript = speech_ko.get("transcript_ko", "")
-    if transcript:
-        summary_parts.append(f"speech {transcript[:24]}")
-
-    return {
-        "ts_ms": snapshot.get("ts_ms"),
-        "node_id": snapshot.get("node_id", 0),
-        "risk_score": snapshot.get("risk_score", 0.0),
-        "risk_level": snapshot.get("risk_level", "normal"),
-        "emergency": snapshot.get("emergency", False),
-        "summary": ", ".join(summary_parts),
     }
 
 
@@ -612,15 +593,6 @@ def _write_snapshot(r, snapshot: dict):
         approximate=True,
     )
     _update_minute_aggregate(r, snapshot)
-
-    if snapshot.get("risk_level") in {"warning", "critical"}:
-        summary = _build_emergency_summary(snapshot)
-        r.xadd(
-            EMERGENCY_STREAM,
-            {"data": json.dumps(summary, ensure_ascii=False)},
-            maxlen=EMERGENCY_STREAM_MAXLEN,
-            approximate=True,
-        )
 
 
 def _write_expert_latest(r, expert_name: str, node_id: int, ts_ms: int, output: dict, latency_ms: float):
@@ -672,13 +644,21 @@ if __name__ == "__main__":
     r = _connect_redis(redis_host, redis_port)
     mqtt_client = _init_mqtt(r)
     ai_engine = AIEngine()
+
+    # M3/M4 오디오 추론 — CSI 루프와 독립된 데몬 스레드
+    threading.Thread(
+        target=_audio_worker_loop, args=(r, ai_engine), daemon=True, name="audio-worker"
+    ).start()
+    _log(logging.INFO, "audio_worker_thread_started")
     _log(logging.INFO, "inference_loop_started", stream="csi:raw")
 
     last_id = STREAM_START_ID
     last_slm_invoked_at_ms = 0
     _backlog_streak = 0
-    _node_resp_buf:  dict[int, deque] = {}
-    _node_heart_buf: dict[int, deque] = {}
+    _node_raw_buf:    dict[int, deque] = {}
+    _node_resp_buf:   dict[int, deque] = {}
+    _node_heart_buf:  dict[int, deque] = {}
+    _node_prev_ts_ms: dict[int, int]   = {}
     while True:
         try:
             settings = _load_cached_settings(r)
@@ -729,34 +709,66 @@ if __name__ == "__main__":
                              node_id=node_id, msg_id=str(msg_id),
                              present=list(k.decode() for k in fields if k != b""))
 
+                    # 패킷 간격 검사: 100Hz 기준 정상 10ms, 150ms(15패킷) 초과 시 연속성 깨짐 → deque 리셋
+                    _prev_ts = _node_prev_ts_ms.get(node_id, 0)
+                    _gap_ms = ts_ms - _prev_ts if _prev_ts else 0
+                    if _gap_ms > 150:
+                        _node_raw_buf.pop(node_id, None)
+                        _node_resp_buf.pop(node_id, None)
+                        _node_heart_buf.pop(node_id, None)
+                        if _prev_ts:
+                            _log(logging.WARNING, "packet_gap_detected",
+                                 node_id=node_id, gap_ms=_gap_ms, action="deque_reset")
+                    _node_prev_ts_ms[node_id] = ts_ms
+
                     # M2 시간축 누적: per-node deque, 64채널 평균 → (N,) 시간 시리즈
                     _node_resp_buf.setdefault(node_id, deque(maxlen=M2_CSI_WINDOW_FRAMES)).append(resp_data)
                     _node_heart_buf.setdefault(node_id, deque(maxlen=M2_CSI_WINDOW_FRAMES)).append(heart_data)
                     resp_series  = np.mean(np.stack(_node_resp_buf[node_id]),  axis=1)
                     heart_series = np.mean(np.stack(_node_heart_buf[node_id]), axis=1)
 
+                    # M1 슬라이딩 버퍼: 노드별 block_raw (64ch) × 100frame
+                    _node_raw_buf.setdefault(node_id, deque(maxlen=M1_CSI_WINDOW_FRAMES)).append(raw_data)
+
+                    # M1 입력 텐서: 활성 노드를 node_id 오름차순으로 M1_MAX_NODES개까지 쌓음
+                    # 연결된 노드 < M1_MAX_NODES 이면 부족분을 0 패딩 — 5노드 모델로 교체 시 M1_MAX_NODES=5로만 변경
+                    _m1_frames = []
+                    for _n in sorted(n for n in active_nodes if n in _node_raw_buf)[:M1_MAX_NODES]:
+                        _buf = _node_raw_buf[_n]
+                        if len(_buf) == M1_CSI_WINDOW_FRAMES:
+                            _m1_frames.append(np.stack(list(_buf), axis=0).T.astype(np.float32))  # (64,100)
+                        else:
+                            _m1_frames.append(np.zeros((64, M1_CSI_WINDOW_FRAMES), dtype=np.float32))
+                    while len(_m1_frames) < M1_MAX_NODES:
+                        _m1_frames.append(np.zeros((64, M1_CSI_WINDOW_FRAMES), dtype=np.float32))
+                    m1_input = np.concatenate(_m1_frames, axis=0)  # (M1_MAX_NODES*64, 100)
+
                     context_window = _load_cached_context_window(r, ts_ms)
-                    audio_events = _load_recent_audio_events(r, node_id, ts_ms, M4_AUDIO_WINDOW_MS)
-                    expert_inputs, audio_result = _build_expert_inputs(
-                        raw_data, resp_series, heart_series, audio_events
-                    )
+
+                    # M1/M2만 CSI 루프에서 실행. M3/M4는 _audio_worker_loop 데몬 스레드가 처리.
+                    expert_inputs, _ = _build_expert_inputs(m1_input, resp_series, heart_series, [])
                     expert_results, expert_latency_ms = ai_engine.process_experts(
                         raw_data,
                         expert_inputs=expert_inputs,
                     )
+
+                    # audio:result 최신 1건 읽어 expert_results에 병합
+                    audio_from_stream = _load_latest_audio_result(r)
+                    if audio_from_stream:
+                        expert_results["env_sound"] = audio_from_stream.get("env_sound") or expert_results.get("env_sound", {})
+                        expert_results["speech_ko"] = audio_from_stream.get("speech_ko") or expert_results.get("speech_ko", {})
+                    audio_result = audio_from_stream  # snapshot audio 메타용
+
                     for expert_name, output in expert_results.items():
                         write_output = output
                         if expert_name == "env_sound":
-                            audio_in  = expert_inputs.get("env_sound") or {}
-                            audio_ts  = audio_in.get("ts_ms")
-                            audio_dur = audio_in.get("duration_ms")
+                            ats  = (audio_from_stream or {}).get("ts_ms")
+                            adur = (audio_from_stream or {}).get("duration_ms")
                             write_output = {
                                 **output,
-                                "audio_ts_ms": audio_ts,
-                                "audio_ts_start_ms": (audio_ts - audio_dur)
-                                    if (audio_ts is not None and audio_dur is not None) else None,
-                                "audio_duration_ms": audio_dur,
-                                "audio_window_ms": audio_in.get("window_ms"),
+                                "audio_ts_ms":       ats,
+                                "audio_ts_start_ms": (ats - adur) if (ats and adur) else None,
+                                "audio_duration_ms": adur,
                             }
                         _write_expert_latest(
                             r,

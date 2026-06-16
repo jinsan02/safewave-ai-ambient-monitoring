@@ -93,7 +93,7 @@ services:
     env_file: .env
     environment:
       - REDIS_HOST=db
-      - SLM_MIN_INTERVAL_MS=3000
+      - SLM_MIN_INTERVAL_MS=5000
       - ORT_USE_GPU=${ORT_USE_GPU:-0}
     volumes:
       - ./volumes/models:/app/models
@@ -119,10 +119,9 @@ services:
     build: ./api
     container_name: rp5-tts-worker
     restart: always
-    profiles:
-      - audio
     depends_on:
       - mqtt
+      - db
     env_file: .env
     environment:
       - MQTT_HOST=mqtt
@@ -130,9 +129,13 @@ services:
       - TTS_VOICE=ko-KR-SunHiNeural
       - TTS_COOLDOWN_SEC=120
       - TTS_OUTPUT_DIR=/app/tts
+      - REDIS_HOST=db
     volumes:
       - ./volumes/logs/tts:/app/tts
-    command: ["python", "/app/../scripts/tts_worker.py"]
+      - ./scripts:/scripts
+    command: ["python", "/scripts/tts_worker.py"]
+    devices:
+      - "/dev/snd:/dev/snd"
     networks:
       - rp5-network
 
