@@ -1,8 +1,8 @@
 """MQTT 기반 경량 TTS 워커.
 
 두 가지 경로로 TTS를 처리한다:
-1. MQTT safewave/ai/result 구독 → warning/critical 이벤트 시 자동 안내음 (쿨다운 적용)
-2. Redis tts:speak:queue BLPOP → _alert_worker가 직접 요청한 응급 TTS (쿨다운 없음)
+1. MQTT safewave/ai/result 구독 → warning/critical 이벤트 시 자동 안내음 (쿨다운 120s)
+2. Redis tts:speak:queue BLPOP → _alert_worker가 직접 요청한 응급 TTS (노드별 쿨다운 10s)
 
 생성된 MP3는 volumes/logs/tts 에 저장하고 mpg123으로 즉시 재생한다.
 재생 완료 후 user:voice_response:{node_id} 키를 설정해 _alert_worker가 응답 감지할 수 있게 한다.
@@ -48,6 +48,11 @@ OUT_DIR      = Path(os.getenv("TTS_OUTPUT_DIR", "volumes/logs/tts"))
 TTS_SPEAK_QUEUE      = "tts:speak:queue"
 VOICE_RESP_PREFIX    = "user:voice_response:"
 VOICE_RESP_TTL_SEC   = 5
+TTS_QUEUE_COOLDOWN_SEC = int(os.getenv("TTS_QUEUE_COOLDOWN_SEC", "10"))
+
+# 안내 문구 — 마이크가 재생음을 재녹음(에코)해도 api Phase 2 의도 분류
+# 키워드(위험/응급/괜찮 등)에 걸리지 않도록 중립 단어만 사용한다.
+NEUTRAL_PROMPT_TEXT = "이상이 감지되었습니다. 상태를 말씀해 주세요."
 
 
 def should_speak(payload: dict) -> bool:
@@ -146,7 +151,7 @@ async def _mqtt_loop(client: mqtt.Client, r: aioredis.Redis):
         if now - last_spoke_at.get(node_id, 0.0) < COOLDOWN_SEC:
             continue
         last_spoke_at[node_id] = now
-        text = "괜찮으세요? 도움이 필요하시면 말씀해 주세요."
+        text = NEUTRAL_PROMPT_TEXT
         try:
             await speak_and_signal(r, client, text, node_id, payload)
         except Exception as exc:
@@ -155,8 +160,10 @@ async def _mqtt_loop(client: mqtt.Client, r: aioredis.Redis):
 
 
 async def _redis_speak_loop(client: mqtt.Client, r: aioredis.Redis):
-    """Redis tts:speak:queue → 쿨다운 없는 응급 직접 TTS."""
+    """Redis tts:speak:queue → 응급 직접 TTS (노드별 짧은 쿨다운)."""
     print("[tts] redis speak loop started")
+    loop = asyncio.get_running_loop()
+    last_spoke_at: dict[int, float] = {}
     while True:
         try:
             item = await r.blpop(TTS_SPEAK_QUEUE, timeout=5)
@@ -164,8 +171,13 @@ async def _redis_speak_loop(client: mqtt.Client, r: aioredis.Redis):
                 continue
             _, raw = item
             data = json.loads(raw)
-            text    = data.get("text", "위험 상황이 감지됐습니다. 괜찮으시면 말씀해 주세요.")
+            text    = data.get("text", NEUTRAL_PROMPT_TEXT)
             node_id = int(data.get("node_id", 0))
+            now = loop.time()
+            if now - last_spoke_at.get(node_id, 0.0) < TTS_QUEUE_COOLDOWN_SEC:
+                print(f"[tts] queue cooldown skip node={node_id}")
+                continue
+            last_spoke_at[node_id] = now
             try:
                 await speak_and_signal(r, client, text, node_id)
                 print(f"[tts] emergency spoke node={node_id}")

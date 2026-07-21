@@ -171,6 +171,8 @@ AUDIO_STREAM_MAXLEN = int(os.getenv("AUDIO_STREAM_MAXLEN", "3600"))
 TTS_SPEAK_QUEUE     = "tts:speak:queue"
 VOICE_RESP_PREFIX   = "user:voice_response:"
 PHASE2_TIMEOUT_SEC  = int(os.getenv("VOICE_RESPONSE_TIMEOUT_SEC", "15"))
+PHASE2_LOCK_SEC     = int(os.getenv("PHASE2_LOCK_SEC", "90"))
+TTS_WAIT_SEC        = int(os.getenv("TTS_WAIT_SEC", "15"))
 AUDIO_CLIP_KEY_PREFIX = "ai:clip:"
 AUDIO_CLIP_TTL_SECONDS = int(os.getenv("AUDIO_CLIP_TTL_SECONDS", "3600"))
 AUDIO_CLIP_POST_WAIT_MS = int(os.getenv("AUDIO_CLIP_POST_WAIT_MS", "15000"))
@@ -214,6 +216,24 @@ async def _reconnect_redis():
     return app.state.redis
 
 
+async def _reconnect_redis_raw():
+    # audio:events의 waveform 필드는 raw float32 bytes라 decode_responses=True 클라이언트로
+    # 읽으면 UnicodeDecodeError가 난다. 스트림 바이너리 읽기 전용 클라이언트.
+    old_client = getattr(app.state, "redis_raw", None)
+    if old_client is not None:
+        with suppress(Exception):
+            await old_client.aclose()
+
+    app.state.redis_raw = aioredis.Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        decode_responses=False,
+        socket_connect_timeout=5,
+    )
+    await app.state.redis_raw.ping()
+    return app.state.redis_raw
+
+
 async def _ensure_redis():
     redis_client = getattr(app.state, "redis", None)
     if redis_client is None:
@@ -224,6 +244,18 @@ async def _ensure_redis():
     except Exception as exc:
         _log(logging.WARNING, "redis_reconnect", reason=str(exc))
         return await _reconnect_redis()
+
+
+async def _ensure_redis_raw():
+    redis_client = getattr(app.state, "redis_raw", None)
+    if redis_client is None:
+        return await _reconnect_redis_raw()
+    try:
+        await redis_client.ping()
+        return redis_client
+    except Exception as exc:
+        _log(logging.WARNING, "redis_raw_reconnect", reason=str(exc))
+        return await _reconnect_redis_raw()
 
 app.add_middleware(
     CORSMiddleware,
@@ -258,31 +290,42 @@ async def _capture_audio_clip(redis_client, ts_ms: int, node_id: int):
     def _collect_events(entries, since_ms, until_ms):
         results = []
         for msg_id, fields in entries:
+            if isinstance(msg_id, bytes):
+                msg_id = msg_id.decode("utf-8", errors="ignore")
             try:
-                event_ts = int(fields.get("ts_ms") or _stream_id_ts_ms(msg_id))
+                event_ts = int(fields.get(b"ts_ms") or _stream_id_ts_ms(msg_id))
             except Exception:
                 continue
             if not (since_ms <= event_ts <= until_ms):
                 continue
             try:
-                node = int(fields.get("node", 0))
+                node = int(fields.get(b"node", 0))
             except Exception:
                 node = 0
             if node_id and node not in (0, node_id):
                 continue
-            payload = _parse_result_payload(fields.get("data", ""))
+            raw_data = fields.get(b"data", b"")
+            payload = _parse_result_payload(raw_data.decode("utf-8", errors="ignore"))
+            # 신 포맷: waveform이 별도 raw float32 bytes 필드 / 구 포맷: data JSON 안 리스트
+            raw_wav = fields.get(b"waveform", b"")
+            if raw_wav:
+                sample_count = len(raw_wav) // 4
+            else:
+                sample_count = len(payload.get("waveform") or [])
             results.append({
                 "ts_ms": event_ts,
                 "peak_db": float(payload.get("peak_db", -120.0)),
-                "sample_count": len(payload.get("waveform") or []),
+                "sample_count": sample_count,
                 "sample_rate": int(payload.get("sample_rate", 16000)),
                 "duration_ms": int(payload.get("duration_ms", 0)),
             })
         return results
 
     try:
+        redis_raw = await _ensure_redis_raw()
+
         # 전 15초 수집
-        pre_entries = await redis_client.xrevrange(AUDIO_STREAM, count=128)
+        pre_entries = await redis_raw.xrevrange(AUDIO_STREAM, count=128)
         pre_events = _collect_events(pre_entries, ts_ms - pre_window_ms, ts_ms)
         pre_events.sort(key=lambda e: e["ts_ms"])
 
@@ -290,7 +333,7 @@ async def _capture_audio_clip(redis_client, ts_ms: int, node_id: int):
         await asyncio.sleep(post_window_ms / 1000.0)
 
         # 후 15초 수집
-        post_entries = await redis_client.xrange(
+        post_entries = await redis_raw.xrange(
             AUDIO_STREAM,
             min=str(ts_ms),
             max=str(ts_ms + post_window_ms),
@@ -317,11 +360,9 @@ async def _capture_audio_clip(redis_client, ts_ms: int, node_id: int):
         _log(logging.WARNING, "audio_clip_failed", ts_ms=ts_ms, error=str(exc))
 
 
-def _build_emergency_tts(payload: dict) -> str:
-    reason = (payload.get("summary") or "").strip()
-    if reason:
-        return f"위험 상황이 감지됐습니다. {reason}. 괜찮으시면 말씀해 주세요."
-    return "위험 상황이 감지됐습니다. 괜찮으시면 말씀해 주세요."
+# Phase 2 TTS 안내 문구 — 마이크가 재생음을 재녹음(에코)해도 오분류되지 않도록
+# _classify_phase2의 긴급/안전 키워드와 겹치는 단어를 포함하면 안 된다.
+EMERGENCY_TTS_TEXT = "이상이 감지되었습니다. 상태를 말씀해 주세요."
 
 
 async def _get_phase2_transcript(redis_client, after_id: str, timeout: int) -> str | None:
@@ -346,7 +387,10 @@ async def _get_phase2_transcript(redis_client, after_id: str, timeout: int) -> s
                     data = _parse_result_payload(fields.get("data", ""))
                     speech = (data.get("experts") or {}).get("speech_ko") or {}
                     if speech.get("speech_detected"):
-                        return str(speech.get("transcript_ko", "")).strip()
+                        transcript = str(speech.get("transcript_ko", "")).strip()
+                        if transcript:
+                            return transcript
+                        # STT가 텍스트를 못 뽑은 항목은 무시하고 타임아웃까지 계속 대기
         except Exception:
             await asyncio.sleep(0.5)
     return None
@@ -356,8 +400,13 @@ def _classify_phase2(transcript: str | None) -> str:
     """transcript 기반 의도 분류. 긴급 키워드 우선, 무응답 → call_emergency."""
     if not transcript:
         return "call_emergency"
+    # 부정형 안전 표현("안 괜찮아")이 safe_kw "괜찮"에 매칭되어 cancel_alarm으로
+    # 오분류되는 것을 방지 — 긴급 키워드보다도 먼저 검사한다.
+    neg_unsafe = ("안 괜찮", "괜찮지 않")
     emg_kw = {"아파", "도와", "살려", "119", "응급", "위험", "불러"}
-    safe_kw = {"괜찮", "아니야", "아니", "안 다쳤", "없어", "멀쩡"}
+    safe_kw = {"괜찮", "아니", "안 다쳤", "없어", "멀쩡"}
+    if any(kw in transcript for kw in neg_unsafe):
+        return "call_emergency"
     if any(kw in transcript for kw in emg_kw):
         return "call_emergency"
     if any(kw in transcript for kw in safe_kw):
@@ -368,11 +417,20 @@ def _classify_phase2(transcript: str | None) -> str:
 async def _handle_single_emergency(redis_client, msg_id: str, payload: dict):
     node_id = payload.get("node_id", 0)
 
+    # 노드별 Phase 2 중복 실행 방지 락. critical 지속 시 ai:emergency에 ~5초마다
+    # 새 엔트리가 쌓여 핸들러가 중첩 스폰되는 것을 차단한다.
+    # 락은 삭제하지 않고 EX 자연 만료 — 재알림 쿨다운을 겸한다.
+    lock_key = f"phase2:active:{node_id}"
+    acquired = await redis_client.set(lock_key, "1", ex=PHASE2_LOCK_SEC, nx=True)
+    if not acquired:
+        _log(logging.INFO, "phase2_skipped_active", node_id=node_id)
+        return
+
     asyncio.create_task(
         _capture_audio_clip(redis_client, payload["ts_ms"], node_id)
     )
 
-    tts_text = _build_emergency_tts(payload)
+    tts_text = EMERGENCY_TTS_TEXT
     resp_key = f"{VOICE_RESP_PREFIX}{node_id}"
     await redis_client.delete(resp_key)
     await redis_client.lpush(
@@ -382,7 +440,9 @@ async def _handle_single_emergency(redis_client, msg_id: str, payload: dict):
     )
     _log(logging.INFO, "tts_queued", node_id=node_id, text=tts_text)
 
-    await redis_client.blpop(resp_key, timeout=15)
+    tts_signal = await redis_client.blpop(resp_key, timeout=TTS_WAIT_SEC)
+    if tts_signal is None:
+        _log(logging.WARNING, "tts_signal_timeout", node_id=node_id)
 
     # Phase 2: TTS 재생 후 ai:result 스트림에서 STT transcript 추출 → 의도 분류
     after_entries = await redis_client.xrevrange(RESULT_STREAM, count=1)
