@@ -11,12 +11,19 @@
 import asyncio
 import json
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 
 import edge_tts
 import paho.mqtt.client as mqtt
 import redis.asyncio as aioredis
+
+# cp949 등 UTF-8이 아닌 콘솔에서 로그 문자가 UnicodeEncodeError를 일으켜
+# 발화→voice_response 신호 플로우가 중단되지 않도록 치환 처리한다.
+for _stream in (sys.stdout, sys.stderr):
+    if _stream and hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(errors="replace")
 
 
 MQTT_HOST       = os.getenv("MQTT_HOST", "mqtt")
