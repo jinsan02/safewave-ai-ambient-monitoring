@@ -442,6 +442,7 @@ rp5/
 | MQTT 연결 안 됨 | mosquitto 미실행 | `docker compose ps` 확인 후 재시작 |
 | ai 컨테이너 exit 139 | ONNX TensorRT EP segfault | `ORT_USE_GPU=0` 또는 cpu-runtime 빌드 확인 |
 | M3/M4 `expert_timeout` | CPU 추론 > 1s | `.env`에 `EXPERT_INFER_TIMEOUT_MS=5000` |
+| M4가 "(음성 감지, 전사 미확정)"만 출력 | ① `onnx` 패키지 누락 ② optimum 1.17 ↔ transformers 4.46+ 비호환 ③ whisper_onnx `generation_config.json` 구형(lang_to_id 없음) | ①② `ai/requirements.txt`의 `onnx`·`optimum>=1.24` 반영 재빌드 ③ [openai/whisper-small의 generation_config.json](https://huggingface.co/openai/whisper-small/resolve/main/generation_config.json)으로 교체 (SungBeom/whisper-small-ko는 whisper-small 파인튜닝이라 호환) |
 | 마이크 권한 오류 | HTTPS/file:// 접근 | `http://127.0.0.1:8081/monitor.html` 사용 |
 | dummy_inject.py 경로 오류 | Git Bash 경로 변환 | `MSYS_NO_PATHCONV=1` 접두어 사용 |
 | `python: not found` (ai-qwen) | Ubuntu 22.04 python3만 존재 | `command: ["python3", ...]` 사용 (이미 적용) |
