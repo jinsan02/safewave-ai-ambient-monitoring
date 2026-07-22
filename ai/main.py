@@ -754,11 +754,12 @@ if __name__ == "__main__":
                                  node_id=node_id, gap_ms=_gap_ms, action="deque_reset")
                     _node_prev_ts_ms[node_id] = ts_ms
 
-                    # M2 시간축 누적: per-node deque, 64채널 평균 → (N,) 시간 시리즈
-                    _node_resp_buf.setdefault(node_id, deque(maxlen=M2_CSI_WINDOW_FRAMES)).append(resp_data)
-                    _node_heart_buf.setdefault(node_id, deque(maxlen=M2_CSI_WINDOW_FRAMES)).append(heart_data)
-                    resp_series  = np.mean(np.stack(_node_resp_buf[node_id]),  axis=1)
-                    heart_series = np.mean(np.stack(_node_heart_buf[node_id]), axis=1)
+                    # M2 시간축 누적: per-node deque에 프레임별 64채널 평균(스칼라)을 저장 → (N,) 시간 시리즈.
+                    # 프레임 평균은 불변이므로 매 패킷 (N,64) stack+mean 재계산 대신 입력 시 1회만 계산.
+                    _node_resp_buf.setdefault(node_id, deque(maxlen=M2_CSI_WINDOW_FRAMES)).append(float(np.mean(resp_data)))
+                    _node_heart_buf.setdefault(node_id, deque(maxlen=M2_CSI_WINDOW_FRAMES)).append(float(np.mean(heart_data)))
+                    resp_series  = np.asarray(_node_resp_buf[node_id],  dtype=np.float32)
+                    heart_series = np.asarray(_node_heart_buf[node_id], dtype=np.float32)
 
                     # M1 슬라이딩 버퍼: 노드별 block_raw (64ch) × 100frame
                     _node_raw_buf.setdefault(node_id, deque(maxlen=M1_CSI_WINDOW_FRAMES)).append(raw_data)

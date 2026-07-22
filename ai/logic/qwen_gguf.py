@@ -81,6 +81,16 @@ class QwenLogic(_QwenLogic15B):
                 logits_all=False,
                 verbose=False,
             )
+            # 프롬프트 캐시: p50 772토큰 중 ~700이 정적 prefix(system+few-shot).
+            # 최장 일치 prefix의 KV 상태를 재사용해 2회차부터 prefill을 현재 상태분만 수행.
+            if os.getenv("QWEN_GGUF_CACHE", "1") == "1":
+                try:
+                    from llama_cpp import LlamaRAMCache
+                    cache_mb = int(os.getenv("QWEN_GGUF_CACHE_MB", "256"))
+                    self._llama.set_cache(LlamaRAMCache(capacity_bytes=cache_mb * 1024 * 1024))
+                    _LOGGER.info("qwen_gguf_cache_enabled capacity_mb=%d", cache_mb)
+                except Exception as e:
+                    _LOGGER.warning("qwen_gguf_cache_failed error=%s", e)
             self.session = self._llama  # evaluate()의 truthiness 게이트 통과용
             _LOGGER.info("qwen_gguf_loaded path=%s", self._gguf_file)
         except Exception as e:

@@ -254,12 +254,17 @@ class QwenLogic:
             v = bucket.get(name.encode()) if name.encode() in bucket else bucket.get(name)
             return _safe_float(v.decode() if isinstance(v, bytes) else v, default=0.0)
 
+        # 60회 순차 HGETALL → pipeline 1왕복 (SLM 호출마다 실행되므로 RTT 절감)
+        try:
+            pipe = self.redis_client.pipeline()
+            for k in range(window_min - 1, -1, -1):   # 오래된(-59) → 최근(0)
+                pipe.hgetall(f"{self._MINUTE_AGG_PREFIX}{cur_min - k}")
+            buckets = pipe.execute()
+        except Exception:
+            return None
+
         rows = []
-        for k in range(window_min - 1, -1, -1):   # 오래된(-59) → 최근(0)
-            try:
-                bucket = self.redis_client.hgetall(f"{self._MINUTE_AGG_PREFIX}{cur_min - k}")
-            except Exception:
-                return None
+        for k, bucket in zip(range(window_min - 1, -1, -1), buckets):
             if not bucket:
                 continue
             hc = _bf(bucket, "heart_count")

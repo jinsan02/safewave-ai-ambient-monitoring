@@ -98,6 +98,8 @@ services:
       - SLM_BACKEND=${SLM_BACKEND:-gguf}
       - SLM_MODEL=${SLM_MODEL:-qwen_15b_gguf_q5}
       - SLM_TOKENIZER=${SLM_TOKENIZER:-qwen_15b}
+      # RPi5 4코어 중 3개만 할당 — 응급 시 M4 STT·CSI 루프용 1코어 상시 확보
+      - QWEN_GGUF_THREADS=${QWEN_GGUF_THREADS:-3}
     volumes:
       - ./volumes/models:/app/models
     command: ["python3", "qwen_service.py"]
