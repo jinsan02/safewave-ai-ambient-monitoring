@@ -84,7 +84,7 @@ services:
   ai-qwen:
     build:
       context: ./ai
-      target: ${AI_DOCKER_TARGET:-gpu-runtime}
+      target: ${AI_QWEN_DOCKER_TARGET:-gguf-runtime}
     container_name: rp5-ai-qwen
     restart: always
     depends_on:
@@ -95,6 +95,9 @@ services:
       - REDIS_HOST=db
       - SLM_MIN_INTERVAL_MS=5000
       - ORT_USE_GPU=${ORT_USE_GPU:-0}
+      - SLM_BACKEND=${SLM_BACKEND:-gguf}
+      - SLM_MODEL=${SLM_MODEL:-qwen_15b_gguf_q5}
+      - SLM_TOKENIZER=${SLM_TOKENIZER:-qwen_15b}
     volumes:
       - ./volumes/models:/app/models
     command: ["python3", "qwen_service.py"]

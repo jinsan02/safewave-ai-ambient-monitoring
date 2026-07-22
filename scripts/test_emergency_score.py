@@ -93,12 +93,12 @@ print("[3] M2 심박(HR) 경계값")
 cases_hr = [
     (0.0,   0.0,   0.0,   "HR=0 (no-signal)"),
     (_HR_CRIT_LO + 0.1, 0.0,  0.17, "HR 위기 하한 직상 → warning 진입"),
-    (_HR_CRIT_LO,       0.28, 0.32, "HR 위기 하한(35) → critical → vital=1.0"),
+    (_HR_CRIT_LO,       0.63, 0.67, "HR 위기 하한(40, D1) → vital=1.0 → vital_bypass → score=0.65"),
     (_HR_WARN_LO - 0.1, 0.14, 0.18, "HR 경고 하한(55) 미만 → vital=0.55, score~0.165"),
     (_HR_WARN_LO,       0.14, 0.18, "HR=55 정확히 → _vital_component val<=warn_lo True → vital=0.55"),
     (75.0,              0.0,  0.01, "HR 정상(75) → vital=0"),
     (_HR_WARN_HI + 0.1, 0.14, 0.18, "HR 경고 상한 초과 → vital=0.55"),
-    (_HR_CRIT_HI,       0.28, 0.32, "HR 위기 상한(130) → critical → vital=1.0"),
+    (_HR_CRIT_HI,       0.63, 0.67, "HR 위기 상한(130) → vital=1.0 → vital_bypass → score=0.65"),
 ]
 for hr, lo, hi, label in cases_hr:
     s, bd = compute_emergency_score(_mk(hr=hr))
@@ -110,12 +110,12 @@ print("[4] M2 호흡수(RR) 경계값")
 
 cases_rr = [
     (0.0,              0.0,  0.01, "RR=0 (no-signal)"),
-    (_RR_CRIT_LO,      0.28, 0.32, "RR 위기 하한(4) → vital=1.0"),
+    (_RR_CRIT_LO,      0.63, 0.67, "RR 위기 하한(5, D1) → vital=1.0 → vital_bypass → score=0.65"),
     (_RR_WARN_LO - 0.1,0.14, 0.18, "RR 경고 하한 미만 → vital=0.55"),
     (_RR_WARN_LO,      0.14, 0.18, "RR=10 정확히 → _vital_component val<=warn_lo True → vital=0.55"),
     (16.0,             0.0,  0.01, "RR 정상(16) → vital=0"),
     (_RR_WARN_HI + 0.1,0.14, 0.18, "RR 경고 상한 초과 → vital=0.55"),
-    (_RR_CRIT_HI,      0.28, 0.32, "RR 위기 상한(35) → vital=1.0"),
+    (_RR_CRIT_HI,      0.63, 0.67, "RR 위기 상한(35) → vital=1.0 → vital_bypass → score=0.65"),
 ]
 for rr, lo, hi, label in cases_rr:
     s, bd = compute_emergency_score(_mk(rr=rr))
@@ -238,6 +238,89 @@ if VERBOSE:
 # alarm(0.9) * env_conf(1.0) * _conf_weight(0.0)=0.5 = 0.45 → score = 0.45*0.15 = 0.0675
 s_noaudio, _ = compute_emergency_score(_mk_conf(label="alarm", lconf=1.0, sound_conf=0.0))
 check("sound alarm infer_conf=0.0 → _conf_weight=0.5 → 절반 감쇠", s_noaudio, _, score_lo=0.06, score_hi=0.08)
+
+
+# ── D1/D2/D3 결함 수정 회귀 ─────────────────────────────────────────────────
+print("[10] D1/D2/D3 결함 수정 회귀")
+
+# D1: crit_lo 40/5 — HR=36·RR=5 직상값이 이제 crit→vital_bypass (이전 경고 0.165 미탐)
+s, bd = compute_emergency_score(_mk(hr=36))
+check("D1 HR=36 → crit(40 이하) → vital_bypass score≥0.6", s, bd, score_lo=0.63, score_hi=0.67)
+s, bd = compute_emergency_score(_mk(rr=5))
+check("D1 RR=5 → crit(5 이하) → vital_bypass score≥0.6", s, bd, score_lo=0.63, score_hi=0.67)
+# D1 경계 반대편: HR=41은 여전히 경고(정상 아님, 과승급 아님)
+s, bd = compute_emergency_score(_mk(hr=41))
+check("D1 HR=41 → 경고(0.55) 유지, bypass 아님", s, bd, score_lo=0.14, score_hi=0.18)
+
+# D2: 확정 낙상(≥0.8) + 경보/충격음(conf≥0.8) → conf 감쇠 무관 fall_hazard_bypass
+s, bd = compute_emergency_score(_mk(fall=1.0, label="alarm", conf=1.0))
+check("D2 fall=1.0+alarm → fall_hazard_bypass score≥0.6", s, bd, score_lo=0.60, score_hi=1.0)
+if bd.get("fall_hazard_bypass"):
+    PASS += 1
+    VERBOSE and print("  PASS  D2 fall_hazard_bypass 플래그 set")
+else:
+    FAIL += 1
+    print("  FAIL  D2 fall_hazard_bypass 플래그 미set")
+# D2 비대상: 낙상만(보강 음향 없음)은 에스컬레이션 안 됨
+s, bd = compute_emergency_score(_mk(fall=1.0, label="silence"))
+check("D2 fall=1.0 단독(음향 없음) → 0.40, bypass 아님", s, bd, score_lo=0.38, score_hi=0.42)
+
+# D3: composite 부스트는 단일 피크 ≥0.70 필요 — 전부 중등도면 미발동
+# fall=0.6(0.6)+RR=24(0.55)+impact(0.65): 피크 0.65 < 0.70 → 부스트 없음 → 0.6 미만
+s, bd = compute_emergency_score(_mk(fall=0.6, rr=24, label="impact", conf=1.0))
+check("D3 중등도 3도메인(피크<0.70) → 부스트 미발동, score<0.6", s, bd, score_lo=0.0, score_hi=0.59)
+# D3 대조: 피크 ≥0.70(alarm 0.9) 있으면 부스트 정상 발동
+s, bd = compute_emergency_score(_mk(fall=0.6, hr=50, label="alarm", conf=1.0))
+check("D3 피크≥0.70(alarm) 포함 → composite 부스트 발동 score≥0.6", s, bd, score_lo=0.60, score_hi=1.0)
+
+
+# ── 시계열 에스컬레이션 (하위호환 + 지속/악화/회복) ─────────────────────────
+print("[11] 시계열 에스컬레이션")
+
+
+def _ts(hrs, rrs=None):
+    rrs = rrs or [16] * len(hrs)
+    n = len(hrs)
+    return [{"m": i - n + 1, "hr": hrs[i], "rr": rrs[i]} for i in range(n)]
+
+
+# 하위호환: time_series None/[] → 스냅샷 전용과 100% 동일
+base_s, _ = compute_emergency_score(_mk(hr=110))
+s_none, _ = compute_emergency_score(_mk(hr=110), time_series=None)
+s_empty, _ = compute_emergency_score(_mk(hr=110), time_series=[])
+if base_s == s_none == s_empty:
+    PASS += 1
+    VERBOSE and print(f"  PASS  하위호환 None/[] 동일 (score={base_s:.4f})")
+else:
+    FAIL += 1
+    print(f"  FAIL  하위호환 깨짐: base={base_s} none={s_none} empty={s_empty}")
+
+# 지속 경고: HR=110(warn) 20분 지속 → sustained → floor 0.6
+s, bd = compute_emergency_score(_mk(hr=110), time_series=_ts([110] * 20))
+check("지속 경고(HR=110×20) → 시계열 에스컬레이션 floor 0.6", s, bd, score_lo=0.60, score_hi=0.66)
+if bd.get("temporal_escalation"):
+    PASS += 1
+    VERBOSE and print(f"  PASS  temporal_escalation 플래그 set: {bd['temporal_escalation']}")
+else:
+    FAIL += 1
+    print("  FAIL  temporal_escalation 플래그 미set")
+
+# 시계열 없으면 동일 스냅샷은 경고(0.165)에 머묾 (에스컬레이션 아님)
+s, bd = compute_emergency_score(_mk(hr=110))
+check("시계열無 HR=110 → 경고 유지 score<0.6", s, bd, score_lo=0.0, score_hi=0.59)
+
+# 점진 악화: HR 70→108 단조 상승 30분 → hr_rising → floor 0.6
+s, bd = compute_emergency_score(_mk(hr=108),
+                                time_series=_ts([int(70 + (108 - 70) * i / 29) for i in range(30)]))
+check("점진 악화(HR 70→108) → 시계열 에스컬레이션 floor 0.6", s, bd, score_lo=0.60, score_hi=0.66)
+
+# 회복: 정상 스냅샷(HR=72) + 초기 급변 후 20분 정상 지속 → 에스컬레이션 안 함
+s, bd = compute_emergency_score(_mk(hr=72), time_series=_ts([125] * 5 + [72] * 20))
+check("회복(125×5→72×20, 스냅샷 정상) → 에스컬레이션 없음 score~0", s, bd, score_lo=0.0, score_hi=0.10)
+
+# sparse: HR=110이지만 시계열 6행(<10) → 무시, 스냅샷 경고에 머묾
+s, bd = compute_emergency_score(_mk(hr=110), time_series=_ts([110] * 6))
+check("sparse(6행<10) → 시계열 무시, score<0.6", s, bd, score_lo=0.0, score_hi=0.59)
 
 
 # ── 결과 ────────────────────────────────────────────────────────────────────

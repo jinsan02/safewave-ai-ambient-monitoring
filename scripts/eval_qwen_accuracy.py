@@ -256,11 +256,23 @@ def load_dataset() -> list[dict]:
 # Qwen 평가
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _load_qwen():
+def _load_qwen(impl="05b"):
+    models_dir = os.path.join(os.path.dirname(__file__), "..", "volumes", "models")
+    if impl == "gguf":
+        p = os.path.join(models_dir, "qwen_15b_gguf_q5")
+        tok = os.path.join(models_dir, "qwen_15b")
+        try:
+            from logic.qwen_gguf import QwenLogic
+            q = QwenLogic(p, tokenizer_dir=tok)
+            print(f"[LOAD] Qwen(gguf): {p}")
+            return q
+        except Exception as e:
+            print(f"[ERR] Qwen gguf 로드 실패: {e}")
+            return None
     p = SLM_MODEL_PATH
     if not os.path.exists(p):
         candidates = [
-            os.path.join(os.path.dirname(__file__), "..", "volumes", "models", "qwen_05b"),
+            os.path.join(models_dir, "qwen_05b"),
             r"C:\rp5\volumes\models\qwen_05b",
         ]
         for c in candidates:
@@ -410,6 +422,7 @@ def main():
     ap.add_argument("--gen",  action="store_true", help="데이터셋 재생성만 (Qwen 미호출)")
     ap.add_argument("--id",   default=None, help="단일 케이스 ID (예: D-01)")
     ap.add_argument("--cat",  default=None, help="카테고리 필터 (예: vital_crisis_solo)")
+    ap.add_argument("--impl", default="05b", choices=["05b", "gguf"], help="M5 백엔드 (기본 05b)")
     args = ap.parse_args()
 
     if args.gen:
@@ -421,7 +434,7 @@ def main():
     cases = load_dataset()
     print(f"[LOAD] 데이터셋: {len(cases)}건")
 
-    qwen = _load_qwen()
+    qwen = _load_qwen(impl=args.impl)
     if qwen is None:
         print("[ERR] Qwen 모델을 로드할 수 없어 평가를 종료합니다.")
         sys.exit(1)

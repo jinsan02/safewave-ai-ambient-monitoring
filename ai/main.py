@@ -312,6 +312,39 @@ def _load_cached_context_window(r, ts_ms: int) -> dict:
     return _ctx_cache
 
 
+_ts_cache = None
+_ts_cache_ts: float = 0.0
+_TS_CACHE_TTL_S: float = 30.0
+
+
+def _load_cached_time_series(r, ts_ms: int):
+    """30초 TTL 캐시 — agg:minute:*(분 집계) → [{m,hr,rr}] 시계열(≤60행).
+    compute_emergency_score의 지속 경고·점진 악화 에스컬레이션 입력. 집계 없으면 None."""
+    global _ts_cache, _ts_cache_ts
+    if time.time() - _ts_cache_ts < _TS_CACHE_TTL_S:
+        return _ts_cache
+    cur_min = ts_ms // 60000
+    rows = []
+    try:
+        pipe = r.pipeline()
+        for k in range(59, -1, -1):
+            pipe.hgetall(f"{MINUTE_AGG_PREFIX}{cur_min - k}")
+        for k, bucket in zip(range(59, -1, -1), pipe.execute()):
+            if not bucket:
+                continue
+            hc = _safe_float(bucket.get(b"heart_count"), 0.0)
+            bc = _safe_float(bucket.get(b"breathing_count"), 0.0)
+            hr = _safe_float(bucket.get(b"heart_sum"), 0.0) / hc if hc > 0 else 0.0
+            rr = _safe_float(bucket.get(b"breathing_sum"), 0.0) / bc if bc > 0 else 0.0
+            if hr > 0 or rr > 0:
+                rows.append({"m": -k, "hr": int(round(hr)), "rr": int(round(rr))})
+    except Exception:
+        rows = []
+    _ts_cache = rows or None
+    _ts_cache_ts = time.time()
+    return _ts_cache
+
+
 def _apply_threshold(result: dict, threshold: float) -> dict:
     """동적 임계값으로 risk_level / emergency 재계산."""
     score = _safe_float(result.get("risk_score", 0.0), 0.0)
@@ -779,7 +812,8 @@ if __name__ == "__main__":
                             expert_latency_ms.get(expert_name, 0.0),
                         )
 
-                    emg_score, emg_breakdown = compute_emergency_score(expert_results)
+                    time_series = _load_cached_time_series(r, ts_ms)
+                    emg_score, emg_breakdown = compute_emergency_score(expert_results, time_series=time_series)
                     invoke_slm = emg_score >= threshold
                     now_ms = int(time.time() * 1000)
                     if invoke_slm and (now_ms - last_slm_invoked_at_ms) < SLM_MIN_INTERVAL_MS:

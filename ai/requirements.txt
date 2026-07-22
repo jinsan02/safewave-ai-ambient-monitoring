@@ -8,3 +8,4 @@ regex>=2022.1.18
 paho-mqtt==2.1.0
 edge-tts==7.2.8
 optimum>=1.17.0,<1.18.0
+# llama-cpp-python>=0.3.0  — ai-qwen gguf-runtime 스테이지에서 설치 (cmake 소스 빌드, ai/Dockerfile 참조)

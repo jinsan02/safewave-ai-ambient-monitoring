@@ -71,14 +71,38 @@ async def synthesize(text: str) -> Path:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_path = OUT_DIR / f"tts_{ts}.mp3"
-    communicate = edge_tts.Communicate(text=text, voice=VOICE)
-    await communicate.save(str(out_path))
-    return out_path
+    # 일시적 DNS/네트워크 실패 대비 3회 재시도 (응급 안내가 단발 실패로 누락되지 않도록)
+    last_exc = None
+    for attempt in range(3):
+        try:
+            communicate = edge_tts.Communicate(text=text, voice=VOICE)
+            await communicate.save(str(out_path))
+            return out_path
+        except Exception as exc:
+            last_exc = exc
+            print(f"[tts] synth retry {attempt + 1}/3: {exc}")
+            await asyncio.sleep(1.0 + attempt)
+    raise last_exc
 
 
 async def play_audio(path: Path):
-    """mpg123으로 MP3 재생. 하드웨어 없으면 무시."""
+    """mpg123으로 MP3 재생 (RPi5). Windows 개발 호스트는 PowerShell MediaPlayer 폴백."""
     try:
+        if sys.platform == "win32":
+            ps = (
+                "Add-Type -AssemblyName presentationCore; "
+                f"$p = New-Object System.Windows.Media.MediaPlayer; $p.Open('{path}'); $p.Play(); "
+                "Start-Sleep -Seconds 1; "
+                "while ($p.NaturalDuration.HasTimeSpan -and $p.Position -lt $p.NaturalDuration.TimeSpan) "
+                "{ Start-Sleep -Milliseconds 200 }; $p.Close()"
+            )
+            proc = await asyncio.create_subprocess_exec(
+                "powershell", "-NoProfile", "-Command", ps,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
+            return
         proc = await asyncio.create_subprocess_exec(
             "mpg123", "-q", str(path),
             stdout=asyncio.subprocess.DEVNULL,

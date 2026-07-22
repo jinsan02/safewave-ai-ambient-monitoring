@@ -2,7 +2,7 @@
 
 독거인 안전 모니터링 시스템 — Raspberry Pi 5 + Docker Compose 기반
 
-**현재 릴리즈: v0.1.1**
+**현재 릴리즈: v0.2.0**
 
 ---
 
@@ -74,7 +74,20 @@ ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶
 | M2 | `experts/m2_frenel_vital.py` | CSI 시간 시리즈 (N,) @ 100Hz — per-node deque | 생체신호 점수 (HR, RR) |
 | M3 | `experts/m3_ast_base.py` | 오디오 스펙트로그램 | 환경음 7종 분류 |
 | M4 | `experts/m4_whisper_small.py` | 오디오 PCM (최근 5s) | 한국어 STT |
-| M5 | `logic/qwen_05b.py` | 컨텍스트 JSON | 통합 위험도 판단 (decoder_with_past KV 캐시) |
+| M5 | `logic/qwen_gguf.py` — **Qwen2.5-1.5B GGUF Q5_K_M (llama.cpp, 배포 표준)** | 상태 한 줄 + [1h추세] 시계열 요약 | 통합 위험도 판단 |
+
+### M5 백엔드 (`SLM_BACKEND` env)
+
+| 백엔드 | 모델 | 크기 | Track B raw (1000케이스) | 비고 |
+|---|---|---|---|---|
+| `gguf` (기본) | `qwen_15b_gguf_q5` | 1.29 GB, RSS ~1.44 GB | **0.985** | RPi5 배포 표준, 단일스레드 p50 2.5s |
+| `15b` | `qwen_15b` (ONNX fp32) | 7.1 GB | 1.000 | 품질 기준·디버그 (미배포, 가중치 별도) |
+| `05b` | `qwen_05b` (ONNX) | ~0.9 GB | exact 71% | 구 베이스라인 (롤백용) |
+
+프롬프트·가드레일(`vital_override`, `hallucination_guard`)은 `logic/qwen_15b.py`가 원본이고,
+`qwen_gguf.py`는 생성부만 llama.cpp로 교체한 상속 클래스다. `emergency_score.py` 룰 게이트에
+시계열 에스컬레이션(지속 경고 누적·점진 악화 → M5 임계 0.6 floor)이 포함되며,
+시계열 소스는 `agg:minute:*` 분 집계다 (없으면 스냅샷 전용 — 하위호환).
 
 ### M3 환경음 라벨 (7종)
 
@@ -436,6 +449,29 @@ rp5/
 ---
 
 ## 변경 이력
+
+### v0.2.0 — 2026-07-21 — M5 Qwen2.5-1.5B GGUF 통합 (qwen-llmops 이식)
+
+**M5 모델 교체 (0.5B ONNX → 1.5B GGUF Q5_K_M):**
+- [qwen-llmops](https://github.com/jinsan02/qwen-llmops) 트랙에서 검증 완료된 배포 표준을 이식
+  - Track B raw 통과율 0.985 (1000 시계열 골든셋) — 구 0.5B exact 71% 대비 대폭 개선
+  - multi-domain 케이스 64/64 (0.5B 구조적 한계 해소), 경계 서맥(HR 36~40) 회복
+  - RPi5 프록시 단일스레드 p50 2.5s / p95 3.2s, RSS ~1.44 GB
+- `ai/logic/qwen_15b.py` 신규 — multi-turn few-shot(6개) + 시계열 압축요약 프롬프트 +
+  가드레일(`vital_override` 강화판, `hallucination_guard`), 멀티 eos 정지, 첫 완결 JSON early-stop
+- `ai/logic/qwen_gguf.py` 신규 — llama.cpp 백엔드 (qwen_15b 상속, 생성부만 교체)
+- `ai/qwen_service.py` — `SLM_BACKEND` env 분기 (`gguf` 기본 / `15b` / `05b` 롤백)
+- `ai/Dockerfile` — `gguf-runtime` 스테이지 신규 (cmake + llama-cpp-python 소스 빌드)
+
+**`emergency_score.py` 룰 게이트 고도화 (llmops D1~D3 + 시계열):**
+- D1: vital 위기 경계 재조정 — HR crit ≤35→**≤40**, RR crit ≤4→**≤5** (직상 서맥/서호흡 미탐 해소)
+- D2: 확정 낙상(≥0.80) + 경보/충격음(≥0.80) 동시 → score floor 0.65 (`fall_hazard_bypass`)
+- D3: 복합 부스트에 최소 피크 요구 — 2도메인 ≥0.90 / 3+도메인 ≥0.70 (중등도 신호 과승급 차단)
+- **시계열 에스컬레이션**: `agg:minute:*` 최근 1h에서 지속 경고(≥60%) 또는 HR/RR 악화 추세 감지 시
+  score floor 0.6 (M5 호출 보장). `ai/main.py` 게이트에 30s 캐시로 연결. `time_series=None`이면 기존과 동일.
+
+**모델 가중치:**
+- `volumes/models/qwen_15b_gguf_q5/` (1.2 GB) + `qwen_15b/` 토크나이저 (16 MB) — Git 제외, 별도 복사 필요
 
 ### v0.1.1 — 2026-06-16
 

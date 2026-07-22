@@ -3,6 +3,7 @@ volumes/data/**
 volumes/logs/**
 volumes/models/**
 volumes/mosquitto/**
+volumes/ha_config/**
 !volumes/models/.gitkeep
 !volumes/logs/.gitkeep
 api/auth/firebase_key.json

@@ -17,6 +17,23 @@ COPY . .
 CMD ["python", "main.py"]
 
 
+# ── GGUF(llama.cpp) 런타임 — ai-qwen(M5) 전용 ───────────────────────────────
+# M5는 llama.cpp Q5_K_M로 구동(M5 한정 예외 — M1~M4 ONNX 파이프라인 무관).
+# RPi5(ARM64)는 prebuilt wheel이 없어 소스 빌드 → cmake 필요.
+# cpu-runtime을 베이스로 유지: qwen_15b.py(부모 클래스)가 onnxruntime을 import한다.
+FROM cpu-runtime AS gguf-runtime
+
+RUN apt-get update && apt-get install -y cmake \
+	&& rm -rf /var/lib/apt/lists/* \
+	&& pip install --no-cache-dir --timeout 600 "llama-cpp-python>=0.3.0"
+
+ENV SLM_BACKEND=gguf \
+	SLM_MODEL=qwen_15b_gguf_q5 \
+	SLM_TOKENIZER=qwen_15b
+
+CMD ["python", "qwen_service.py"]
+
+
 FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 AS gpu-runtime
 
 ENV DEBIAN_FRONTEND=noninteractive

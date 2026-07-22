@@ -2489,7 +2489,7 @@
         }
       },
       "ground_truth": {
-        "emg_score": 0.3794,
+        "emg_score": 0.3161,
         "risk_level": "normal",
         "vital_bypass": false,
         "keyword_fall_bonus": false,
@@ -2536,8 +2536,8 @@
         }
       },
       "ground_truth": {
-        "emg_score": 0.3852,
-        "risk_level": "normal",
+        "emg_score": 0.65,
+        "risk_level": "warning",
         "vital_bypass": false,
         "keyword_fall_bonus": false,
         "breakdown": {
@@ -2548,7 +2548,8 @@
           "conf_fall": 0.75,
           "conf_vital": 0.7,
           "conf_sound": 0.8,
-          "conf_speech": 0.55
+          "conf_speech": 0.55,
+          "fall_hazard_bypass": true
         }
       }
     },
@@ -2968,7 +2969,7 @@
         }
       },
       "ground_truth": {
-        "emg_score": 0.6383,
+        "emg_score": 0.65,
         "risk_level": "warning",
         "vital_bypass": false,
         "keyword_fall_bonus": false,
@@ -2980,7 +2981,8 @@
           "conf_fall": 0.75,
           "conf_vital": 0.7,
           "conf_sound": 0.88,
-          "conf_speech": 0.55
+          "conf_speech": 0.55,
+          "fall_hazard_bypass": true
         }
       }
     },
@@ -3067,7 +3069,7 @@
         }
       },
       "ground_truth": {
-        "emg_score": 0.6737,
+        "emg_score": 0.65,
         "risk_level": "warning",
         "vital_bypass": false,
         "keyword_fall_bonus": true,
@@ -3080,7 +3082,8 @@
           "conf_vital": 0.7,
           "conf_sound": 0.88,
           "conf_speech": 0.55,
-          "keyword_fall_bonus": true
+          "keyword_fall_bonus": true,
+          "fall_hazard_bypass": true
         }
       }
     },
@@ -3165,7 +3168,7 @@
         }
       },
       "ground_truth": {
-        "emg_score": 0.8167,
+        "emg_score": 0.7056,
         "risk_level": "warning",
         "vital_bypass": true,
         "keyword_fall_bonus": true,
@@ -3263,8 +3266,8 @@
         }
       },
       "ground_truth": {
-        "emg_score": 0.6106,
-        "risk_level": "warning",
+        "emg_score": 0.5089,
+        "risk_level": "normal",
         "vital_bypass": false,
         "keyword_fall_bonus": false,
         "breakdown": {
@@ -3312,8 +3315,8 @@
         }
       },
       "ground_truth": {
-        "emg_score": 0.5625,
-        "risk_level": "normal",
+        "emg_score": 0.65,
+        "risk_level": "warning",
         "vital_bypass": false,
         "keyword_fall_bonus": true,
         "breakdown": {
@@ -3325,7 +3328,8 @@
           "conf_vital": 0.7,
           "conf_sound": 0.8,
           "conf_speech": 0.55,
-          "keyword_fall_bonus": true
+          "keyword_fall_bonus": true,
+          "fall_hazard_bypass": true
         }
       }
     },
@@ -3377,7 +3381,8 @@
           "conf_sound": 0.92,
           "conf_speech": 0.55,
           "keyword_fall_bonus": true,
-          "vital_bypass": true
+          "vital_bypass": true,
+          "fall_hazard_bypass": true
         }
       }
     },
@@ -3428,7 +3433,8 @@
           "conf_sound": 0.88,
           "conf_speech": 0.55,
           "keyword_fall_bonus": true,
-          "vital_bypass": true
+          "vital_bypass": true,
+          "fall_hazard_bypass": true
         }
       }
     },
@@ -3479,7 +3485,8 @@
           "conf_sound": 0.95,
           "conf_speech": 0.55,
           "keyword_fall_bonus": true,
-          "vital_bypass": true
+          "vital_bypass": true,
+          "fall_hazard_bypass": true
         }
       }
     },
@@ -3530,7 +3537,8 @@
           "conf_sound": 0.8,
           "conf_speech": 0.55,
           "keyword_fall_bonus": true,
-          "vital_bypass": true
+          "vital_bypass": true,
+          "fall_hazard_bypass": true
         }
       }
     },
@@ -3582,7 +3590,8 @@
           "conf_sound": 0.9,
           "conf_speech": 0.55,
           "keyword_fall_bonus": true,
-          "vital_bypass": true
+          "vital_bypass": true,
+          "fall_hazard_bypass": true
         }
       }
     },
@@ -3634,7 +3643,8 @@
           "conf_sound": 0.92,
           "conf_speech": 0.55,
           "keyword_fall_bonus": true,
-          "vital_bypass": true
+          "vital_bypass": true,
+          "fall_hazard_bypass": true
         }
       }
     },
@@ -4398,8 +4408,8 @@
         }
       },
       "ground_truth": {
-        "emg_score": 0.5249,
-        "risk_level": "normal",
+        "emg_score": 0.65,
+        "risk_level": "warning",
         "vital_bypass": false,
         "keyword_fall_bonus": false,
         "breakdown": {
@@ -4410,7 +4420,8 @@
           "conf_fall": 0.75,
           "conf_vital": 0.7,
           "conf_sound": 0.9,
-          "conf_speech": 0.55
+          "conf_speech": 0.55,
+          "fall_hazard_bypass": true
         }
       }
     },
@@ -4445,19 +4456,20 @@
         }
       },
       "ground_truth": {
-        "emg_score": 0.1473,
-        "risk_level": "normal",
-        "vital_bypass": false,
+        "emg_score": 0.65,
+        "risk_level": "warning",
+        "vital_bypass": true,
         "keyword_fall_bonus": false,
         "breakdown": {
           "fall": 0.0175,
-          "vital": 0.4675,
+          "vital": 0.85,
           "sound": 0.0,
           "speech": 0.0,
           "conf_fall": 0.75,
           "conf_vital": 0.7,
           "conf_sound": 0.9,
-          "conf_speech": 0.55
+          "conf_speech": 0.55,
+          "vital_bypass": true
         }
       }
     },
@@ -4540,19 +4552,20 @@
         }
       },
       "ground_truth": {
-        "emg_score": 0.1473,
-        "risk_level": "normal",
-        "vital_bypass": false,
+        "emg_score": 0.65,
+        "risk_level": "warning",
+        "vital_bypass": true,
         "keyword_fall_bonus": false,
         "breakdown": {
           "fall": 0.0175,
-          "vital": 0.4675,
+          "vital": 0.85,
           "sound": 0.0,
           "speech": 0.0,
           "conf_fall": 0.75,
           "conf_vital": 0.7,
           "conf_sound": 0.9,
-          "conf_speech": 0.55
+          "conf_speech": 0.55,
+          "vital_bypass": true
         }
       }
     },
@@ -4684,8 +4697,8 @@
         }
       },
       "ground_truth": {
-        "emg_score": 0.87,
-        "risk_level": "critical",
+        "emg_score": 0.75,
+        "risk_level": "warning",
         "vital_bypass": true,
         "keyword_fall_bonus": true,
         "breakdown": {

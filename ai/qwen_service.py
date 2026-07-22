@@ -1,6 +1,6 @@
 """
 ai/qwen_service.py
-M5 Qwen-0.5B 전용 서비스 루프.
+M5 Qwen SLM 서비스 루프.
 
 ai-experts 컨테이너가 ai:result에 slm_needed=True로 기록한 항목을 소비하고
 Qwen 추론 결과를 ai:emergency에 XADD한다.
@@ -13,7 +13,15 @@ import time
 
 import redis as _redis
 
-from logic.qwen_05b import QwenLogic
+# 추론 백엔드 선택: SLM_BACKEND = gguf | 15b | 05b
+# (gguf는 llama.cpp 백엔드 — M5 한정 예외. ai-qwen 컨테이너 격리라 M1~M4 ONNX 무관)
+_SLM_BACKEND = os.getenv("SLM_BACKEND", "gguf").lower()
+if _SLM_BACKEND == "gguf":
+    from logic.qwen_gguf import QwenLogic
+elif _SLM_BACKEND == "15b":
+    from logic.qwen_15b import QwenLogic
+else:
+    from logic.qwen_05b import QwenLogic
 from utils import (
     stream_id_ts_ms as _stream_id_ts_ms,
     json_loads as _json_loads,
@@ -27,7 +35,9 @@ EMERGENCY_STREAM_MAXLEN = int(os.getenv("EMERGENCY_STREAM_MAXLEN", "3600"))
 SLM_MIN_INTERVAL_MS     = int(os.getenv("SLM_MIN_INTERVAL_MS", "5000"))
 CONTEXT_WINDOW_MINUTES  = int(os.getenv("CONTEXT_WINDOW_MINUTES", "10"))
 MODEL_PATH = os.getenv("MODEL_PATH", "/app/models")
-SLM_MODEL  = os.getenv("SLM_MODEL",  "qwen_05b.onnx")
+SLM_MODEL  = os.getenv("SLM_MODEL",  "qwen_15b_gguf_q5")
+# gguf 백엔드용 chat_template/tokenizer 폴더 (models/ 하위)
+SLM_TOKENIZER = os.getenv("SLM_TOKENIZER", "qwen_15b")
 
 LOGGER = logging.getLogger("rp5.ai.qwen_svc")
 if not LOGGER.handlers:
@@ -103,7 +113,11 @@ def _write_emergency(r: _redis.Redis, snapshot: dict, fused: dict):
 
 def run():
     r = _connect_redis()
-    qwen = QwenLogic(os.path.join(MODEL_PATH, SLM_MODEL))
+    if _SLM_BACKEND == "gguf":
+        qwen = QwenLogic(os.path.join(MODEL_PATH, SLM_MODEL),
+                         tokenizer_dir=os.path.join(MODEL_PATH, SLM_TOKENIZER))
+    else:
+        qwen = QwenLogic(os.path.join(MODEL_PATH, SLM_MODEL))
     qwen.redis_client = r
     _warmup_qwen(qwen)
 
