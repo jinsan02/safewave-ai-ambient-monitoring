@@ -76,6 +76,10 @@ services:
       - MQTT_ENABLED=1
       - EXPERT_INFER_TIMEOUT_MS=1000
       - ORT_USE_GPU=${ORT_USE_GPU:-0}
+      # ORT 스레드/스핀 튜닝 — RPi5 4코어 idle CPU 279%→75% (스핀 차단 + 모델별 차등)
+      - ORT_INTRA_OP_THREADS=${ORT_INTRA_OP_THREADS:-1}
+      - M3_ORT_THREADS=${M3_ORT_THREADS:-2}
+      - M4_ORT_THREADS=${M4_ORT_THREADS:-2}
     volumes:
       - ./volumes/models:/app/models
     networks:

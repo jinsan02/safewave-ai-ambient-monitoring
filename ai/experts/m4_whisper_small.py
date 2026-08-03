@@ -34,7 +34,8 @@ class WhisperSmallModel:
             self.session = ort.InferenceSession(
                 self.effective_model_path,
                 providers=get_ort_providers(),
-                sess_options=get_session_opts(),
+                # Phase 2 15s 응답 윈도우 보호 — 1스레드 강제 시 STT 수십 초 위험 → 기본 2
+                sess_options=get_session_opts(int(os.getenv("M4_ORT_THREADS", "2"))),
             )
 
         # ASR 파이프라인을 시작 시점에 즉시 초기화 (lazy init 시 1s 타임아웃 초과로 전체 모델 블로킹)
@@ -63,6 +64,10 @@ class WhisperSmallModel:
 
             if providers[0] != "CPUExecutionProvider":
                 kwargs["provider"] = providers[0]
+
+            # encoder/decoder/decoder_with_past 3세션 전부에 스레드·스핀 설정 적용
+            # (미적용 시 세션당 기본 4워커 스핀 — RPi5 CPU 낭비의 최대 단일 소스)
+            kwargs["session_options"] = get_session_opts(int(os.getenv("M4_ORT_THREADS", "2")))
 
             model = ORTModelForSpeechSeq2Seq.from_pretrained(self.model_path, **kwargs)
             self.asr_pipe = pipeline(

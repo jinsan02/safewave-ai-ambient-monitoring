@@ -19,9 +19,17 @@ def get_ort_providers():
 	return ["CPUExecutionProvider"]
 
 
-def get_session_opts() -> ort.SessionOptions:
+def get_session_opts(intra_threads: int | None = None) -> ort.SessionOptions:
 	opts = ort.SessionOptions()
 	opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+	# RPi5 4코어 실측(2026-08-02): 기본 스레드풀(intra=0=코어수)이 idle에도 스핀(busy-wait)해
+	# ai-experts가 CPU 279%를 점유. 스핀 차단(전 세션 공통) + 스레드 제한(모델별 차등)으로 절감.
+	opts.intra_op_num_threads = intra_threads if intra_threads is not None \
+		else int(os.getenv("ORT_INTRA_OP_THREADS", "1"))
+	opts.inter_op_num_threads = int(os.getenv("ORT_INTER_OP_THREADS", "1"))
+	opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+	opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
+	opts.add_session_config_entry("session.inter_op.allow_spinning", "0")
 	# GPU 모드에서 일부 모델의 CPU-only 연산으로 인한 Memcpy 노드 경고를 억제.
 	# 실제 추론은 GPU에서 정상 수행되며 경고는 정보성 메시지.
 	if os.getenv("ORT_USE_GPU", "0") == "1":

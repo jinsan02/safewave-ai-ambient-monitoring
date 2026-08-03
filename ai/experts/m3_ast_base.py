@@ -25,7 +25,8 @@ class EnvSoundAnalysisModel:
             self.session = ort.InferenceSession(
                 self.effective_model_path,
                 providers=get_ort_providers(),
-                sess_options=get_session_opts(),
+                # 이벤트 구동 수백ms급 — 2스레드로 지연 절반화 (스핀 차단이라 idle 비용 0)
+                sess_options=get_session_opts(int(os.getenv("M3_ORT_THREADS", "2"))),
             )
 
     def _preprocess(self, input_data):
