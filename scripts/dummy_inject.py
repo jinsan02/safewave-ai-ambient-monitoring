@@ -17,7 +17,7 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 CSI_HZ = 100
 AUDIO_HZ = 0.5
 RUN_SECONDS = int(os.getenv("INJECT_SECONDS", "60"))
-NODE_IDS = [1]
+NODE_IDS = [1, 2, 3, 4, 5]  # 5노드 라운드로빈 (노드당 20Hz) — M1 고정 슬롯 조립 경로 검증
 
 SAMPLE_RATE = 16000
 AUDIO_BLOCK_SAMPLES = SAMPLE_RATE * 2  # 2초 분량

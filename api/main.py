@@ -36,6 +36,10 @@ class SystemSettings(BaseModel):
     risk_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     active_nodes: list[int] = Field(default=[1, 2, 3, 4, 5, 6])
     ai_enabled: bool = True
+    # 모델별 on/off — m1(낙상)/m2(바이탈)/m3(환경음)/m4(STT)/m5(Qwen)
+    models: dict[str, bool] = Field(
+        default={"m1": True, "m2": True, "m3": True, "m4": True, "m5": True}
+    )
 
 
 class RiskState(BaseModel):
@@ -54,6 +58,7 @@ class UnifiedSnapshot(BaseModel):
     risk_level: str = "normal"
     emergency: bool = False
     ai_enabled: bool = True
+    models: dict[str, Any] = Field(default_factory=dict)
     context_window: dict[str, Any] = Field(default_factory=dict)
     slm_invoked: bool = False
     is_outlier: bool = False
@@ -125,6 +130,7 @@ def _normalize_snapshot(payload: dict, msg_id: str | None = None) -> dict:
     normalized.setdefault("experts", {})
     normalized.setdefault("audio", None)
     normalized.setdefault("ai_enabled", True)
+    normalized.setdefault("models", {})
     normalized.setdefault("context_window", {})
     normalized.setdefault("slm_invoked", False)
     normalized.setdefault("is_outlier", False)

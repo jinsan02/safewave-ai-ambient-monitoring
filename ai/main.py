@@ -41,7 +41,7 @@ M4_AUDIO_WINDOW_MS = int(os.getenv("M4_AUDIO_WINDOW_MS", "5000"))
 SLM_MIN_INTERVAL_MS = int(os.getenv("SLM_MIN_INTERVAL_MS", "5000"))
 STREAM_START_ID = os.getenv("CSI_STREAM_START_ID", "0-0")
 M1_CSI_WINDOW_FRAMES = int(os.getenv("M1_CSI_WINDOW_FRAMES", "100"))
-M1_MAX_NODES         = int(os.getenv("M1_MAX_NODES", "3"))   # 현재 모델: 3노드×64=192ch / 5노드 모델 재훈련 후 5로 변경
+M1_MAX_NODES         = int(os.getenv("M1_MAX_NODES", "5"))   # M1 입력 (1, M1_MAX_NODES, 64, 100) — 노드=채널축
 M2_CSI_WINDOW_FRAMES = int(os.getenv("M2_CSI_WINDOW_FRAMES", "1000"))
 # 1000프레임 = 10초 @ 100Hz; FFT bin 폭 0.1 Hz → 호흡 대역(0.1-0.6 Hz) 5 bin
 CSI_BACKLOG_SKIP_STREAK = int(os.getenv("CSI_BACKLOG_SKIP_STREAK", "5"))
@@ -227,15 +227,21 @@ class AIEngine:
         output = self.experts[name].infer(expert_input)
         return name, output, (time.perf_counter() - started) * 1000.0
 
-    def process_experts(self, data, expert_inputs=None):
+    def process_experts(self, data, expert_inputs=None, enabled=None):
         optimized = data
         results = {}
         latency_ms: dict[str, float] = {}
 
+        # enabled: {expert_name: bool} — off인 전문가는 추론 없이 빈 출력으로 채움 (모델별 토글)
         futures = {
             name: self._executor.submit(self._run_expert, name, optimized, expert_inputs)
             for name in self.experts
+            if enabled is None or enabled.get(name, True)
         }
+        for name in self.experts:
+            if name not in futures:
+                results[name] = self._empty_output(name)
+                latency_ms[name] = 0.0
         # M3(AST): RPi5 CPU ~3-5s 실측 → 5s 허용
         # M4(Whisper): encoder ~4-6s + decoder/token ~1s; 짧은 응답(5토큰) ~9s → 15s 허용
         _timeouts = {name: max(0.1, EXPERT_INFER_TIMEOUT_MS / 1000.0) for name in futures}
@@ -279,7 +285,18 @@ def _load_settings(r) -> dict:
             return json.loads(raw.decode())
     except Exception:
         pass
-    return {"risk_threshold": 0.6, "active_nodes": [1, 2, 3, 4, 5, 6], "ai_enabled": True}
+    return {"risk_threshold": 0.6, "active_nodes": [1, 2, 3, 4, 5, 6], "ai_enabled": True,
+            "models": {"m1": True, "m2": True, "m3": True, "m4": True, "m5": True}}
+
+
+# settings["models"] 키(mN) ↔ expert 이름 매핑
+_MODEL_EXPERT_KEYS = {"m1": "fall", "m2": "vital", "m3": "env_sound", "m4": "speech_ko"}
+
+
+def _enabled_experts(settings: dict) -> dict:
+    """settings.models → {expert_name: bool} (미지정 모델은 on)."""
+    models = settings.get("models") or {}
+    return {expert: bool(models.get(mkey, True)) for mkey, expert in _MODEL_EXPERT_KEYS.items()}
 
 
 _settings_cache: dict = {}
@@ -459,8 +476,11 @@ def _audio_worker_loop(r, ai_engine) -> None:
                         audio_in["waveform"] = np.frombuffer(raw_wav, dtype=np.float32)
                     audio_in["ts_ms"] = ts_ms
 
+                    # 모델별 토글: off인 모델은 빈 출력으로 대체하되 XADD는 계속
+                    # (스트림에 안 쓰면 CSI 루프가 과거 결과를 계속 병합하는 잔류 문제 방지)
+                    _enabled = _enabled_experts(_load_cached_settings(r))
                     m3_result, m4_result = {}, {}
-                    if m3:
+                    if m3 and _enabled.get("env_sound", True):
                         try:
                             # M3._preprocess는 numpy array를 기대함 — dict에서 waveform 직접 추출
                             wav = audio_in.get("waveform")
@@ -468,11 +488,15 @@ def _audio_worker_loop(r, ai_engine) -> None:
                             m3_result = m3.infer(m3_wav) or {}
                         except Exception as exc:
                             _log(logging.WARNING, "audio_m3_failed", error=str(exc))
-                    if m4:
+                    elif m3:
+                        m3_result = ai_engine._empty_output("env_sound")
+                    if m4 and _enabled.get("speech_ko", True):
                         try:
                             m4_result = m4.infer(audio_in) or {}
                         except Exception as exc:
                             _log(logging.WARNING, "audio_m4_failed", error=str(exc))
+                    elif m4:
+                        m4_result = ai_engine._empty_output("speech_ko")
 
                     payload = {
                         "ts_ms":       ts_ms,
@@ -574,6 +598,7 @@ def _build_snapshot(ts_ms: int, node_id: int, result: dict, audio_result: dict |
         "risk_level": risk_level,
         "emergency": emergency,
         "ai_enabled": ai_enabled,
+        "models": result.get("models", {}),
         "context_window": context_window,
         "slm_invoked": bool(result.get("slm_invoked", False)),
         "slm_needed": bool(result.get("slm_needed", False)),
@@ -698,6 +723,8 @@ if __name__ == "__main__":
             active_nodes = set(settings.get("active_nodes", [1, 2, 3, 4, 5, 6]))
             threshold = float(settings.get("risk_threshold", 0.6))
             ai_enabled = bool(settings.get("ai_enabled", True))
+            models_cfg = settings.get("models") or {}
+            enabled_experts = _enabled_experts(settings)
 
             entries = r.xread({"csi:raw": last_id}, count=10, block=1000)
             if not entries:
@@ -727,6 +754,7 @@ if __name__ == "__main__":
                             "risk_score": 0.0,
                             "emergency": False,
                             "experts": {},
+                            "models": models_cfg,
                         }
                         snapshot = _build_snapshot(ts_ms, node_id, result, audio_result, context_window, False)
                         _write_snapshot(r, snapshot)
@@ -764,18 +792,16 @@ if __name__ == "__main__":
                     # M1 슬라이딩 버퍼: 노드별 block_raw (64ch) × 100frame
                     _node_raw_buf.setdefault(node_id, deque(maxlen=M1_CSI_WINDOW_FRAMES)).append(raw_data)
 
-                    # M1 입력 텐서: 활성 노드를 node_id 오름차순으로 M1_MAX_NODES개까지 쌓음
-                    # 연결된 노드 < M1_MAX_NODES 이면 부족분을 0 패딩 — 5노드 모델로 교체 시 M1_MAX_NODES=5로만 변경
-                    _m1_frames = []
-                    for _n in sorted(n for n in active_nodes if n in _node_raw_buf)[:M1_MAX_NODES]:
-                        _buf = _node_raw_buf[_n]
-                        if len(_buf) == M1_CSI_WINDOW_FRAMES:
-                            _m1_frames.append(np.stack(list(_buf), axis=0).T.astype(np.float32))  # (64,100)
-                        else:
-                            _m1_frames.append(np.zeros((64, M1_CSI_WINDOW_FRAMES), dtype=np.float32))
-                    while len(_m1_frames) < M1_MAX_NODES:
-                        _m1_frames.append(np.zeros((64, M1_CSI_WINDOW_FRAMES), dtype=np.float32))
-                    m1_input = np.concatenate(_m1_frames, axis=0)  # (M1_MAX_NODES*64, 100)
+                    # M1 입력 텐서 (1, M1_MAX_NODES, 64, 100) — 노드=채널축.
+                    # node_id N → 채널 슬롯 N-1 고정 매핑: 노드가 죽고 살아나도 채널 의미가
+                    # shift되지 않는다. 미연결/버퍼미충족 노드와 범위 밖(node_id > M1_MAX_NODES)은 제로패딩/제외.
+                    _slots = [np.zeros((64, M1_CSI_WINDOW_FRAMES), dtype=np.float32)
+                              for _ in range(M1_MAX_NODES)]
+                    for _n in active_nodes:
+                        if 1 <= _n <= M1_MAX_NODES and _n in _node_raw_buf \
+                                and len(_node_raw_buf[_n]) == M1_CSI_WINDOW_FRAMES:
+                            _slots[_n - 1] = np.stack(list(_node_raw_buf[_n]), axis=0).T.astype(np.float32)  # (64,100)
+                    m1_input = np.stack(_slots, axis=0)[None, ...]  # (1, M1_MAX_NODES, 64, 100) — 4D라 _preprocess 통과
 
                     context_window = _load_cached_context_window(r, ts_ms)
 
@@ -784,6 +810,7 @@ if __name__ == "__main__":
                     expert_results, expert_latency_ms = ai_engine.process_experts(
                         raw_data,
                         expert_inputs=expert_inputs,
+                        enabled=enabled_experts,
                     )
 
                     # audio:result 최신 1건 읽어 expert_results에 병합
@@ -815,7 +842,8 @@ if __name__ == "__main__":
 
                     time_series = _load_cached_time_series(r, ts_ms)
                     emg_score, emg_breakdown = compute_emergency_score(expert_results, time_series=time_series)
-                    invoke_slm = emg_score >= threshold
+                    m5_enabled = bool(models_cfg.get("m5", True))
+                    invoke_slm = m5_enabled and emg_score >= threshold
                     now_ms = int(time.time() * 1000)
                     if invoke_slm and (now_ms - last_slm_invoked_at_ms) < SLM_MIN_INTERVAL_MS:
                         invoke_slm = False
@@ -823,6 +851,7 @@ if __name__ == "__main__":
                         last_slm_invoked_at_ms = now_ms
 
                     skip_reason = None if invoke_slm else (
+                        "m5_disabled" if not m5_enabled else
                         "below_threshold" if emg_score < threshold else "cooldown"
                     )
                     result = {
@@ -836,6 +865,7 @@ if __name__ == "__main__":
                         "slm_needed":          invoke_slm,  # ai-qwen 트리거 신호
                         "slm_skip_reason":     skip_reason,
                         "emergency_breakdown": emg_breakdown,
+                        "models":              models_cfg,  # 모델별 on/off 상태 (UI 동기화)
                     }
 
                     result["expert_latency_ms"] = expert_latency_ms

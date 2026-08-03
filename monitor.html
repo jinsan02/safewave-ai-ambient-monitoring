@@ -35,6 +35,13 @@
     .mic-btn { background:#2e3550; color:#fff; border:0; border-radius:8px; padding:8px 12px; cursor:pointer; }
     .mic-btn:disabled { opacity:0.5; cursor:not-allowed; }
     .mic-hint { font-size:12px; color:#9aa3b2; margin-top:8px; }
+    .model-toggle-panel { background:#1e2130; border-radius:12px; padding:14px; margin-bottom:14px; }
+    .model-toggle-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .model-toggle { display:flex; align-items:center; gap:6px; background:#252838; border:1px solid #30354a;
+                    border-radius:8px; padding:8px 12px; cursor:pointer; user-select:none; font-size:13px; color:#e0e0e0; }
+    .model-toggle input { accent-color:#69f0ae; cursor:pointer; }
+    .model-toggle.off { opacity:0.5; border-color:#5a3030; }
+    .model-dim { opacity:0.35; }
     .chart-panel { background: #1e2130; border-radius: 12px; padding: 14px; margin-bottom: 14px; overflow: hidden; flex-shrink: 0; }
     .chart-title { color:#9aa3b2; font-size:12px; margin-bottom:8px; }
     .chart-wrap { position: relative; height: 220px; }
@@ -75,6 +82,18 @@
       <span id="mic-state">대기</span>
     </div>
     <div class="mic-hint">마이크 입력을 API로 보내 m3/m4를 즉시 테스트합니다. (자동으로 AI 트리거 전송)</div>
+  </div>
+
+  <div class="model-toggle-panel" id="model-toggle-panel">
+    <div class="model-toggle-row">
+      <label class="model-toggle" id="tgl-m1"><input type="checkbox" data-model="m1" checked />M1 낙상</label>
+      <label class="model-toggle" id="tgl-m2"><input type="checkbox" data-model="m2" checked />M2 바이탈</label>
+      <label class="model-toggle" id="tgl-m3"><input type="checkbox" data-model="m3" checked />M3 환경음</label>
+      <label class="model-toggle" id="tgl-m4"><input type="checkbox" data-model="m4" checked />M4 STT</label>
+      <label class="model-toggle" id="tgl-m5"><input type="checkbox" data-model="m5" checked />M5 Qwen</label>
+      <span id="model-toggle-state" style="font-size:12px;color:#9aa3b2;"></span>
+    </div>
+    <div class="mic-hint">모델별 on/off — 끄면 해당 전문가 추론을 건너뛰고 빈 결과로 대체합니다. (M5 off = Qwen 호출 차단)</div>
   </div>
 
   <div class="chart-panel" id="chart-panel">
@@ -185,6 +204,69 @@
     const SPEECH_ONLY = detectSpeechOnlyMode();
     let ws;
     let mediaStream = null;
+
+    // ── 모델별 on/off 토글 ─────────────────────────────────────────
+    // POST /settings는 full-replace라 반드시 GET→merge→POST로 다른 필드를 보존한다.
+    const MODEL_CARD_IDS = {
+      m1: ['card-fall', 'bk-fall'],
+      m2: ['card-vital', 'bk-vital'],
+      m3: ['card-activity', 'bk-sound'],
+      m4: ['card-occ', 'bk-speech'],
+      m5: ['reason-banner'],
+    };
+
+    function renderModelToggles(models) {
+      for (const [mkey, ids] of Object.entries(MODEL_CARD_IDS)) {
+        const on = models[mkey] !== false;   // 미지정은 on 취급
+        const cb = document.querySelector(`#tgl-${mkey} input`);
+        if (cb && cb !== document.activeElement) cb.checked = on;
+        document.getElementById(`tgl-${mkey}`)?.classList.toggle('off', !on);
+        for (const id of ids) document.getElementById(id)?.classList.toggle('model-dim', !on);
+      }
+    }
+
+    async function loadModelToggles() {
+      try {
+        const res = await fetch(API + '/settings');
+        const s = await res.json();
+        renderModelToggles(s.models || {});
+      } catch (e) { /* API 미기동 시 무시 */ }
+    }
+
+    // 연속 토글 시 GET→merge→POST가 겹치면 앞선 변경이 롤백될 수 있어 직렬화
+    let _togglePending = Promise.resolve();
+    function onModelToggle(mkey, on) {
+      _togglePending = _togglePending.then(() => _doModelToggle(mkey, on));
+      return _togglePending;
+    }
+
+    async function _doModelToggle(mkey, on) {
+      const stateEl = document.getElementById('model-toggle-state');
+      try {
+        stateEl.textContent = '저장 중...';
+        const res = await fetch(API + '/settings');
+        const s = await res.json();
+        s.models = { m1: true, m2: true, m3: true, m4: true, m5: true, ...(s.models || {}) };
+        s.models[mkey] = on;
+        const post = await fetch(API + '/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(s),
+        });
+        if (!post.ok) throw new Error(`HTTP ${post.status}`);
+        renderModelToggles(s.models);
+        stateEl.textContent = `${mkey.toUpperCase()} ${on ? 'ON' : 'OFF'}`;
+        setTimeout(() => { if (stateEl.textContent.startsWith(mkey.toUpperCase())) stateEl.textContent = ''; }, 3000);
+      } catch (e) {
+        stateEl.textContent = '저장 실패: ' + e.message;
+        loadModelToggles();   // 실패 시 서버 상태로 되돌림
+      }
+    }
+
+    document.querySelectorAll('.model-toggle input').forEach(cb => {
+      cb.addEventListener('change', () => onModelToggle(cb.dataset.model, cb.checked));
+    });
+    loadModelToggles();
     let audioContext = null;
     let sourceNode = null;
     let processorNode = null;
@@ -482,6 +564,9 @@
       const ex    = data.experts || {};
       const slmInvoked = Boolean(data.slm_invoked);
       const reasonText = (data.qwen_reason || '').trim();
+
+      // 스냅샷에 실린 모델 on/off 상태로 토글 표시 재동기화 (서버가 진실의 원천)
+      if (data.models && Object.keys(data.models).length) renderModelToggles(data.models);
 
       // 위험도 카드
       document.getElementById('risk-score').textContent = score;
