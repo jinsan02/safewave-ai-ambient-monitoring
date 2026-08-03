@@ -32,7 +32,10 @@ EXPERT_LATEST_KEYS = {
     "env_sound": "ai:m3:latest",
     "speech_ko": "ai:m4:latest",
 }
-RESULT_STREAM_MAXLEN = int(os.getenv("RESULT_STREAM_MAXLEN", "18_000"))  # 5노드 × 100Hz × 36s 롤링; Qwen·API 실시간 소비
+RESULT_STREAM_MAXLEN = int(os.getenv("RESULT_STREAM_MAXLEN", "18_000"))  # 다운샘플 후 5노드 ×10Hz 기준 ~6분 롤링
+# ai:result 조건부 다운샘플: 기록 기본 주기(노드별). 계산·게이트는 100Hz 유지, 기록만 성기게.
+# risk_level 변화 / slm_needed / 새 오디오 병합 시에는 주기와 무관하게 즉시 기록.
+SNAPSHOT_MIN_INTERVAL_MS = int(os.getenv("SNAPSHOT_MIN_INTERVAL_MS", "100"))
 CONTEXT_WINDOW_MINUTES = int(os.getenv("CONTEXT_WINDOW_MINUTES", "10"))
 MINUTE_AGG_TTL_SECONDS = int(os.getenv("MINUTE_AGG_TTL_SECONDS", "3600"))
 EXPERT_LATEST_TTL_SECONDS = int(os.getenv("EXPERT_LATEST_TTL_SECONDS", "3600"))
@@ -717,6 +720,10 @@ if __name__ == "__main__":
     _node_resp_buf:   dict[int, deque] = {}
     _node_heart_buf:  dict[int, deque] = {}
     _node_prev_ts_ms: dict[int, int]   = {}
+    # ai:result 조건부 다운샘플 상태 (노드별 마지막 기록 시각/레벨/오디오 ts)
+    _node_last_write_ms: dict[int, int] = {}
+    _node_last_level:    dict[int, str] = {}
+    _node_last_audio_ts: dict[int, int] = {}
     while True:
         try:
             settings = _load_cached_settings(r)
@@ -756,8 +763,12 @@ if __name__ == "__main__":
                             "experts": {},
                             "models": models_cfg,
                         }
-                        snapshot = _build_snapshot(ts_ms, node_id, result, audio_result, context_window, False)
-                        _write_snapshot(r, snapshot)
+                        # ai 비활성 더미 스냅샷도 동일 다운샘플 (기본 10Hz)
+                        if ts_ms - _node_last_write_ms.get(node_id, 0) >= SNAPSHOT_MIN_INTERVAL_MS:
+                            _node_last_write_ms[node_id] = ts_ms
+                            _node_last_level[node_id] = "normal"
+                            snapshot = _build_snapshot(ts_ms, node_id, result, audio_result, context_window, False)
+                            _write_snapshot(r, snapshot)
                         last_id = msg_id
                         continue
 
@@ -872,6 +883,27 @@ if __name__ == "__main__":
                     result = _apply_threshold(result, threshold)
 
                     snapshot = _build_snapshot(ts_ms, node_id, result, audio_result, context_window, True)
+
+                    # ── ai:result 조건부 다운샘플 ──────────────────────────────
+                    # 탐지(emergency_score·게이트)는 100Hz 그대로, 기록만 기본 10Hz.
+                    # 즉시 기록 조건: ① risk_level 변화 ② slm_needed(ai-qwen 트리거)
+                    # ③ 새 오디오 결과 병합(Phase 2 transcript 지연 0 보장)
+                    _lvl = snapshot.get("risk_level")
+                    _audio_ts = (audio_from_stream or {}).get("ts_ms")
+                    _write_due = (
+                        ts_ms - _node_last_write_ms.get(node_id, 0) >= SNAPSHOT_MIN_INTERVAL_MS
+                        or _lvl != _node_last_level.get(node_id)
+                        or invoke_slm
+                        or (_audio_ts is not None and _audio_ts != _node_last_audio_ts.get(node_id))
+                    )
+                    if not _write_due:
+                        last_id = msg_id
+                        continue
+                    _node_last_write_ms[node_id] = ts_ms
+                    _node_last_level[node_id] = _lvl
+                    if _audio_ts is not None:
+                        _node_last_audio_ts[node_id] = _audio_ts
+
                     _write_snapshot(r, snapshot)
                     _publish_result_mqtt(mqtt_client, snapshot)
                     _log(
