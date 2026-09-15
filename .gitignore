@@ -17,6 +17,9 @@ __pycache__/
 *.log
 
 docs/
+!docs/
+docs/*
+!docs/validation_status.md
 data/
 reports/
 
