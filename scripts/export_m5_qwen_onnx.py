@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-M5 Qwen-0.5B-Instruct ONNX 변환 스크립트
+M5 legacy Qwen-0.5B-Instruct ONNX 변환 스크립트
 
 공식 출처: Hugging Face - Qwen/Qwen2-0.5B-Instruct
 변환 방식: Hugging Face Optimum (optimum-cli)
@@ -11,6 +11,9 @@ M5 Qwen-0.5B-Instruct ONNX 변환 스크립트
 2. onnx >= 1.15.0
 3. onnxruntime >= 1.20.1
 4. optimum[onnxruntime] >= 1.17.0
+
+주의: 현재 기본 M5는 Qwen2.5-1.5B GGUF Q5_K_M이다. 이 스크립트는 레거시
+0.5B ONNX 롤백 아티팩트만 만들며 현재 기본 배포 후보를 생성하거나 검증하지 않는다.
 """
 
 import os
@@ -191,7 +194,8 @@ def verify_qwen_onnx(output_dir, tokenizer, config):
     test_qwen_inference(output_dir, tokenizer, config)
     
     print("\n" + "="*80)
-    print("✓ M5 Qwen-0.5B-Instruct model is READY for deployment!")
+    print("✓ Legacy M5 Qwen-0.5B ONNX structure/inference check completed")
+    print("⚠ This does not validate the default 1.5B GGUF backend or RPi5 deployment")
     print("="*80)
 
 def test_qwen_inference(output_dir, tokenizer, config):

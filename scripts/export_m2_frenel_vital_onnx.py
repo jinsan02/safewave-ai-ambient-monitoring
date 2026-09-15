@@ -1,10 +1,12 @@
 """
-M2: ViFi WiFi-based Vital Signs (Heart Rate, Breathing Rate) ONNX Export Script
+M2: SafeWave vital-sign interface stub ONNX export script
 
 입력: 전처리된 Fresnel 신호 특징 [batch, 256] (FFT amplitude + phase)
 출력: [호흡수(RR), 심박수(HR)] [batch, 2]
 
-ViFi (WiFi Sensing for Vital Signs) 모델을 ONNX로 변환합니다.
+현재 스크립트는 학습 체크포인트를 불러오지 않고 단순화 네트워크를 무작위 초기화해
+ONNX 입출력 계약만 확인합니다. 생성 파일을 학습된 ViFi 모델이나 생체신호 정확도
+검증 결과로 사용하면 안 됩니다.
 참고: https://github.com/BorisNes/ViFi
 """
 
@@ -22,7 +24,7 @@ DEFAULT_OUTPUT_DIR = Path("./volumes/models/m2_frenel_vital_onnx")
 
 class ViFiVitalModel(nn.Module):
     """
-    ViFi: WiFi CSI 기반 생체신호 추정 모델
+    ViFi에서 영감을 얻은 단순화 인터페이스 스텁 (학습 가중치 없음)
     
     입력: [batch, 256] (Fresnel 프레임 특징: amplitude + phase)
     출력: [batch, 2] (호흡수, 심박수)
@@ -91,7 +93,7 @@ def export_vifi_to_onnx(output_dir: Path, opset: int = 17) -> None:
     # 더미 입력: [1, 256] (Fresnel 신호 특징)
     dummy_input = torch.randn(1, 256, dtype=torch.float32)
 
-    print(f"[M2] Exporting ViFi Vital Signs model...")
+    print("[M2] Exporting untrained SafeWave vital-interface stub...")
     torch.onnx.export(
         model,
         args=(dummy_input,),
@@ -130,11 +132,12 @@ def verify_onnx(output_dir: Path) -> None:
     rr, hr = result[0][0]
     print(f"[M2] Output values: RR={rr:.1f} bpm, HR={hr:.1f} bpm")
     print(f"[M2] Expected ranges: RR (6-40 bpm), HR (40-200 bpm)")
-    print(f"[M2] ✓ Verification passed - ViFi Vital Signs model is READY for deployment")
+    print("[M2] ✓ ONNX structure/load verification passed")
+    print("[M2] ⚠ Untrained random weights: vital-sign error and deployment readiness are NOT verified")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Export ViFi to ONNX (FP32)")
+    parser = argparse.ArgumentParser(description="Export untrained M2 interface stub to ONNX (FP32)")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
     parser.add_argument("--opset", type=int, default=17)
     args = parser.parse_args()

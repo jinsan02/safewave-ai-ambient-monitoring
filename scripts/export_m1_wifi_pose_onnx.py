@@ -1,11 +1,13 @@
 """
-M1: DT-Pose WiFi Pose Estimation ONNX Export Script
+M1: SafeWave WiFi-pose interface stub ONNX export script
 
 입력: CSI 데이터 [batch, node, subcarrier, time] = [1, 5, 64, 100]
   — 노드=채널축. node_id N은 채널 N-1 고정 슬롯, 미연결 노드는 제로패딩 (ai/main.py 조립부와 일치)
 출력: 17개 관절 좌표 [batch, 17, 2] = [1, 17, 2]
 
-DT-Pose (Dual-Transformer Pose) 모델을 ONNX로 변환합니다.
+현재 스크립트는 학습 체크포인트를 불러오지 않고 단순화 네트워크를 무작위 초기화해
+ONNX 입출력 계약만 확인합니다. 생성 파일을 학습된 DT-Pose 또는 낙상 검증 모델로
+사용하면 안 됩니다.
 참고: https://github.com/cseeyangchen/DT-Pose
 """
 
@@ -23,7 +25,7 @@ DEFAULT_OUTPUT_DIR = Path("./volumes/models/m1_wifi_pose_onnx")
 
 class DTPoseModel(nn.Module):
     """
-    DT-Pose: Dual-Transformer 기반 WiFi 포즈 추정 모델 (단순화)
+    DT-Pose에서 영감을 얻은 단순화 인터페이스 스텁 (학습 가중치 없음)
 
     입력: [batch, num_nodes, 64, 100] (batch, node, subcarrier, time)
       — 노드를 Conv 채널로 분리해 3×3 conv가 노드 경계를 섞지 않음
@@ -74,7 +76,7 @@ def export_dt_pose_to_onnx(output_dir: Path, opset: int = 17, num_nodes: int = 5
     # 더미 입력: [1, num_nodes, 64, 100] (CSI 데이터 형식)
     dummy_input = torch.randn(1, num_nodes, 64, 100, dtype=torch.float32)
 
-    print(f"[M1] Exporting DT-Pose (Dual-Transformer) model...")
+    print("[M1] Exporting untrained SafeWave pose-interface stub...")
     torch.onnx.export(
         model,
         args=(dummy_input,),
@@ -111,11 +113,12 @@ def verify_onnx(output_dir: Path, num_nodes: int = 5) -> None:
     print(f"[M1] Input shape: {test_input.shape}")
     print(f"[M1] Output shape: {result[0].shape}")
     print(f"[M1] Expected output shape: (1, 17, 2) - 17 keypoints with x,y coordinates")
-    print(f"[M1] ✓ Verification passed - DT-Pose model is READY for deployment")
+    print("[M1] ✓ ONNX structure/load verification passed")
+    print("[M1] ⚠ Untrained random weights: model quality and deployment readiness are NOT verified")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Export DT-Pose to ONNX (FP32)")
+    parser = argparse.ArgumentParser(description="Export untrained M1 interface stub to ONNX (FP32)")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
     parser.add_argument("--opset", type=int, default=17)
     parser.add_argument("--nodes", type=int, default=5, help="노드 수 (입력 채널 축)")
