@@ -245,8 +245,8 @@ class AIEngine:
             if name not in futures:
                 results[name] = self._empty_output(name)
                 latency_ms[name] = 0.0
-        # M3(AST): RPi5 CPU ~3-5s 실측 → 5s 허용
-        # M4(Whisper): encoder ~4-6s + decoder/token ~1s; 짧은 응답(5토큰) ~9s → 15s 허용
+        # M3/M4 timeout은 RPi5 목표 환경을 위한 운영 예산이다.
+        # 현재 Git에는 이 값을 뒷받침하는 RPi5 raw benchmark가 없으므로 실측치로 인용하지 않는다.
         _timeouts = {name: max(0.1, EXPERT_INFER_TIMEOUT_MS / 1000.0) for name in futures}
         _timeouts["env_sound"]  = float(os.getenv("M3_INFER_TIMEOUT_SEC", "5"))
         _timeouts["speech_ko"]  = float(os.getenv("M4_INFER_TIMEOUT_SEC", "15"))

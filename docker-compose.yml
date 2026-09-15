@@ -76,7 +76,7 @@ services:
       - MQTT_ENABLED=1
       - EXPERT_INFER_TIMEOUT_MS=1000
       - ORT_USE_GPU=${ORT_USE_GPU:-0}
-      # ORT 스레드/스핀 튜닝 — RPi5 4코어 idle CPU 279%→75% (스핀 차단 + 모델별 차등)
+      # ORT 스레드/스핀 튜닝. RPi5의 post-change CPU 절감값은 재측정 필요.
       - ORT_INTRA_OP_THREADS=${ORT_INTRA_OP_THREADS:-1}
       - M3_ORT_THREADS=${M3_ORT_THREADS:-2}
       - M4_ORT_THREADS=${M4_ORT_THREADS:-2}
@@ -102,7 +102,8 @@ services:
       - SLM_BACKEND=${SLM_BACKEND:-gguf}
       - SLM_MODEL=${SLM_MODEL:-qwen_15b_gguf_q5}
       - SLM_TOKENIZER=${SLM_TOKENIZER:-qwen_15b}
-      # RPi5 4코어 중 3개만 할당 — 응급 시 M4 STT·CSI 루프용 1코어 상시 확보
+      # RPi5 자원 분리 설계값: Qwen 3스레드, 나머지 루프용 1코어 여유를 목표로 함.
+      # 실제 지연·처리량·자원 점유는 docs/benchmark_template.md로 측정해야 함.
       - QWEN_GGUF_THREADS=${QWEN_GGUF_THREADS:-3}
     volumes:
       - ./volumes/models:/app/models
