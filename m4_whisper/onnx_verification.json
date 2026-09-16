@@ -1,0 +1,821 @@
+{
+  "purpose": "integration smoke only; not corpus CER/WER",
+  "seed": 42,
+  "selection": "first two manifest rows and first non-direct-recording row",
+  "manifest_sha256": "524d83482f51492c683b4aa3d07b59114b9bd0a188da2bdd2162de9b891ab238",
+  "calls": [
+    {
+      "sample_id": "new_eval_0007",
+      "reference": "넘어졌어요",
+      "reference_status": "existing manifest; not newly listened to",
+      "audio_sha256": "c5194963e003160822be01772dbe92b3c76d72603b2ccc29da66e529b9de98e2",
+      "result": {
+        "schema_version": 1,
+        "component": "M4_speech",
+        "model": "fresh_zeroth_finetuned_20260915_onnx_int8",
+        "engine": "ONNX Runtime / Optimum",
+        "device": "cpu",
+        "quantization": "dynamic_int8_matmul",
+        "language": "ko",
+        "status": "ok",
+        "window_id": "new_eval_0007",
+        "window_start_seconds": 0.0,
+        "window_end_seconds": 3.9253125,
+        "sample_rate_hz": 16000,
+        "text": "나마졌어요",
+        "transcript_ko": "나마졌어요",
+        "timestamps": null,
+        "confidence": null,
+        "avg_logprob": -0.23693963885307312,
+        "no_speech_prob": 4.785936835105531e-05,
+        "raw_selected_candidate": {
+          "candidate_id": "fallback-0:0",
+          "text": "나마졌어요",
+          "token_ids": [
+            48768,
+            8667,
+            25001,
+            4213,
+            50257
+          ],
+          "avg_logprob": -0.23693963885307312,
+          "no_speech_prob": 4.785936835105531e-05,
+          "temperature": 0.0,
+          "compression_ratio": 0.625,
+          "compression_pass": true,
+          "logprob_pass": true,
+          "probable_silence": false,
+          "empty": false,
+          "generation_cap_reached": false,
+          "repetition": {
+            "input_text": "나마졌어요",
+            "generated_token_ids": [
+              48768,
+              8667,
+              25001,
+              4213,
+              50257
+            ],
+            "speech_token_ids": [
+              48768,
+              8667,
+              25001,
+              4213
+            ],
+            "suspected": false,
+            "best": null,
+            "regions": [],
+            "settings": {
+              "min_repetitions": 3,
+              "single_item_min_repetitions": 4,
+              "min_repeated_fraction": 0.6,
+              "trailing_min_repetitions": 4,
+              "token_min_repetitions": 4,
+              "max_trailing_gap_items": 1,
+              "max_text_unit_chars": 12,
+              "max_token_unit_length": 8
+            }
+          },
+          "eos_observed": true,
+          "termination": "eos",
+          "no_repeat_ngram_size": 0,
+          "num_beams": 5,
+          "num_return_sequences": 1
+        },
+        "skipped_as_no_speech": false,
+        "guard": {
+          "mode": "selection_regenerate",
+          "additional_calls": 0,
+          "regeneration_success": false,
+          "rescued_low_logprob": false,
+          "selection_reason": "stock_candidate_not_repetitive",
+          "unresolved_repetition": false,
+          "selected_candidate_id": "fallback-0:0",
+          "generation_calls": 1,
+          "calls_after_first_stock_stop": 0
+        },
+        "attempts": [
+          {
+            "kind": "fallback",
+            "temperature": 0.0,
+            "candidates": [
+              {
+                "candidate_id": "fallback-0:0",
+                "text": "나마졌어요",
+                "token_ids": [
+                  48768,
+                  8667,
+                  25001,
+                  4213,
+                  50257
+                ],
+                "avg_logprob": -0.23693963885307312,
+                "no_speech_prob": 4.785936835105531e-05,
+                "temperature": 0.0,
+                "compression_ratio": 0.625,
+                "compression_pass": true,
+                "logprob_pass": true,
+                "probable_silence": false,
+                "empty": false,
+                "generation_cap_reached": false,
+                "repetition": {
+                  "input_text": "나마졌어요",
+                  "generated_token_ids": [
+                    48768,
+                    8667,
+                    25001,
+                    4213,
+                    50257
+                  ],
+                  "speech_token_ids": [
+                    48768,
+                    8667,
+                    25001,
+                    4213
+                  ],
+                  "suspected": false,
+                  "best": null,
+                  "regions": [],
+                  "settings": {
+                    "min_repetitions": 3,
+                    "single_item_min_repetitions": 4,
+                    "min_repeated_fraction": 0.6,
+                    "trailing_min_repetitions": 4,
+                    "token_min_repetitions": 4,
+                    "max_trailing_gap_items": 1,
+                    "max_text_unit_chars": 12,
+                    "max_token_unit_length": 8
+                  }
+                },
+                "eos_observed": true,
+                "termination": "eos",
+                "no_repeat_ngram_size": 0,
+                "num_beams": 5,
+                "num_return_sequences": 1
+              }
+            ],
+            "best_id": "fallback-0:0"
+          }
+        ],
+        "elapsed_seconds": 1.3860142000048654,
+        "ct2_benchmark_applies": false
+      }
+    },
+    {
+      "sample_id": "new_eval_0008",
+      "reference": "넘어졌어요",
+      "reference_status": "existing manifest; not newly listened to",
+      "audio_sha256": "7d7e042c0400503f6667d97038101fb7af241dcffa252f792e000be354dc2a98",
+      "result": {
+        "schema_version": 1,
+        "component": "M4_speech",
+        "model": "fresh_zeroth_finetuned_20260915_onnx_int8",
+        "engine": "ONNX Runtime / Optimum",
+        "device": "cpu",
+        "quantization": "dynamic_int8_matmul",
+        "language": "ko",
+        "status": "ok",
+        "window_id": "new_eval_0008",
+        "window_start_seconds": 0.0,
+        "window_end_seconds": 3.1573125,
+        "sample_rate_hz": 16000,
+        "text": "넘어졌어요",
+        "transcript_ko": "넘어졌어요",
+        "timestamps": null,
+        "confidence": null,
+        "avg_logprob": -0.0015125907957553864,
+        "no_speech_prob": 9.122014307649806e-05,
+        "raw_selected_candidate": {
+          "candidate_id": "fallback-0:0",
+          "text": "넘어졌어요",
+          "token_ids": [
+            33386,
+            246,
+            2782,
+            5475,
+            4213,
+            50257
+          ],
+          "avg_logprob": -0.0015125907957553864,
+          "no_speech_prob": 9.122014307649806e-05,
+          "temperature": 0.0,
+          "compression_ratio": 0.7142857142857143,
+          "compression_pass": true,
+          "logprob_pass": true,
+          "probable_silence": false,
+          "empty": false,
+          "generation_cap_reached": false,
+          "repetition": {
+            "input_text": "넘어졌어요",
+            "generated_token_ids": [
+              33386,
+              246,
+              2782,
+              5475,
+              4213,
+              50257
+            ],
+            "speech_token_ids": [
+              33386,
+              246,
+              2782,
+              5475,
+              4213
+            ],
+            "suspected": false,
+            "best": null,
+            "regions": [],
+            "settings": {
+              "min_repetitions": 3,
+              "single_item_min_repetitions": 4,
+              "min_repeated_fraction": 0.6,
+              "trailing_min_repetitions": 4,
+              "token_min_repetitions": 4,
+              "max_trailing_gap_items": 1,
+              "max_text_unit_chars": 12,
+              "max_token_unit_length": 8
+            }
+          },
+          "eos_observed": true,
+          "termination": "eos",
+          "no_repeat_ngram_size": 0,
+          "num_beams": 5,
+          "num_return_sequences": 1
+        },
+        "skipped_as_no_speech": false,
+        "guard": {
+          "mode": "selection_regenerate",
+          "additional_calls": 0,
+          "regeneration_success": false,
+          "rescued_low_logprob": false,
+          "selection_reason": "stock_candidate_not_repetitive",
+          "unresolved_repetition": false,
+          "selected_candidate_id": "fallback-0:0",
+          "generation_calls": 1,
+          "calls_after_first_stock_stop": 0
+        },
+        "attempts": [
+          {
+            "kind": "fallback",
+            "temperature": 0.0,
+            "candidates": [
+              {
+                "candidate_id": "fallback-0:0",
+                "text": "넘어졌어요",
+                "token_ids": [
+                  33386,
+                  246,
+                  2782,
+                  5475,
+                  4213,
+                  50257
+                ],
+                "avg_logprob": -0.0015125907957553864,
+                "no_speech_prob": 9.122014307649806e-05,
+                "temperature": 0.0,
+                "compression_ratio": 0.7142857142857143,
+                "compression_pass": true,
+                "logprob_pass": true,
+                "probable_silence": false,
+                "empty": false,
+                "generation_cap_reached": false,
+                "repetition": {
+                  "input_text": "넘어졌어요",
+                  "generated_token_ids": [
+                    33386,
+                    246,
+                    2782,
+                    5475,
+                    4213,
+                    50257
+                  ],
+                  "speech_token_ids": [
+                    33386,
+                    246,
+                    2782,
+                    5475,
+                    4213
+                  ],
+                  "suspected": false,
+                  "best": null,
+                  "regions": [],
+                  "settings": {
+                    "min_repetitions": 3,
+                    "single_item_min_repetitions": 4,
+                    "min_repeated_fraction": 0.6,
+                    "trailing_min_repetitions": 4,
+                    "token_min_repetitions": 4,
+                    "max_trailing_gap_items": 1,
+                    "max_text_unit_chars": 12,
+                    "max_token_unit_length": 8
+                  }
+                },
+                "eos_observed": true,
+                "termination": "eos",
+                "no_repeat_ngram_size": 0,
+                "num_beams": 5,
+                "num_return_sequences": 1
+              }
+            ],
+            "best_id": "fallback-0:0"
+          }
+        ],
+        "elapsed_seconds": 1.143959499997436,
+        "ct2_benchmark_applies": false
+      }
+    },
+    {
+      "sample_id": "10.낙상_1086758_label",
+      "reference": "헛딛어서 넘어졌어요",
+      "reference_status": "existing manifest; not newly listened to",
+      "audio_sha256": "3bde279f9741629b8bcf5beb498962cacfc8bbcdcee29b3fa826d768436e2b8d",
+      "result": {
+        "schema_version": 1,
+        "component": "M4_speech",
+        "model": "fresh_zeroth_finetuned_20260915_onnx_int8",
+        "engine": "ONNX Runtime / Optimum",
+        "device": "cpu",
+        "quantization": "dynamic_int8_matmul",
+        "language": "ko",
+        "status": "ok",
+        "window_id": "10.낙상_1086758_label",
+        "window_start_seconds": 0.0,
+        "window_end_seconds": 4.028875,
+        "sample_rate_hz": 16000,
+        "text": "헛딛어서 넘어졌어요",
+        "transcript_ko": "헛딛어서 넘어졌어요",
+        "timestamps": null,
+        "confidence": null,
+        "avg_logprob": -0.014822346158325672,
+        "no_speech_prob": 2.56321163760731e-05,
+        "raw_selected_candidate": {
+          "candidate_id": "fallback-0:0",
+          "text": "헛딛어서 넘어졌어요",
+          "token_ids": [
+            16653,
+            249,
+            39147,
+            249,
+            11315,
+            20237,
+            2782,
+            5475,
+            4213,
+            50257
+          ],
+          "avg_logprob": -0.014822346158325672,
+          "no_speech_prob": 2.56321163760731e-05,
+          "temperature": 0.0,
+          "compression_ratio": 0.8484848484848485,
+          "compression_pass": true,
+          "logprob_pass": true,
+          "probable_silence": false,
+          "empty": false,
+          "generation_cap_reached": false,
+          "repetition": {
+            "input_text": "헛딛어서 넘어졌어요",
+            "generated_token_ids": [
+              16653,
+              249,
+              39147,
+              249,
+              11315,
+              20237,
+              2782,
+              5475,
+              4213,
+              50257
+            ],
+            "speech_token_ids": [
+              16653,
+              249,
+              39147,
+              249,
+              11315,
+              20237,
+              2782,
+              5475,
+              4213
+            ],
+            "suspected": false,
+            "best": null,
+            "regions": [],
+            "settings": {
+              "min_repetitions": 3,
+              "single_item_min_repetitions": 4,
+              "min_repeated_fraction": 0.6,
+              "trailing_min_repetitions": 4,
+              "token_min_repetitions": 4,
+              "max_trailing_gap_items": 1,
+              "max_text_unit_chars": 12,
+              "max_token_unit_length": 8
+            }
+          },
+          "eos_observed": true,
+          "termination": "eos",
+          "no_repeat_ngram_size": 0,
+          "num_beams": 5,
+          "num_return_sequences": 1
+        },
+        "skipped_as_no_speech": false,
+        "guard": {
+          "mode": "selection_regenerate",
+          "additional_calls": 0,
+          "regeneration_success": false,
+          "rescued_low_logprob": false,
+          "selection_reason": "stock_candidate_not_repetitive",
+          "unresolved_repetition": false,
+          "selected_candidate_id": "fallback-0:0",
+          "generation_calls": 1,
+          "calls_after_first_stock_stop": 0
+        },
+        "attempts": [
+          {
+            "kind": "fallback",
+            "temperature": 0.0,
+            "candidates": [
+              {
+                "candidate_id": "fallback-0:0",
+                "text": "헛딛어서 넘어졌어요",
+                "token_ids": [
+                  16653,
+                  249,
+                  39147,
+                  249,
+                  11315,
+                  20237,
+                  2782,
+                  5475,
+                  4213,
+                  50257
+                ],
+                "avg_logprob": -0.014822346158325672,
+                "no_speech_prob": 2.56321163760731e-05,
+                "temperature": 0.0,
+                "compression_ratio": 0.8484848484848485,
+                "compression_pass": true,
+                "logprob_pass": true,
+                "probable_silence": false,
+                "empty": false,
+                "generation_cap_reached": false,
+                "repetition": {
+                  "input_text": "헛딛어서 넘어졌어요",
+                  "generated_token_ids": [
+                    16653,
+                    249,
+                    39147,
+                    249,
+                    11315,
+                    20237,
+                    2782,
+                    5475,
+                    4213,
+                    50257
+                  ],
+                  "speech_token_ids": [
+                    16653,
+                    249,
+                    39147,
+                    249,
+                    11315,
+                    20237,
+                    2782,
+                    5475,
+                    4213
+                  ],
+                  "suspected": false,
+                  "best": null,
+                  "regions": [],
+                  "settings": {
+                    "min_repetitions": 3,
+                    "single_item_min_repetitions": 4,
+                    "min_repeated_fraction": 0.6,
+                    "trailing_min_repetitions": 4,
+                    "token_min_repetitions": 4,
+                    "max_trailing_gap_items": 1,
+                    "max_text_unit_chars": 12,
+                    "max_token_unit_length": 8
+                  }
+                },
+                "eos_observed": true,
+                "termination": "eos",
+                "no_repeat_ngram_size": 0,
+                "num_beams": 5,
+                "num_return_sequences": 1
+              }
+            ],
+            "best_id": "fallback-0:0"
+          }
+        ],
+        "elapsed_seconds": 1.349519399998826,
+        "ct2_benchmark_applies": false
+      }
+    }
+  ],
+  "model_graphs": {
+    "encoder_model.onnx": {
+      "sha256": "95ffe24c128ba386179362008598a71c7305fb1bc50d08bb3e47391fcd442278",
+      "bytes": 98486012,
+      "fp32_bytes": 352744378,
+      "int8_initializer_count": 144,
+      "operators": {
+        "Constant": 270,
+        "Conv": 2,
+        "Div": 14,
+        "Erf": 14,
+        "Add": 99,
+        "Mul": 196,
+        "Transpose": 49,
+        "LayerNormalization": 25,
+        "Shape": 24,
+        "DynamicQuantizeLinear": 48,
+        "Gather": 24,
+        "MatMulInteger": 72,
+        "Unsqueeze": 72,
+        "Cast": 72,
+        "Concat": 48,
+        "Reshape": 48,
+        "MatMul": 24,
+        "Softmax": 12
+      }
+    },
+    "decoder_model.onnx": {
+      "sha256": "860d551afd4b78e32df134bedf7f566f96f1a94a77a09f6033222dadbef58a8d",
+      "bytes": 315882994,
+      "fp32_bytes": 773988053,
+      "int8_initializer_count": 242,
+      "operators": {
+        "Constant": 580,
+        "DynamicQuantizeLinear": 74,
+        "Shape": 66,
+        "Mul": 315,
+        "MatMulInteger": 121,
+        "Gather": 66,
+        "Cast": 124,
+        "Unsqueeze": 168,
+        "Concat": 100,
+        "Range": 2,
+        "Add": 157,
+        "Reshape": 98,
+        "ConstantOfShape": 2,
+        "Expand": 2,
+        "Tile": 1,
+        "LayerNormalization": 37,
+        "LessOrEqual": 1,
+        "Equal": 1,
+        "Where": 2,
+        "Transpose": 120,
+        "MatMul": 48,
+        "Slice": 12,
+        "Softmax": 24,
+        "Div": 12,
+        "Erf": 12
+      }
+    },
+    "decoder_with_past_model.onnx": {
+      "sha256": "75fa849c7932687f64e0b786a6db3bb2b81852de28ed890ac3ca4f44ab0546d7",
+      "bytes": 301525748,
+      "fp32_bytes": 717291447,
+      "int8_initializer_count": 194,
+      "operators": {
+        "Constant": 484,
+        "Shape": 67,
+        "Transpose": 96,
+        "Gather": 67,
+        "Unsqueeze": 144,
+        "Add": 147,
+        "Cast": 101,
+        "Concat": 100,
+        "Reshape": 74,
+        "Range": 2,
+        "ConstantOfShape": 2,
+        "Expand": 2,
+        "Tile": 1,
+        "LayerNormalization": 37,
+        "DynamicQuantizeLinear": 73,
+        "Mul": 267,
+        "MatMulInteger": 97,
+        "LessOrEqual": 1,
+        "Equal": 1,
+        "Where": 2,
+        "MatMul": 48,
+        "Slice": 12,
+        "Softmax": 24,
+        "Div": 12,
+        "Erf": 12
+      }
+    }
+  },
+  "versions": {
+    "torch": "2.13.0+cu132",
+    "transformers": "4.57.6",
+    "optimum": "2.1.0",
+    "optimum-onnx": "0.1.0",
+    "onnxruntime": "1.23.2",
+    "numpy": "2.2.6"
+  },
+  "synthetic_silence": {
+    "schema_version": 1,
+    "component": "M4_speech",
+    "model": "fresh_zeroth_finetuned_20260915_onnx_int8",
+    "engine": "ONNX Runtime / Optimum",
+    "device": "cpu",
+    "quantization": "dynamic_int8_matmul",
+    "language": "ko",
+    "status": "ok",
+    "window_id": "synthetic_digital_silence",
+    "window_start_seconds": 0.0,
+    "window_end_seconds": 5.0,
+    "sample_rate_hz": 16000,
+    "text": " MBC 뉴스 이덕영입니다",
+    "transcript_ko": " MBC 뉴스 이덕영입니다",
+    "timestamps": null,
+    "confidence": null,
+    "avg_logprob": -0.6831223368644714,
+    "no_speech_prob": 0.8342019319534302,
+    "raw_selected_candidate": {
+      "candidate_id": "fallback-0:0",
+      "text": " MBC 뉴스 이덕영입니다",
+      "token_ids": [
+        376,
+        7869,
+        45828,
+        2892,
+        235,
+        243,
+        11958,
+        7416,
+        50257
+      ],
+      "avg_logprob": -0.6831223368644714,
+      "no_speech_prob": 0.8342019319534302,
+      "temperature": 0.0,
+      "compression_ratio": 0.7317073170731707,
+      "compression_pass": true,
+      "logprob_pass": true,
+      "probable_silence": false,
+      "empty": false,
+      "generation_cap_reached": false,
+      "repetition": {
+        "input_text": " MBC 뉴스 이덕영입니다",
+        "generated_token_ids": [
+          376,
+          7869,
+          45828,
+          2892,
+          235,
+          243,
+          11958,
+          7416,
+          50257
+        ],
+        "speech_token_ids": [
+          376,
+          7869,
+          45828,
+          2892,
+          235,
+          243,
+          11958,
+          7416
+        ],
+        "suspected": false,
+        "best": null,
+        "regions": [],
+        "settings": {
+          "min_repetitions": 3,
+          "single_item_min_repetitions": 4,
+          "min_repeated_fraction": 0.6,
+          "trailing_min_repetitions": 4,
+          "token_min_repetitions": 4,
+          "max_trailing_gap_items": 1,
+          "max_text_unit_chars": 12,
+          "max_token_unit_length": 8
+        }
+      },
+      "eos_observed": true,
+      "termination": "eos",
+      "no_repeat_ngram_size": 0,
+      "num_beams": 5,
+      "num_return_sequences": 1
+    },
+    "skipped_as_no_speech": false,
+    "guard": {
+      "mode": "selection_regenerate",
+      "additional_calls": 0,
+      "regeneration_success": false,
+      "rescued_low_logprob": false,
+      "selection_reason": "stock_candidate_not_repetitive",
+      "unresolved_repetition": false,
+      "selected_candidate_id": "fallback-0:0",
+      "generation_calls": 1,
+      "calls_after_first_stock_stop": 0
+    },
+    "attempts": [
+      {
+        "kind": "fallback",
+        "temperature": 0.0,
+        "candidates": [
+          {
+            "candidate_id": "fallback-0:0",
+            "text": " MBC 뉴스 이덕영입니다",
+            "token_ids": [
+              376,
+              7869,
+              45828,
+              2892,
+              235,
+              243,
+              11958,
+              7416,
+              50257
+            ],
+            "avg_logprob": -0.6831223368644714,
+            "no_speech_prob": 0.8342019319534302,
+            "temperature": 0.0,
+            "compression_ratio": 0.7317073170731707,
+            "compression_pass": true,
+            "logprob_pass": true,
+            "probable_silence": false,
+            "empty": false,
+            "generation_cap_reached": false,
+            "repetition": {
+              "input_text": " MBC 뉴스 이덕영입니다",
+              "generated_token_ids": [
+                376,
+                7869,
+                45828,
+                2892,
+                235,
+                243,
+                11958,
+                7416,
+                50257
+              ],
+              "speech_token_ids": [
+                376,
+                7869,
+                45828,
+                2892,
+                235,
+                243,
+                11958,
+                7416
+              ],
+              "suspected": false,
+              "best": null,
+              "regions": [],
+              "settings": {
+                "min_repetitions": 3,
+                "single_item_min_repetitions": 4,
+                "min_repeated_fraction": 0.6,
+                "trailing_min_repetitions": 4,
+                "token_min_repetitions": 4,
+                "max_trailing_gap_items": 1,
+                "max_text_unit_chars": 12,
+                "max_token_unit_length": 8
+              }
+            },
+            "eos_observed": true,
+            "termination": "eos",
+            "no_repeat_ngram_size": 0,
+            "num_beams": 5,
+            "num_return_sequences": 1
+          }
+        ],
+        "best_id": "fallback-0:0"
+      }
+    ],
+    "elapsed_seconds": 1.1923274000000674,
+    "ct2_benchmark_applies": false
+  },
+  "same_seed_repeat_first_sample_matches": true,
+  "unique_real_audio_files": 3,
+  "runtime_calls": 5,
+  "source_weight_unchanged": "cebed9f4c930309e28a79537f6dcb0454fb22564b21fa110173e00e8ab6fae77",
+  "fp32_export_fidelity": {
+    "encoder_tolerance": {
+      "atol": 0.003,
+      "rtol": 0.005
+    },
+    "decoder_tolerance": {
+      "atol": 0.001,
+      "rtol": 0.005
+    },
+    "decoder": [
+      {
+        "prefix_length": 4,
+        "max_absolute_error": 2.288818359375e-05,
+        "last_argmax_equal": true
+      },
+      {
+        "prefix_length": 8,
+        "max_absolute_error": 3.7670135498046875e-05,
+        "last_argmax_equal": true
+      }
+    ],
+    "encoder_max_absolute_error": 0.0019550323486328125,
+    "cached_decoder_matches_full_prefix": true
+  },
+  "default_export_validation_note": "Optimum default atol=1e-5 warned; independent real-input comparison uses stated tolerances, not hidden export success."
+}

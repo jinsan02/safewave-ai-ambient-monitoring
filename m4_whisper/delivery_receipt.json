@@ -1,0 +1,47 @@
+{
+  "release_url": "https://github.com/Ldg48/rp5/releases/tag/m4-whisper-handoff-20260916",
+  "release_id": 389576941,
+  "tag": "m4-whisper-handoff-20260916",
+  "prerelease": true,
+  "published_at": "2026-09-16T01:26:42Z",
+  "verified_assets": [
+    {
+      "name": "m4-ct2-baseline_fp32.zip",
+      "size": 900178774,
+      "digest": "sha256:d69c3b2b1b76a9939c568e6532009c585f3933b19039d5dd2207ad92866eac6a",
+      "browser_download_url": "https://github.com/Ldg48/rp5/releases/download/m4-whisper-handoff-20260916/m4-ct2-baseline_fp32.zip"
+    },
+    {
+      "name": "m4-ct2-baseline_int8.zip",
+      "size": 216131099,
+      "digest": "sha256:d703067a48f857e7f2551590f4e77c9ca69cbe25fe2be248fd0f8247e86a94ac",
+      "browser_download_url": "https://github.com/Ldg48/rp5/releases/download/m4-whisper-handoff-20260916/m4-ct2-baseline_int8.zip"
+    },
+    {
+      "name": "m4-ct2-finetuned_fp32.zip",
+      "size": 607128471,
+      "digest": "sha256:c65a3d2edc33f7e6b51e9c71be3f00e894a719a44ff221fac2cc191af1c4c5e4",
+      "browser_download_url": "https://github.com/Ldg48/rp5/releases/download/m4-whisper-handoff-20260916/m4-ct2-finetuned_fp32.zip"
+    },
+    {
+      "name": "m4-ct2-finetuned_int8.zip",
+      "size": 212830628,
+      "digest": "sha256:38e7c5454ae2c79f4ca487659faf9703b2ebce0c1ece5a516bdcf209239fc2ce",
+      "browser_download_url": "https://github.com/Ldg48/rp5/releases/download/m4-whisper-handoff-20260916/m4-ct2-finetuned_int8.zip"
+    },
+    {
+      "name": "m4-onnx-baseline_fp32.zip",
+      "size": 1043382333,
+      "digest": "sha256:c016dbe50725858bc2021e0787b5d06ad34493593cd3e5bfbd4b23f8f9bc9aa7",
+      "browser_download_url": "https://github.com/Ldg48/rp5/releases/download/m4-whisper-handoff-20260916/m4-onnx-baseline_fp32.zip"
+    },
+    {
+      "name": "m4-onnx-finetuned_fp32.zip",
+      "size": 699011210,
+      "digest": "sha256:a31e1b2470b11886250581552f7e0030f91c1035335f6654a7000ed04e6e2b19",
+      "browser_download_url": "https://github.com/Ldg48/rp5/releases/download/m4-whisper-handoff-20260916/m4-onnx-finetuned_fp32.zip"
+    }
+  ],
+  "download_verified_artifact": "ct2_finetuned_int8",
+  "downloaded_model_sha256": "b7eee8e7be0a97274745b36aa47b489a9e55872ecf356c220ecb5372b305f1cb"
+}

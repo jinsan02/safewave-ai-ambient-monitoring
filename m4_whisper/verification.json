@@ -1,0 +1,519 @@
+{
+  "purpose": "integration smoke, not corpus evaluation",
+  "seed": 42,
+  "calls": [
+    {
+      "model": "baseline_fp32",
+      "audio_sha256": "c5194963e003160822be01772dbe92b3c76d72603b2ccc29da66e529b9de98e2",
+      "duration_seconds": 3.9253125,
+      "wrapper_matches_direct_text_and_tokens": true,
+      "result": {
+        "schema_version": 1,
+        "component": "M4_speech",
+        "status": "ok",
+        "window_id": "smoke",
+        "window_start_seconds": 0.0,
+        "window_end_seconds": 3.9253125,
+        "sample_rate_hz": 16000,
+        "model": "baseline_fp32",
+        "engine": "faster-whisper/CTranslate2",
+        "device": "cpu",
+        "compute_type": "float32",
+        "language": "ko",
+        "text": "나마졌어요",
+        "segments": [
+          {
+            "text": " 나마졌어요",
+            "start_seconds": 0.0,
+            "end_seconds": 4.0,
+            "timestamp_outside_window": true,
+            "token_ids": [
+              50364,
+              12623,
+              8667,
+              25001,
+              4213,
+              50564
+            ],
+            "avg_logprob": -0.7074507134301322,
+            "no_speech_prob": 0.002720263320952654,
+            "compression_ratio": 0.625,
+            "temperature_metadata": 0.0
+          }
+        ],
+        "elapsed_seconds": 1.8703321000066353,
+        "guard": {
+          "mode": "selection_regenerate",
+          "regenerations": 0,
+          "regeneration_successes": 0,
+          "low_logprob_rescues": 0,
+          "unresolved_candidates": 0,
+          "additional_calls": 0,
+          "final_repetition_suspected": false,
+          "selection_reasons": [
+            "existing_non_repetitive_candidate_preserved"
+          ]
+        }
+      }
+    },
+    {
+      "model": "baseline_fp32",
+      "audio_sha256": "06d4375a3a68f01f3e4b7a6d75e72e1fdd33ec023154ca6699d8bb524e9e2bf2",
+      "duration_seconds": 3.7513125,
+      "wrapper_matches_direct_text_and_tokens": true,
+      "result": {
+        "schema_version": 1,
+        "component": "M4_speech",
+        "status": "ok",
+        "window_id": "smoke",
+        "window_start_seconds": 0.0,
+        "window_end_seconds": 3.7513125,
+        "sample_rate_hz": 16000,
+        "model": "baseline_fp32",
+        "engine": "faster-whisper/CTranslate2",
+        "device": "cpu",
+        "compute_type": "float32",
+        "language": "ko",
+        "text": "헛들여서가 넘어섰어요",
+        "segments": [
+          {
+            "text": " 헛들여서가 넘어섰어요",
+            "start_seconds": 0.0,
+            "end_seconds": 3.8000000000000003,
+            "timestamp_outside_window": true,
+            "token_ids": [
+              50364,
+              13431,
+              249,
+              14271,
+              10558,
+              2393,
+              1453,
+              20237,
+              2782,
+              26267,
+              4213,
+              50554
+            ],
+            "avg_logprob": -0.8384339992816632,
+            "no_speech_prob": 0.0011116249952465296,
+            "compression_ratio": 0.7948717948717948,
+            "temperature_metadata": 0.0
+          }
+        ],
+        "elapsed_seconds": 1.8997463999985484,
+        "guard": {
+          "mode": "selection_regenerate",
+          "regenerations": 0,
+          "regeneration_successes": 0,
+          "low_logprob_rescues": 0,
+          "unresolved_candidates": 0,
+          "additional_calls": 0,
+          "final_repetition_suspected": false,
+          "selection_reasons": [
+            "existing_non_repetitive_candidate_preserved"
+          ]
+        }
+      }
+    },
+    {
+      "model": "baseline_int8",
+      "audio_sha256": "c5194963e003160822be01772dbe92b3c76d72603b2ccc29da66e529b9de98e2",
+      "duration_seconds": 3.9253125,
+      "wrapper_matches_direct_text_and_tokens": true,
+      "result": {
+        "schema_version": 1,
+        "component": "M4_speech",
+        "status": "ok",
+        "window_id": "smoke",
+        "window_start_seconds": 0.0,
+        "window_end_seconds": 3.9253125,
+        "sample_rate_hz": 16000,
+        "model": "baseline_int8",
+        "engine": "faster-whisper/CTranslate2",
+        "device": "cpu",
+        "compute_type": "int8_float32",
+        "language": "ko",
+        "text": "나마졌어요",
+        "segments": [
+          {
+            "text": " 나마졌어요",
+            "start_seconds": 0.0,
+            "end_seconds": 4.0,
+            "timestamp_outside_window": true,
+            "token_ids": [
+              50364,
+              12623,
+              8667,
+              25001,
+              4213,
+              50564
+            ],
+            "avg_logprob": -0.660864165851048,
+            "no_speech_prob": 0.0031145194079726934,
+            "compression_ratio": 0.625,
+            "temperature_metadata": 0.0
+          }
+        ],
+        "elapsed_seconds": 1.344506100009312,
+        "guard": {
+          "mode": "selection_regenerate",
+          "regenerations": 0,
+          "regeneration_successes": 0,
+          "low_logprob_rescues": 0,
+          "unresolved_candidates": 0,
+          "additional_calls": 0,
+          "final_repetition_suspected": false,
+          "selection_reasons": [
+            "existing_non_repetitive_candidate_preserved"
+          ]
+        }
+      }
+    },
+    {
+      "model": "baseline_int8",
+      "audio_sha256": "06d4375a3a68f01f3e4b7a6d75e72e1fdd33ec023154ca6699d8bb524e9e2bf2",
+      "duration_seconds": 3.7513125,
+      "wrapper_matches_direct_text_and_tokens": true,
+      "result": {
+        "schema_version": 1,
+        "component": "M4_speech",
+        "status": "ok",
+        "window_id": "smoke",
+        "window_start_seconds": 0.0,
+        "window_end_seconds": 3.7513125,
+        "sample_rate_hz": 16000,
+        "model": "baseline_int8",
+        "engine": "faster-whisper/CTranslate2",
+        "device": "cpu",
+        "compute_type": "int8_float32",
+        "language": "ko",
+        "text": "헛들여서는 너무나 섰어요",
+        "segments": [
+          {
+            "text": " 헛들여서는 너무나 섰어요",
+            "start_seconds": 0.0,
+            "end_seconds": 3.7600000000000002,
+            "timestamp_outside_window": true,
+            "token_ids": [
+              50364,
+              13431,
+              249,
+              14271,
+              10558,
+              2393,
+              1098,
+              3214,
+              27532,
+              3404,
+              3952,
+              108,
+              4213,
+              50552
+            ],
+            "avg_logprob": -0.7441813627878825,
+            "no_speech_prob": 0.0013202577829360962,
+            "compression_ratio": 0.7608695652173914,
+            "temperature_metadata": 0.0
+          }
+        ],
+        "elapsed_seconds": 1.3773803999938536,
+        "guard": {
+          "mode": "selection_regenerate",
+          "regenerations": 0,
+          "regeneration_successes": 0,
+          "low_logprob_rescues": 0,
+          "unresolved_candidates": 0,
+          "additional_calls": 0,
+          "final_repetition_suspected": false,
+          "selection_reasons": [
+            "existing_non_repetitive_candidate_preserved"
+          ]
+        }
+      }
+    },
+    {
+      "model": "finetuned_fp32",
+      "audio_sha256": "c5194963e003160822be01772dbe92b3c76d72603b2ccc29da66e529b9de98e2",
+      "duration_seconds": 3.9253125,
+      "wrapper_matches_direct_text_and_tokens": true,
+      "result": {
+        "schema_version": 1,
+        "component": "M4_speech",
+        "status": "ok",
+        "window_id": "smoke",
+        "window_start_seconds": 0.0,
+        "window_end_seconds": 3.9253125,
+        "sample_rate_hz": 16000,
+        "model": "finetuned_fp32",
+        "engine": "faster-whisper/CTranslate2",
+        "device": "cpu",
+        "compute_type": "float32",
+        "language": "ko",
+        "text": "넘어졌어요",
+        "segments": [
+          {
+            "text": "넘어졌어요",
+            "start_seconds": 0.0,
+            "end_seconds": 4.0,
+            "timestamp_outside_window": true,
+            "token_ids": [
+              50364,
+              33386,
+              246,
+              2782,
+              5475,
+              4213,
+              50564
+            ],
+            "avg_logprob": -0.5407727137207985,
+            "no_speech_prob": 2.2629306840826757e-05,
+            "compression_ratio": 0.7142857142857143,
+            "temperature_metadata": 0.0
+          }
+        ],
+        "elapsed_seconds": 2.20865159999812,
+        "guard": {
+          "mode": "selection_regenerate",
+          "regenerations": 0,
+          "regeneration_successes": 0,
+          "low_logprob_rescues": 0,
+          "unresolved_candidates": 0,
+          "additional_calls": 0,
+          "final_repetition_suspected": false,
+          "selection_reasons": [
+            "existing_non_repetitive_candidate_preserved"
+          ]
+        }
+      }
+    },
+    {
+      "model": "finetuned_fp32",
+      "audio_sha256": "06d4375a3a68f01f3e4b7a6d75e72e1fdd33ec023154ca6699d8bb524e9e2bf2",
+      "duration_seconds": 3.7513125,
+      "wrapper_matches_direct_text_and_tokens": true,
+      "result": {
+        "schema_version": 1,
+        "component": "M4_speech",
+        "status": "ok",
+        "window_id": "smoke",
+        "window_start_seconds": 0.0,
+        "window_end_seconds": 3.7513125,
+        "sample_rate_hz": 16000,
+        "model": "finetuned_fp32",
+        "engine": "faster-whisper/CTranslate2",
+        "device": "cpu",
+        "compute_type": "float32",
+        "language": "ko",
+        "text": "헛플려서 넘어섰어요",
+        "segments": [
+          {
+            "text": "헛플려서 넘어섰어요",
+            "start_seconds": 0.0,
+            "end_seconds": 3.7600000000000002,
+            "timestamp_outside_window": true,
+            "token_ids": [
+              50364,
+              16653,
+              249,
+              8111,
+              2457,
+              40673,
+              20237,
+              2782,
+              26267,
+              4213,
+              50552
+            ],
+            "avg_logprob": -0.5409616529941559,
+            "no_speech_prob": 0.0001245429302798584,
+            "compression_ratio": 0.7777777777777778,
+            "temperature_metadata": 0.0
+          }
+        ],
+        "elapsed_seconds": 40.25021709999419,
+        "guard": {
+          "mode": "selection_regenerate",
+          "regenerations": 1,
+          "regeneration_successes": 1,
+          "low_logprob_rescues": 0,
+          "unresolved_candidates": 0,
+          "additional_calls": 1,
+          "final_repetition_suspected": false,
+          "selection_reasons": [
+            "limited_regeneration_suppressed_repetition"
+          ]
+        }
+      }
+    },
+    {
+      "model": "finetuned_int8",
+      "audio_sha256": "c5194963e003160822be01772dbe92b3c76d72603b2ccc29da66e529b9de98e2",
+      "duration_seconds": 3.9253125,
+      "wrapper_matches_direct_text_and_tokens": true,
+      "result": {
+        "schema_version": 1,
+        "component": "M4_speech",
+        "status": "ok",
+        "window_id": "smoke",
+        "window_start_seconds": 0.0,
+        "window_end_seconds": 3.9253125,
+        "sample_rate_hz": 16000,
+        "model": "finetuned_int8",
+        "engine": "faster-whisper/CTranslate2",
+        "device": "cpu",
+        "compute_type": "int8_float32",
+        "language": "ko",
+        "text": "넘어졌어요",
+        "segments": [
+          {
+            "text": "넘어졌어요",
+            "start_seconds": 0.0,
+            "end_seconds": 4.0,
+            "timestamp_outside_window": true,
+            "token_ids": [
+              50364,
+              33386,
+              246,
+              2782,
+              5475,
+              4213,
+              50564
+            ],
+            "avg_logprob": -0.5503702610731125,
+            "no_speech_prob": 9.438615052204113e-06,
+            "compression_ratio": 0.7142857142857143,
+            "temperature_metadata": 0.0
+          }
+        ],
+        "elapsed_seconds": 1.585300399994594,
+        "guard": {
+          "mode": "selection_regenerate",
+          "regenerations": 0,
+          "regeneration_successes": 0,
+          "low_logprob_rescues": 0,
+          "unresolved_candidates": 0,
+          "additional_calls": 0,
+          "final_repetition_suspected": false,
+          "selection_reasons": [
+            "existing_non_repetitive_candidate_preserved"
+          ]
+        }
+      }
+    },
+    {
+      "model": "finetuned_int8",
+      "audio_sha256": "06d4375a3a68f01f3e4b7a6d75e72e1fdd33ec023154ca6699d8bb524e9e2bf2",
+      "duration_seconds": 3.7513125,
+      "wrapper_matches_direct_text_and_tokens": true,
+      "result": {
+        "schema_version": 1,
+        "component": "M4_speech",
+        "status": "ok",
+        "window_id": "smoke",
+        "window_start_seconds": 0.0,
+        "window_end_seconds": 3.7513125,
+        "sample_rate_hz": 16000,
+        "model": "finetuned_int8",
+        "engine": "faster-whisper/CTranslate2",
+        "device": "cpu",
+        "compute_type": "int8_float32",
+        "language": "ko",
+        "text": "헛헛 헛헗헗어졌어요",
+        "segments": [
+          {
+            "text": "헛헛 헛헗헗어졌어요",
+            "start_seconds": 0.0,
+            "end_seconds": 4.0,
+            "timestamp_outside_window": true,
+            "token_ids": [
+              50364,
+              16653,
+              249,
+              16653,
+              249,
+              13431,
+              249,
+              16653,
+              245,
+              16653,
+              245,
+              2782,
+              5475,
+              4213,
+              50564
+            ],
+            "avg_logprob": -0.529900174587965,
+            "no_speech_prob": 6.908233626745641e-05,
+            "compression_ratio": 0.9032258064516129,
+            "temperature_metadata": 0.0
+          }
+        ],
+        "elapsed_seconds": 28.37899669999024,
+        "guard": {
+          "mode": "selection_regenerate",
+          "regenerations": 1,
+          "regeneration_successes": 1,
+          "low_logprob_rescues": 0,
+          "unresolved_candidates": 0,
+          "additional_calls": 1,
+          "final_repetition_suspected": false,
+          "selection_reasons": [
+            "limited_regeneration_suppressed_repetition"
+          ]
+        }
+      }
+    }
+  ],
+  "onnx_exports": {
+    "baseline_fp32": {
+      "encoder_max_absolute_error": 0.00115203857421875,
+      "decoder_checks": [
+        {
+          "prefix_length": 4,
+          "max_absolute_error": 1.621246337890625e-05,
+          "argmax_equal": true
+        },
+        {
+          "prefix_length": 8,
+          "max_absolute_error": 2.872943878173828e-05,
+          "argmax_equal": true
+        },
+        {
+          "prefix_length": 16,
+          "max_absolute_error": 3.170967102050781e-05,
+          "argmax_equal": true
+        }
+      ],
+      "providers": [
+        "CPUExecutionProvider"
+      ]
+    },
+    "finetuned_fp32": {
+      "encoder_max_absolute_error": 0.0031108856201171875,
+      "decoder_checks": [
+        {
+          "prefix_length": 4,
+          "max_absolute_error": 1.811981201171875e-05,
+          "argmax_equal": true
+        },
+        {
+          "prefix_length": 8,
+          "max_absolute_error": 2.8133392333984375e-05,
+          "argmax_equal": true
+        },
+        {
+          "prefix_length": 16,
+          "max_absolute_error": 4.3392181396484375e-05,
+          "argmax_equal": true
+        }
+      ],
+      "providers": [
+        "CPUExecutionProvider"
+      ]
+    }
+  },
+  "unique_audio_files": 2,
+  "ct2_wrapper_calls": 8,
+  "ct2_direct_control_calls": 8
+}

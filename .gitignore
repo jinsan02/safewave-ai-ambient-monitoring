@@ -12,6 +12,9 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+.venv-onnx/
+/m4_artifacts/
+.pytest_cache/
 *_log.txt
 *.log
 
