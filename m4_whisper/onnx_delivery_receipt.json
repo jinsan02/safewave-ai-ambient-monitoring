@@ -1,0 +1,22 @@
+{
+  "date": "2026-09-16",
+  "repository": "jinsan02/safewave-ai-ambient-monitoring",
+  "branch": "m4/lee-daegyeong-whisper-int8",
+  "code_commit": "fc45e2d10a9307863e5299dfb0222208a496191b",
+  "release_tag": "m4-onnx-int8-20260916",
+  "prerelease": true,
+  "asset": "m4-onnx-finetuned-int8.zip",
+  "bytes": 510379887,
+  "sha256": "fd75e7da47c290abc12fe50b602b14025c9cbb1ead4e3b732922ee49a291a694",
+  "github_asset_digest_matches": true,
+  "unauthenticated_public_head_status": 200,
+  "unauthenticated_public_content_length_matches": true,
+  "full_remote_redownload_performed": false,
+  "local_archive_checksum_crc_and_extraction_passed": true,
+  "extracted_model_cpu_inference_matches_prepackaging": true,
+  "tests_passed": 38,
+  "test_warnings": 5,
+  "ct2_benchmark_applies": false,
+  "silence_hallucination_unresolved": true,
+  "main_service_replaced": false
+}

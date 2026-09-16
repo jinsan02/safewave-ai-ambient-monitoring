@@ -19,4 +19,4 @@
 - [x] Test candidate selection, one-time regeneration, silence handling, input validation and identity verification before implementing the ONNX runtime adapter.
 - [x] Run offline CPU inference on a small existing evaluation sample and synthetic silence; save original outputs and distinguish smoke results from corpus accuracy.
 - [x] Document the package, download command, JSON contract, model lineage, decoding differences and integration precautions; do not change ai/main.py defaults.
-- [ ] Run scoped tests, inspect staged content for weights/audio/secrets, publish one ONNX INT8 archive and push the team branch.
+- [x] Run scoped tests, inspect staged content for weights/audio/secrets, publish one ONNX INT8 archive and push the team branch.

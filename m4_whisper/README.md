@@ -3,6 +3,8 @@
 담당: **이대경**. 팀 통합용 브랜치: `m4/lee-daegyeong-whisper-int8`.
 
 **이번에 받을 것은 `m4-onnx-finetuned-int8.zip` 하나입니다.**
+[모델 다운로드 및 검증용 릴리즈](https://github.com/jinsan02/safewave-ai-ambient-monitoring/releases/tag/m4-onnx-int8-20260916)
+(압축 510.4 MB). 업로드 SHA-256과 공개 다운로드 응답을 확인했습니다.
 Zeroth 기반 새 파인튜닝 모델을 ONNX INT8로 변환했습니다. CT2 파일의 확장자만 바꾼 것이 아닙니다.
 팀의 `ai/main.py`, 기존 M4, Docker 기본 설정은 바꾸지 않았습니다.
 

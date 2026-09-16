@@ -76,3 +76,15 @@ ONNX adapter 후보·sampling 점수·호출 횟수·무음 처리 전용 테스
 - CPU-only 환경 전체 신규 설치: 미실행. 실제 실행 환경은 기존 torch의 CPU 연산을 사용하는 별도 버전 가상환경.
 
 인계본은 검증용 브랜치와 prerelease로 제공하며, 기본 서비스에 바로 적용하는 배포가 아닙니다.
+
+## 배포 파일 전달 확인
+
+- 브랜치 코드 커밋: `fc45e2d10a9307863e5299dfb0222208a496191b`.
+- 릴리즈: `m4-onnx-int8-20260916`, prerelease=true, latest 지정 안 함.
+- `m4-onnx-finetuned-int8.zip`: 510,379,887 bytes.
+- SHA-256: `fd75e7da47c290abc12fe50b602b14025c9cbb1ead4e3b732922ee49a291a694`.
+- GitHub가 반환한 asset digest와 로컬 압축 해시 일치, 비인증 공개 HEAD HTTP 200 및 파일 크기 일치.
+- 압축 CRC 확인, 검증된 로컬 압축의 안전한 설치 및 ONNX 실행 확인.
+- 설치한 압축 모델에서 `new_eval_0008`을 실행한 text/token IDs가 기존 검증 실행과 일치.
+- 다운로드 전체 바이트의 재수신은 하지 않았습니다. 원격 digest/HEAD와 로컬 압축 설치를 각각 확인했습니다.
+- 원본 `C:\rp5`의 모델과 팀 기본 서비스는 교체하지 않았습니다.
