@@ -23,6 +23,10 @@ docs/*
 data/
 reports/
 
+# 팀원 인계 산출물 (모델 가중치 + 인계 문서)
+# 위의 *.onnx / docs/* 규칙을 덮어쓴다. handoff/ 아래만 예외다.
+!handoff/**
+
 # Claude Code
 CLAUDE.md
 .claude/
