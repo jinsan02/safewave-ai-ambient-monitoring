@@ -7,6 +7,7 @@
 | 문서 | 대상 | 내용 |
 |---|---|---|
 | [TO_KIMTAEYEON_M1_M2.md](TO_KIMTAEYEON_M1_M2.md) | 김태연 | M1·M2 병합 결과, 인계 규격 재현, RPi5 M1 지연, 실 파이프라인 입력 문제, ESP 통신, 요청 사항 |
+| [REPLY_TO_KIMTAEYEON_M1.md](REPLY_TO_KIMTAEYEON_M1.md) | 김태연 회신 반영 | 전역 5Hz·zero-fill·창끝 게이트·K=3/N=5·M2 off 적용 내역과 CSI2 승인 조건 |
 | [TO_LEEDAEGYEONG_M4.md](TO_LEEDAEGYEONG_M4.md) | 이대경 | M4 INT8 병합, 서비스 호환성 문제와 우회, RPi5 정확도·지연·메모리, 남은 오류, 요청 사항 |
 | [TUNING_PROPOSAL.md](TUNING_PROPOSAL.md) | 노진산(통합) | 병목 요약, 우선순위별 조정안, 재측정 계획 |
 
@@ -25,7 +26,7 @@
 
 ## 남은 핵심 문제
 
-1. 통합 CSI 루프가 입력을 못 따라가 **M1이 실제 창을 받지 못한다** — 조정안 B1
+1. 통합 CSI 루프의 M1 입력 문제는 로컬에서 **5Hz·zero-fill·창끝 게이트·K=3/N=5로 조정**했지만 RPi5 재측정 전이다
 2. 음성 1건 처리가 동시 부하에서 30~49 s — Phase 2 15 s 초과 — 조정안 C1·C3·D
 3. M5 반복 시 ai-qwen 메모리 2.0 → 4.3 GB — 조정안 A2
-4. M2 스텁의 고정 심박이 경고를 상시 발생 — 조정안 M2
+4. M2 스텁은 기본 off로 조정했으며, 검증 모델 도착 후 존폐·M5 입력을 최종 결정한다

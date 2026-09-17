@@ -173,14 +173,14 @@ ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶
 | 키 | 타입 | TTL / 크기 | 설명 |
 |---|---|---|---|
 | `csi:raw` | Stream | MAXLEN 36,000 | CSI 원시 스트림 (100 Hz, 788B 패킷) |
-| `audio:events` | Stream | MAXLEN 3,600 | VAD 트리거 오디오 이벤트 |
-| `ai:result` | Stream | MAXLEN 36,000 | 추론 통합 스냅샷 |
+| `audio:events` | Stream | MAXLEN 120 | VAD 트리거 오디오 이벤트 |
+| `ai:result` | Stream | MAXLEN 18,000 | 추론 통합 스냅샷 |
 | `ai:emergency` | Stream | MAXLEN 3,600 | warning/critical 이벤트 |
 | `ai:m1:latest` ~ `ai:m4:latest` | String | TTL 3600s | 전문가별 최신 결과 |
 | `agg:minute:*` | Hash | TTL 3600s | 분 단위 집계 차트 |
 | `node:N:last_seen` | String | TTL 30s | 노드 마지막 수신 시각 |
 | `node:N:health` | Hash | TTL 3600s | rx/lost/loss_rate 패킷 통계 |
-| `sys:settings` | Hash | TTL 3600s | 앱 설정값 |
+| `sys:settings` | String | TTL 3600s | 앱 설정값(JSON) |
 | `fcm:token:*` | String | TTL 3600s | FCM 등록 기기 토큰 |
 | `mqtt:feedback:last` | String | TTL 3600s | MQTT 피드백 마지막 값 |
 | `tts:speak:queue` | List | — | TTS 발화 요청 큐 (`tts_worker.py` BLPOP 소비) |
@@ -326,8 +326,14 @@ AUDIO_CHANNELS=1
 | 변수 | 설명 |
 |---|---|
 | `EXPERT_INFER_TIMEOUT_MS` | 전문가 모델 추론 타임아웃 (기본 1000ms, CPU 느린 환경은 5000~10000) |
+| `M1_INFER_INTERVAL_MS` | M1 전역 추론 간격 (기본 200ms = 5Hz; 노드별 추론 아님) |
+| `M1_REQUIRED_NODES` | M1 학습 입력에 필요한 노드 목록 (기본 `1,2,3`) |
+| `M1_TAIL_MAX_AGE_MS` | 필수 노드 창끝 프레임의 호스트 수신 허용 지연 (기본 10ms) |
 | `VAD_THRESHOLD_DB` | VAD 임계값(dBFS). `-55` ~ `-60`이면 원거리 소리에 민감 |
 | `M2_CSI_WINDOW_FRAMES` | M2 시간축 누적 프레임 수 (기본 300 = 3초 @ 100Hz). 호흡 완전 해상도는 1000프레임(10초) 권장 |
+
+현재 RPi5 기본 설정에서는 검증되지 않은 M2 스텁이 반복 경고를 만들지 않도록 `models.m2=false`로
+시작한다. Redis의 `sys:settings`에 이전 설정이 남아 있으면 그 값을 우선하므로 `/settings`에서 확인한다.
 
 ### 3. 볼륨 및 모델 준비
 

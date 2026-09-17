@@ -23,7 +23,7 @@ clinical validation.
 |---|---|---|---|---|---|---|
 | Docker Compose services | Yes | Compose configuration can be validated | Dummy injection supported | **No raw run log** | RPi5 full-stack run | Architecture and configuration are implemented; RPi5 completion is unverified here. |
 | CSI UDP ingestion / Redis | Yes | Packet and integration paths exist | `dummy_inject.py` | **No raw run log in Git** | Live ESP32 capture | Wire/interface behavior can be reproduced without claiming sensing accuracy. |
-| M1 interface | Yes, input `(1, M1_MAX_NODES, 64, 100)` and fall-score output; `fall_logit` outputs get a sigmoid | Pipeline tests cover plumbing | Synthetic CSI | **No accuracy log in this repo** | Labelled multi-person fall/non-fall CSI | The export script in this repo creates an untrained simplified network. The RPi5 currently runs a trained single-node CNN-GRU from the separate pose repository; its accuracy evidence lives there, not here. |
+| M1 interface | Yes, input `(1, M1_MAX_NODES, 64, 100)` and fall-score output; runtime uses 100Hz zero-fill, trained-node tail gate, and K=3/N=5 event aggregation | Runtime-input and risk-gate tests cover plumbing | Synthetic CSI | **No post-change accuracy log in this repo** | Labelled multi-person fall/non-fall CSI and RPi5 live capture | The export script in this repo creates an untrained simplified network. The integrated trained 3-node model and its accuracy evidence live in the separate pose handoff; this repository has not validated post-change RPi5 detection. |
 | M2 interface | Yes, HR/RR output with ONNX or FFT fallback | Boundary/pipeline tests cover plumbing | Synthetic signals | **No paired reference log** | CSI paired with reference HR/RR | The export script creates an untrained network. No HR/RR MAE or clinical accuracy is established. |
 | M3 interface | Partial | `test_m3_m4_experts.py` exists | Synthetic/injected audio | **No labelled device evaluation** | Correct feature extraction and labelled household audio | AST produces a generic AudioSet top class; the seven-class label is selected by a heuristic. Runtime pads/reshapes raw waveform instead of applying the expected log-Mel feature extractor, so AST semantics and seven-class accuracy are unverified. |
 | M4 Korean STT | Yes when Whisper artifacts and dependencies load | Expert test exists | Injected/upstream text path | **No RPi5 WER log** | Representative Korean speech with transcripts | Export/runtime integration exists; no WER or real-room robustness result is established. |
@@ -87,10 +87,11 @@ Afternoon additions (same day, raw data in the ignored `reports/rpi5-20260917/`,
 - Full stack (all models, speech every 15 s, M5 forced) for 120 s: the fp32 run restarted containers
   (OOM) and is invalid; the INT8 run completed with no restarts, but speech event-to-result delay was
   30.7 s p50 and ai-qwen RSS grew from 2.0 GB to 4.3 GB.
-- **M1 never received a real CSI window** in any pipeline run that day: its score stayed at the
-  all-zero-input output. The CSI loop cannot keep up with per-packet M1 inference, skips backlog, and
-  resets node buffers. No M1 detection behaviour on the RPi5 is established.
-- The RPi5 now boots to the console (desktop GUI disabled) and uses the INT8 M4 by default.
+- **Before the local integration change, M1 never received a real CSI window** in any pipeline run that day:
+  its score stayed at the all-zero-input output. The old CSI loop could not keep up with per-packet M1
+  inference, skipped backlog, and reset node buffers. No M1 detection behaviour on the RPi5 is established.
+- The local change now uses the trained-node gate and K/N aggregation, but the RPi5 has not run it yet.
+  The RPi5 boots to the console (desktop GUI disabled) and uses the INT8 M4 by default.
 
 ### Measurement caveats found
 
@@ -102,9 +103,8 @@ Afternoon additions (same day, raw data in the ignored `reports/rpi5-20260917/`,
   while events arrived every 2.0 s, so the delay grew linearly (3.2 s → 17.1 s) until injection
   stopped. If the RPi5 per-event time also exceeds the event interval, Phase 2 replies can miss
   the 15 s window. This is a laptop observation, not an RPi5 result.
-- M1 warm-up in `ai/main.py` feeds a 1-D signal that becomes `(1,1,64,100)`. It works for the
-  current single-node model but fails for five-node models, so the first M1 inference then
-  includes session start-up cost.
+- The local M1 warm-up now uses `(1, M1_MAX_NODES, 64, 100)`; this is a code change awaiting RPi5
+  startup verification.
 
 ## Research outcome
 

@@ -1,15 +1,123 @@
 # HANDOFF — SafeWave-AI (rp5)
 
-> 작성: 2026-09-17 · 작성자 노진산(+Claude) · 다음 작업자(Codex 포함)는 이 문서부터 읽을 것.
+> 작성: 2026-09-17 · 작성자 노진산(+Claude/Codex) · 다음 작업자(Claude 포함)는 이 문서부터 읽을 것.
 > 규칙·제약은 `AGENTS.md` / `CLAUDE.md`, 근거 현황은 `docs/validation_status.md`.
 
 ## 한 줄 요약 (09-17 저녁)
 
 RPi5 기본값 측정, M1·M2(김태연)·M4(이대경) 병합, fp32 대 INT8 비교까지 끝났다.
-**다음 단계는 통합 파트 전체 리팩토링**(누수·오류·허점 점검, 클린 코드)이고, 그와 함께
-`handoff/rpi5-20260917/TUNING_PROPOSAL.md`의 조정안을 반영한 뒤 같은 조건으로 1회 재측정한다.
-담당자 공유 문서: `handoff/rpi5-20260917/TO_KIMTAEYEON_M1_M2.md`, `TO_LEEDAEGYEONG_M4.md`.
+통합 파트의 CPU·메모리·M5·오디오·Redis 리팩토링은 **노트북 로컬 작업 트리에 반영됐지만 아직
+커밋하지 않았고 RPi5에서도 실행하지 않았다.** 다음 모델 업데이트 뒤 같은 조건으로 RPi5에서 1회
+재측정하기 전까지 성능 개선이나 안정성 검증 완료로 표현하지 않는다.
+09-17 원자료와 현재 코드를 다시 교차 검토한 2차 최적화 결과는
+`handoff/rpi5-20260917/DATA_DRIVEN_OPTIMIZATION.md`에 정리했다. 이 문서의 새 후보도 아직 미반영·미검증이다.
+담당자 공유 문서: `handoff/rpi5-20260917/TO_KIMTAEYEON_M1_M2.md`, `handoff/rpi5-20260917/REPLY_TO_KIMTAEYEON_M1.md`, `TO_LEEDAEGYEONG_M4.md`.
 측정 원자료·상세 기록: 노트북·RPi5 `reports/rpi5-20260917/` (`TEST_LOG.md`, Git 제외).
+
+### 다음 Claude 인계 — 통합 최적화 작업 (로컬 반영, RPi5 재측정 전)
+
+작업 기준은 로컬 `develop`/`origin/develop` **`5b30f96`**이다. 아래 변경은 `C:\rp5`의 미커밋
+작업 트리에 있으므로 pull·reset·checkout으로 덮어쓰지 않는다. 먼저 `git diff`와 `git status`를
+검토한다. 커밋·push는 노진산 확인 후 한다.
+
+#### 해결·조정한 문제
+
+| 영역 | 기존 문제 | 로컬 반영 내용 | 현재 판정 |
+|---|---|---|---|
+| M1 입력 | 패킷마다 추론해 backlog·deque reset, 실제 창은 0 입력 | 100Hz 격자 zero-fill, 필수 노드 1·2·3 창끝 게이트, 전역 5Hz 추론, K=3/N=5 집계, 운영 5노드 형상 워밍업 | 코드 반영, RPi5 실제 점수·게이트 통과율 미검증 |
+| CSI executor | M3/M4까지 CSI 경로에서 빈 입력으로 실행 가능 | CSI executor는 M1/M2만 제출 | 코드 해결 |
+| 오디오 backlog | 밀린 이벤트를 모두 순차 처리해 30.7~49초 지연 | backlog 최신 1건으로 병합 | 코드 해결, RPi5 지연 미검증 |
+| Phase 2 우선순위 | M3 6.3초 뒤 M4 실행 | M4 우선, `phase2:active` 동안 M3 생략 | 코드 해결, 15초 기준 미검증 |
+| 오디오 노드 혼선 | 전역 최신 결과가 다른 노드 CSI에 합쳐질 수 있음 | 프로세스 내 노드별 cache, 최대 30초만 병합; Phase 2 transcript도 같은 노드만 수용 | 코드 해결 |
+| 빈 CSI 오염 | `/audio/events`가 M1 창에 빈 CSI trigger 추가 | `trigger_ai`는 호환 필드로만 받고 CSI 쓰기 제거 | 코드 해결 |
+| M4 tail | 최대 128 token 생성으로 환각 시 장시간 디코드 | `M4_MAX_NEW_TOKENS=48` 후보 | 설정 반영, 28개 정확도 회귀 미검증 |
+| M5 backlog | 오래된 요청을 순서대로 실행하고 처리 중 요청 누적 | 최대 2,000건 bounded drain 후 30초 이내 최고 위험·최신 1건 선택 | 코드 해결 |
+| M5 쿨다운 | 시작 시각 기준이라 긴 추론 뒤 즉시 재호출 | 성공·실패 모두 완료 시점부터 5초 쿨다운 | 코드 해결 |
+| M5/Phase 2 중복 | 음성 확인 중에도 같은 노드 M5 재실행 | lock을 `active`/`cooldown`으로 나누고 TTL 동안 M5 억제 | 코드 해결 |
+| M5 결과 모순 | gate score와 M5 최종 level/emergency가 불일치 가능 | `ai:emergency`에 fused score 기록, 최종 score/level/emergency 일괄 정규화 | 단위 테스트 통과 |
+| M5 vital 보정 | 모델 JSON score 문자열에서 타입 오류 가능 | `_safe_float` 뒤 warning 하한 적용 | 단위 테스트 통과 |
+| M5 시간 문맥 | `ai:result` 1,800건 반복 scan, snapshot 수를 사건 수로 과대 계산 | `ai:emergency` 300건/60초 cache, 같은 노드 90초 중복 제거, vital은 minute 집계 사용 | 코드 해결 |
+| M5 정책 중복 | 0.5B/1.5B에 context·feedback·level 정책 복제 | `ai/logic/risk_policy.py` 순수 정책 모듈로 통합 | 회귀 테스트 통과 |
+| 이전 P2 코드 확인 | `_apply_context_window`의 critical 강제와 `_alert_worker` 블로킹 여부 미확인 | context는 경고 3회에 +0.1만 적용하며 critical 강제 없음; alert worker는 이벤트별 task로 분리되어 주 루프를 막지 않음 | 확인 완료 |
+| M5 메모리 | RAM cache 256MB, RSS 2.0→4.3~5.2GB | cache 64MB, `n_ctx=2048` 유지, glibc arena 2 | 완화만 함; 누수 원인 미확정 |
+| CPU 경합 | M3=2/M4=2/M5=3과 숨은 BLAS thread | M3=1/M4=2/M5=2, OpenMP/BLAS=1, CFS `cpu_shares` 적용 | 후보 반영, RPi5 미검증 |
+| OOM 전파 | M5 증가가 sensing·Redis까지 압박 | 컨테이너별 memory/OOM 우선순위, experts/M5 3GB·swap 금지 후보 | Compose 반영; memory cgroup 비활성이라 RPi5에서는 아직 강제 안 될 수 있음 |
+| Redis 무경계 | CSI 180만·오디오 3,600, Redis 3GB/LRU | CSI 36,000, 오디오 120, Redis 512MB/noeviction, 256/384MB 경고 | 코드·설정 해결, 실제 사용량 미검증 |
+| TTS 누적 | 무경계 queue와 합성 MP3 잔류 | queue 32건/TTL 1시간, 재생 후 임시 MP3 삭제 | 코드 해결 |
+| TTS 수명주기 | MQTT 내부 queue 무경계, 같은 초 임시파일 충돌, 종료 정리 없음 | queue 32건 최신 유지, 파일명 microsecond, MQTT/Redis 정리 | 코드 해결 |
+| 부가 서비스 | MQTT·TTS·Home Assistant가 기본 스택 자원 사용 | 기본 Core 5개, `audio/voice`, `integration`, `home` profile로 분리 | Compose 렌더 검증 완료 |
+| API task 수명주기 | Phase 2 자식 task 예외·종료 미관리 | task registry, 구조화 실패 로그, shutdown cancel/gather | 코드 해결 |
+| sensing 중복/쓰기 실패 | CSI·오디오 Redis 연결 코드 중복, audio noeviction 시 캡처 재시작 | 공통 `redis_client.py`, audio ResponseError는 이벤트만 폐기 | 코드 해결 |
+| M1 입력 조립 | main loop 안에 준비 판정·슬롯 조립이 인라인 | `runtime_inputs.py` 순수 함수로 분리 | 5노드 슬롯 회귀 테스트 통과 |
+| Redis 준비 | `depends_on`이 Redis readiness를 보장하지 않음 | Redis healthcheck와 `service_healthy` dependency | Compose 렌더 검증 완료 |
+| 측정 공백 | cgroup/컨테이너 메모리·PSI 기록 부족 | bench에 CPU/memory PSI, governor, controller, CpuShares, 사용 가능 시 컨테이너 RSS 추가 | 도구 반영 |
+
+검증 완료: bundled Python으로 `compileall`, `tests.test_m5_pipeline` **18개**, 기본/audio/voice/integration/home
+profile을 포함한 `docker compose config --quiet`, `git diff --check`. 노트북 성능값은 만들지 않았다.
+
+#### 아직 해결하지 않았거나 다음 결정이 필요한 것
+
+1. **M5 RSS 증가 원인은 미확정이다.** 64MB cache는 완화안일 뿐이다. RPi5에서 20회 호출 전후
+   RSS 증가가 100MB 초과 또는 총 2.8GB 초과면 `QWEN_GGUF_CACHE=0` 비교 후 할당 추적한다.
+2. **RPi5 memory cgroup 활성화는 하지 않았다.** `/sys/fs/cgroup/cgroup.controllers`에 `memory`가
+   없으면 compose `mem_limit`/`memswap_limit`가 적용되지 않는다. 부팅 설정 변경은 사람 승인과 재부팅이 필요하다.
+3. **M5 2 threads는 전체 시스템 보호안이지 단일 추론 가속안이 아니다.** 다음 측정에서 p95가 30초를
+   넘으면 M5만 3 threads로 되돌린다.
+4. **M2 RPi5 모델은 여전히 스텁**이다. 코드·API·대시보드 기본값을 off로 조정했지만, Redis에 이미 저장된
+   오래된 `sys:settings`가 있으면 재시작 후에도 true일 수 있어 배포 시 설정을 확인해야 한다. 스텁 파일을
+   제거하지 않았고, 검증 모델이 오면 별도 재배선한다.
+5. MQTT/TTS/audio/HA profile 분리는 반영해 현재 기본 Compose는 Core 5개다. 다만 TTS 고정 WAV와
+   M2~M4 선택 로드는 아직 코드에 반영하지 않았다.
+6. 명확한 낙상·vital crisis의 1차 경보가 M5를 우회하는 fallback은 미구현이다. 현재는 M5 실패가
+   `ai:emergency` 생성 실패로 이어질 수 있어 MVP 가용성 관점의 가장 큰 남은 구조적 위험이다.
+7. ai-experts CPU 이미지의 CUDA torch 제거, M4 반복 방지 wrapper 통합, 대시보드 준비 상태 표시는 미반영이다.
+8. **Redis 512MB/noeviction 도달 시 전 서비스의 실패 처리는 완전하지 않다.** sensing CSI와 audio는
+   `ResponseError`를 제한 처리하지만 ai-experts/M5/API 쓰기는 동일 수준의 backpressure·경보 처리가 없다.
+   정상 예산은 256MB 이하이므로 먼저 실측하되, 384MB critical에서 운영 경보 또는 쓰기 축소 정책이 필요하다.
+9. Phase 2 자식 task 예외 회수와 shutdown 정리는 반영했다. 다만 TTS·FCM·Redis 실패를 실제 컨테이너
+   통합 테스트로 검증하지 않았다.
+10. Redis healthcheck/readiness는 반영했다. ai-experts는 별도 readiness 신호가 없어 API/M5가
+    `service_started`만 기다린다. 모델 warmup 전 표시·동작을 실제 재시작 시나리오로 검증해야 한다.
+11. 로컬 검증은 compile/unit/config뿐이다. Docker 이미지 build·컨테이너 실행·API/Redis 통합 테스트와
+    `bench_rpi5.py`의 E2(회차 사이 잔여 M5 호출 소진)는 수행하지 않았다. 새 공통 모듈 3개,
+    자원 문서와 테스트 파일도 아직 untracked다.
+
+12. M1 담당자 회신을 반영해 `M1_INFER_INTERVAL_MS=200`, `M1_REQUIRED_NODES=1,2,3`,
+    device uint32 시계 기반 zero-fill, 창끝 생존 게이트, K=3/N=5를 적용했다. 소폭 역행 패킷은
+    늦게 도착한 것으로 버리고, 큰 역행은 장치 재시작으로 보고 창을 재시작한다. `CSI2` 792B
+    진단 포맷은 기존 788B 계약과 Redis stream 구조를 바꾸므로 아직 파서·펌웨어에 반영하지 않았다.
+    회신 초안과 승인 조건은 `handoff/rpi5-20260917/REPLY_TO_KIMTAEYEON_M1.md`에 있다.
+
+#### 09-17 실측 기반 2차 검토 — 추가 발견, 아직 코드 미반영
+
+상세 근거·예상 효과·실험 순서는 `handoff/rpi5-20260917/DATA_DRIVEN_OPTIMIZATION.md`를 따른다.
+다음 작업자는 아래를 기존 반영 항목과 혼동하지 말고, 결정·계측 후 하나씩 적용한다.
+
+| 우선순위 | 추가 발견 | 실측/코드 근거 | 권장 다음 행동 |
+|---|---|---|---|
+| P0 | **M5 RAM cache 64MB도 실제 총 RAM 상한이 아닐 가능성** | 유효 INT8 peak 5회 동안 ai-qwen 2.485→4.304GB, swap +951MB. llama-cpp-python state cache는 약 297MiB scores 복사본을 표시 용량에서 제외할 수 있음 | RPi 패키지 버전·소스 확인 후 cache **0/64**를 clean reboot에서 각 20회 비교. 원인 확정 전에는 누수로 단정 금지 |
+| P0 | **M2 스텁이 M5 측정을 오염** | solo-M2 warning 1,347/3,606(37.4%), 고정 심박 118, 유휴 중 약 11초마다 M5 | 검증 모델 전까지 성능/M5 메모리 측정에서는 M2 off 권장. 파일·모델 내부는 담당자 합의 없이 수정 금지 |
+| P0 | **기본 Core profile에서 Phase 2가 최대 30초 헛대기** | Core 5개에는 audio/TTS가 없지만 API는 TTS 15초+STT 15초 대기 | `VOICE_ENABLED=false`이면 Phase 2를 즉시 건너뛰고 1차 알림으로 fail-open |
+| P0 | **단일 마이크와 node별 Phase 2 라우팅 불일치** | audio-sensing 기본 node=1, API는 emergency와 같은 node transcript만 수용 | 단일 마이크 MVP는 Phase 2 전역 직렬화·활성 node 귀속. 새 Redis key/계약은 구현 전 확인 |
+| P0 | **M5 부재 시 critical 경보 경로 없음** | M5 OOM/warmup이면 `ai:emergency` 미생성 가능 | 명확한 fall/vital crisis의 규칙 기반 1차 경보 후 M5는 설명·문맥 보강 역할로 분리 |
+| P0 | **복구 시 stale/누락 가능** | experts는 CSI `0-0` 재생, API alert worker는 `$` 시작, M5는 drain 후 cooldown 후보 폐기 | bounded warm window·alert bounded replay/dedupe·cooldown pending을 각각 fault test 뒤 적용 |
+| P1 | **CSI hot path가 아직 packet 단위** | M1은 전역 5Hz로 조정했지만 M2 executor·위험도·latest SET은 여전히 300pkt/s 경로. solo-M2만 ai-experts CPU 47% | 입력 deque는 100Hz 유지, M2 계약 확정 후 decision tick을 분리 |
+| P1 | **Redis health/latest 쓰기 과다** | sensing은 패킷마다 XADD+SET+HSET+EXPIRE, experts latest도 packet 단위 | health/last_seen 1Hz, latest는 실제 새 추론 때만, snapshot XADD+minute aggregate pipeline 비교 |
+| P1 | **M5 batch thread는 제한되지 않음** | `n_threads=2`만 전달하며 라이브러리 기본 `n_threads_batch`는 전체 CPU 사용 가능 | cache off 상태에서 2/2→3/2→3/3 순으로 전체 p95·CPU PSI 비교 |
+| P1 | **기동·OOM 재시작이 메모리 압박을 증폭** | experts/qwen warmup 약 62초 중첩, peak 7.416GB; OOM 22회 재시작 이력 | PSS/Anonymous 계측 먼저. post-change startup peak>7GB일 때만 순차 warmup; qwen 제한 재시작은 direct fallback 이후 |
+
+운영체제 관점에서 **보류/비권장**: cpuset/isolcpus, `SCHED_FIFO/RR`, IRQ affinity, M4 4 threads,
+performance governor 상시 고정, zram/zswap 상시 활성. peak에서 패킷 손실은 0.08%, 온도 73.8°C,
+throttling 0이었고 M4는 2T 4.43초와 4T 4.45초로 4T 이점이 없었다.
+
+다음 측정 도구에는 RSS 합계 외에 PSS/Anonymous/Private Dirty/SwapPss, `pswpin/pswpout`, major fault,
+cgroup `memory.events`·`memory.swap.current`·`cpu.stat`, Redis commandstats, M5 source ID와
+gate→start→complete 시간을 추가한다. 기존 `solo-m1`·`solo-m4`·`solo-m5`·`base-idle`은 OOM/잔여
+호출에 오염됐으므로 CPU·메모리 최적화의 절대 기준으로 재사용하지 않는다.
+
+예상 자원 범위와 합격선은 `handoff/rpi5-20260917/RESOURCE_BUDGET.md`, 변경 상세와 측정 순서는
+`handoff/rpi5-20260917/TUNING_PROPOSAL.md` 5절을 따른다. 예상 운영 메모리는 5.8~6.4GB,
+p95 6.4~6.8GB이나 **변경 후 실측값이 아니다.**
 
 ---
 
@@ -19,9 +127,9 @@ RPi5 기본값 측정, M1·M2(김태연)·M4(이대경) 병합, fp32 대 INT8 �
 
 | 위치 | 브랜치 / 커밋 | 비고 |
 |---|---|---|
-| GitHub `origin/develop` | 이 문서를 갱신한 커밋 (`f686d93` 이후) | PR #3(M1·M2), PR #4(M4) 병합 포함. `feature/M1-M2`, `m4/lee-daegyeong-whisper-int8` 브랜치 유지 |
-| 노트북 `C:\rp5` | `develop` | 로컬 Docker 수치는 판단에 쓰지 않는다 (RPi5만 의미 있음) |
-| RPi5 `~/safewave` | `develop` `f686d93`, 워킹트리 깨끗 | 17:10 pull 완료. 남아 있던 미커밋 3개는 `origin/develop`과 같은 내용임을 확인하고 `stash@{0}`로 보관. 이 문서 커밋은 `git pull --ff-only origin develop`으로 받을 것 |
+| GitHub `origin/develop` | 로컬 ref `5b30f96` | PR #3(M1·M2), PR #4(M4) 병합 포함. 이번 통합 수정은 아직 원격에 없음 |
+| 노트북 `C:\rp5` | `develop` `5b30f96` + 미커밋 통합 수정 | reset/checkout 금지. 로컬 Docker 수치는 판단에 쓰지 않는다 |
+| RPi5 `~/safewave` | 마지막 확인 `develop` `f686d93`, 워킹트리 깨끗 | 09-17 당시 상태이며 이후 재확인하지 않음. 로컬 통합 수정을 커밋·push하기 전에는 pull하지 말 것. 기존 `stash@{0,1}`도 보존 |
 
 ### RPi5
 
@@ -84,6 +192,10 @@ M5가 약 11초마다 호출됐다(`qwen_invoked`, `risk_score` 0.6506 고정). 
 ---
 
 ## 3. 오늘 남은 일 — RPi5 develop 기본값 속도 측정
+
+> **다음 Claude 주의:** 이 절은 09-17 당시의 원래 측정 절차·기록을 보존한 것이다. 위의 로컬
+> 통합 수정은 아직 RPi5에 배포되지 않았다. 아래 명령을 그대로 실행하기 전에 변경을 커밋·push할지
+> 노진산에게 확인하고, 다음 모델 업데이트 커밋과 함께 `RESOURCE_BUDGET.md` 6절 순서로 재측정한다.
 
 ### 3-1. 최신 코드 반영 (빌드가 끝난 뒤)
 
@@ -215,14 +327,16 @@ M3·M4 입력이 필요하면 대시보드 마이크 패널이나 `scripts/dummy
 > **09-17 저녁 갱신:** 우선순위·근거·확인 방법을 정리한 최신본은 `handoff/rpi5-20260917/TUNING_PROPOSAL.md`.
 > 아래 표는 초기 목록이며, A1(GUI 해제)은 반영 완료. M4 INT8 기본값 전환도 반영 완료.
 
-09-17 기본값 결과는 부하·OOM 포함 그대로 확정. 아래는 **아직 반영하지 않은** 후보다. 병합 측정 중 새로 나오는 항목도 여기에 추가한다.
+09-17 기본값 결과는 부하·OOM 포함 그대로 확정한다. 아래는 당시 후보 목록이다. 현재 로컬 상태는
+**A1 완료, A2·B1·C1·C2·D·E1·H 반영, A3는 Compose만 반영/커널 미반영**, E2·F·G 미반영이다.
+이 표를 현재 TODO로 해석하지 말고 상단의 다음 Claude 인계를 기준으로 한다.
 
 | 번호 | 항목 | 종류 | 근거 (09-17) |
 |---|---|---|---|
 | A1 | RPi5 데스크톱 GUI 해제 (콘솔 부팅) | 시스템 설정 — **사용자가 직접 실행** | OOM 촉발 `wf-panel-pi`, OS·데스크톱 약 1.2 GB |
 | A2 | ai-qwen 프롬프트 캐시 256 → 64 MB (`QWEN_GGUF_CACHE_MB`) | 설정 | ai-qwen 2.0 → 3.3 GB 증가 후 OOM |
 | A3 | 커널 메모리 cgroup 활성 + 컨테이너 메모리 상한 | 시스템 설정 + 재부팅 (선택) | 전역 OOM → 스왑 폭주 → sensing까지 정지 |
-| B1 | **[기능 차단]** M1 추론 간격 `M1_INFER_STRIDE` (노드당 N프레임마다, 후보 10) | 코드 | M1 약 5 ms × 300 pkt/s → backlog 건너뜀 → 노드 버퍼 리셋 → 100프레임 창이 안 참 → **M1이 전부 0 입력만 추론** (기본값·병합 후 모두 점수 한 값 고정, TEST_LOG 12절) |
+| B1 | **[반영]** M1 전역 200ms 추론·창끝 게이트·K=3/N=5 | 코드 | M1 약 5 ms × 300 pkt/s → backlog 건너뜀 → 노드 버퍼 리셋 → **0 입력 고정**. 현재는 100Hz 격자 zero-fill과 필수 노드 1·2·3 게이트로 조정했지만 RPi5 재측정 전 |
 | C1 | 오디오 워커 순서 M3→M4 를 M4→M3 | 코드 | 음성 1건 M3 6.3 s + M4 11.1 s > Phase 2 15 s |
 | C2 | M4 최대 생성 토큰 128 → 48 (env 노출) | 코드 | 환각 시 장시간 생성, 워밍업 약 50 s |
 | D | 스레드 배분 A/B — 현행(M3 2·M4 2·M5 3) vs (M3 1·M4 2·M5 2) | 설정 | 동시 실행 CPU 91%, M5 9 s → 23 s |
@@ -248,6 +362,10 @@ M3·M4 입력이 필요하면 대시보드 마이크 패널이나 `scripts/dummy
 
 ## 4-1. 다음 작업 — 통합 파트 리팩토링 (Codex 시작점)
 
+> **상태 갱신:** 이 절에서 지목한 1차 통합 리팩토링은 로컬 작업 트리에 반영됐다. 다음 Claude는
+> 같은 점검을 처음부터 반복하지 말고 상단 변경표와 `git diff`를 검토한다. 다음 구현 후보는
+> M5 우회 1차 경보, service profile 축소, 선택 모델 로드이며 모두 노진산 결정 후 진행한다.
+
 목표: 통합 파트의 누수·오류·허점을 점검하고 클린 코드로 정리한다. 모델 내부(M1~M4 가중치·전처리)는 담당자 영역이라 건드리지 않는다.
 진행 방식: **점검 목록을 먼저 만들어 노진산에게 보여주고, 승인된 항목만 고친다.** 조정안 반영은 노진산이 결정한다.
 
@@ -271,12 +389,11 @@ M1 인계 지시(`_preprocess`·슬롯 조립·임계값 0.80·`.onnx` 무수정
 
 1. **노드 1 간헐적 대량 손실 이력.** 09-17 오후 노드 1이 18~35% 손실, 최대 1초 공백(RSSI는 -26dBm로 양호).
    ESP 3대 전원 재시작 후 0.3~1.4%, 공백 10ms로 회복(노드 2·3은 2~4.5%, 노드 3 RSSI -35~-38dBm).
-   `M1_MAX_NODES=1`이라 M1은 노드 1만 쓰므로, 노드 1이 다시 나빠지면 M1 버퍼가 초기화돼 추론이 끊긴다.
+   현재 코드 기본은 `M1_MAX_NODES=5` 고정 슬롯이다. 노드 1이 다시 나빠지면 해당 슬롯 버퍼가 초기화될 수 있다.
    재발하면 신호보다 전원·발열·펌웨어를 먼저 의심. 측정 중 손실은 `bench_rpi5.py` 결과의 노드 표로 기록한다.
-2. **M3·M4 대기열 누적 위험.** 노트북에서 오디오 1건 처리 약 2.75초 > 입력 간격 2초 → 지연이 선형 증가.
-   RPi5에서 건당 처리 시간이 입력 간격보다 길면 Phase 2 응답이 15초 창을 넘겨 응급으로 오판정될 수 있다.
-3. **M1 워밍업 버그.** `ai/main.py`가 1차원 신호로 워밍업 → `(1,1,64,100)`. 1노드 모델에선 동작하지만
-   5노드 모델에선 실패해 첫 추론에 세션 초기화 비용이 섞인다. 5노드 모델 병합 전에 고칠 것.
+2. **M3·M4 대기열 누적 — 로컬 코드 조정 완료/RPi5 미검증.** 최신 1건 병합, M4 우선,
+   Phase 2 중 M3 생략을 반영했다. 이벤트→결과 p50 30.7초/최대 49초가 15초 안으로 들어오는지 다시 잰다.
+3. **M1 워밍업 버그 — 로컬 해결/RPi5 미검증.** 운영과 같은 `(1,M1_MAX_NODES,64,100)`으로 바꿨다.
 4. **RPi5 `stash@{1}` 정리.** sigmoid는 develop에 반영됨, ORT 스레드 제한은 develop의 `get_session_opts`와 중복,
    M3 부분은 `sess_options`를 두 번 넘기는 오류가 있었다. 팀원 확인 후 drop 여부 결정.
 5. RPi5 메모리 cgroup 비활성 → 컨테이너별 메모리 측정 불가. 필요하면 `cmdline.txt`에
