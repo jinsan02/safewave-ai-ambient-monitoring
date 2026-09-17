@@ -29,6 +29,25 @@ RPi5 기본값 측정, M1·M2(김태연)·M4(이대경) 병합, fp32 대 INT8 �
 커밋 전 재확인: `compileall`, `tests.test_m5_pipeline` 18개 통과, 기본·audio·voice·integration·home profile
 `docker compose config --quiet` 통과, `git diff --check` 이상 없음. 이미지 빌드·컨테이너 실행은 하지 않았다.
 
+#### 09-17 추가 — M5 우회 1차 경보와 경보 누락 수정 (코드·단위 테스트만, RPi5 미검증)
+
+서브에이전트 3관점(경보 경로 추적·재사용 코드·남은 허점) 조사 결과, 경보가 M5에 완전히 묶여 있었고
+(ai:emergency 기록자는 ai-qwen뿐, API는 critical만 처리하는데 규칙 floor는 0.65) FCM이 음성 확인 30초 뒤에 나갔다.
+
+| 변경 | 내용 |
+|---|---|
+| 규칙 1차 경보 | `ai/main.py` `_write_rule_alert`: `risk_policy.rule_alert_reason`(낙상 K/N 확정·낙상+위험음·생체신호 위기)이면 M5 없이 `ai:emergency`에 critical(`slm_mode="rule"`, `gate_score` 보존) 기록. 노드별 90초 쿨다운, `phase2:active` 있으면 생략, Redis 오류는 로그만. `RULE_ALERT_ENABLED`(기본 true). 스냅샷에 `rule_alert` |
+| FCM 먼저 | `api/main.py` `_handle_single_emergency`: 락 → **즉시 critical FCM** → `VOICE_ENABLED=true`일 때만 TTS·STT 확인 → "괜찮다" 응답이면 후속 warning 알림(`notify:followup:{msg_id}:{device}`, TTL 3600). 기본 Core 구성은 `VOICE_ENABLED=false` |
+| Redis 가득 참 | 락·중복 방지 키·TTS 큐 쓰기 실패 시에도 FCM은 발송 |
+| 오래된 응답 | `_fresh_transcript`: TTS 재생 종료 이후 녹음된 오디오의 transcript만 인정 |
+| API 재시작 | alert worker가 `$` 대신 최근 `ALERT_REPLAY_MS`(30초)부터 읽음. 중복은 `notify:sent`가 막음 |
+| M1 투표 | 창끝 게이트만 놓친 tick은 K/N 투표 유지(`should_reset_m1_votes`), 창 미충족·결과 1초 초과일 때만 초기화 |
+
+테스트 25개 통과(추가 7개). 남은 것: ai-experts·ai-qwen Redis 쓰기 실패 대응, ai-qwen 쿨다운 중 요청 보류,
+단일 마이크 노드 필터, `/status` stale 표시, M1 중복 시각·긴 공백 처리, ai-qwen 내부 규칙 대체 경로(생체신호 위기 0.75,
+`label` 미참조), cooldown 락 90초 동안 같은 노드 두 번째 사건 미평가(정책 결정 필요).
+**RPi5 확인 항목:** 규칙 경보가 M1 3/5 확정 시 1회만 기록되는지, ai-qwen을 멈춘 상태에서도 FCM이 나가는지.
+
 #### 해결·조정한 문제
 
 | 영역 | 기존 문제 | 로컬 반영 내용 | 현재 판정 |
@@ -77,8 +96,7 @@ profile을 포함한 `docker compose config --quiet`, `git diff --check`. 노트
    제거하지 않았고, 검증 모델이 오면 별도 재배선한다.
 5. MQTT/TTS/audio/HA profile 분리는 반영해 현재 기본 Compose는 Core 5개다. 다만 TTS 고정 WAV와
    M2~M4 선택 로드는 아직 코드에 반영하지 않았다.
-6. 명확한 낙상·vital crisis의 1차 경보가 M5를 우회하는 fallback은 미구현이다. 현재는 M5 실패가
-   `ai:emergency` 생성 실패로 이어질 수 있어 MVP 가용성 관점의 가장 큰 남은 구조적 위험이다.
+6. ~~M5 우회 1차 경보 미구현~~ → 09-17 추가 절에서 반영(규칙 경보·FCM 먼저). RPi5 동작 확인 전.
 7. ai-experts CPU 이미지의 CUDA torch 제거, M4 반복 방지 wrapper 통합, 대시보드 준비 상태 표시는 미반영이다.
 8. **Redis 512MB/noeviction 도달 시 전 서비스의 실패 처리는 완전하지 않다.** sensing CSI와 audio는
    `ResponseError`를 제한 처리하지만 ai-experts/M5/API 쓰기는 동일 수준의 backpressure·경보 처리가 없다.
