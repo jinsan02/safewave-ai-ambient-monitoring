@@ -14,6 +14,29 @@ RPi5 기본값 측정, M1·M2(김태연)·M4(이대경) 병합, fp32 대 INT8 �
 담당자 공유 문서: `handoff/rpi5-20260917/TO_KIMTAEYEON_M1_M2.md`, `handoff/rpi5-20260917/REPLY_TO_KIMTAEYEON_M1.md`, `TO_LEEDAEGYEONG_M4.md`.
 측정 원자료·상세 기록: 노트북·RPi5 `reports/rpi5-20260917/` (`TEST_LOG.md`, Git 제외).
 
+### 09-17 밤 — 노트북 RPi5 유사 환경 전체 테스트와 M1 2차 답변 반영
+
+기록: 노트북 `reports/laptop/LAPTOP_TEST_LOG.md`(Git 제외). **노트북 수치는 기능 확인용이며 보고서에 쓰지 않는다.**
+
+| 구분 | 내용 |
+|---|---|
+| 테스트 도구 | `scripts/sim_esp32.py`(3노드 100Hz UDP → sensing, M4 평가 음성 주입), `scripts/alert_e2e_check.py`(경보 경로·규칙 경보 확인), 노트북 override `reports/laptop/compose.laptop.yml`(CPU 한도 보정) |
+| 확인된 것 | 5개 서비스 기동, sensing 298pkt/s 파싱 오류 0, M1 실제 창 추론 분당 약 297/300, 음성 이벤트→결과 10.9~12.9s(보정 후), **ai-qwen 정지 상태에서 규칙 경보→API 발송 시도**까지 동작 |
+| 테스트 중 고친 것 | 규칙 경보 3중 발송(M1은 전역 모델 → 낙상 규칙은 전역 1건), M5 critical 뒤 락 노드 요청 낭비(ai-experts가 `phase2:active` 노드는 요청 생략), 격자 손실 로그 과다(60초 `m1_gate_stats`로 통합), Firebase 키 없을 때 조용한 실패(`fcm_unavailable` 시작 로그), CPU 전용 torch(ai-experts 이미지 8.79→2.29GB) |
+| M1 2차 답변(김태연) | 생략 tick은 0표로 K/N에 포함(`record_skipped_m1_ticks`), zero-fill 격자를 **수신 시각(stream id) ±5ms 전역 슬롯**으로 변경(`grid_slot`, `place_m1_grid_frame`, 장치 시계 처리 제거), 창끝 허용치 기본 15ms(0이면 게이트 끔). 회신 초안 `handoff/rpi5-20260917/REPLY2_TO_KIMTAEYEON_M1.md`(슬롯 충돌 처리·격자 원점 확인 요청) |
+| 사람 관점 수정 | "일어날 수가 없어/힘이 없어"가 "괜찮음"으로 분류되던 문제, "괜찮다" 후속 알림이 응급 알림처럼 보이던 문제(별도 일반 알림), 알림 본문에 노드·사유 표시, 대화 내용 로그 제거, Redis 포트 `127.0.0.1`만 바인딩 |
+| Docker Desktop(노트북) | 소켓 파일 접근 불가(Win32 1920)로 시작 실패 반복 → `scripts/dev/start_docker_desktop.ps1 -Restart` 사용(소켓 폴더 비켜두기, 자동 업데이트 끄기). 근본 원인(필터 드라이버 추정)은 관리자 권한 `fltmc filters`로 확인 필요 |
+
+**RPi5에서 볼 것:** `m1_gate_stats`의 `zero_filled_frames`·`slot_collisions`(노트북은 시뮬레이터 몰아 보내기로 분당 1,797·1,080), 창끝 허용치 10/15ms 통과율, 규칙 경보 1건 여부.
+
+**결정 필요(사람 관점 점검에서 남은 것):**
+1. M5가 규칙 점수 0.09~0.13 입력을 critical(1.0)로 올릴 수 있음 — 낙상 발화였으므로 타당했지만, M5 단독 상향 폭 제한 여부
+2. 응답 없음·도움 요청 시 재알림·보호자 확인(ack)·119 연계 등 에스컬레이션
+3. 시스템 정지·노드 오프라인을 보호자에게 알리는 heartbeat
+4. API 인증(현재 없음, CORS `*`), 설정 변경(M1·AI 끄기) 보호, MQTT 익명 허용
+5. 음성 원본 보존 정책·마이크 동의·음소거, TTS 인터넷 의존(로컬 WAV)
+6. 알림 수신 기기 ID 기본값 공유(`galaxy_flip4`), 노드→방 이름 매핑, 대시보드 좁은 화면 레이아웃
+
 ### 다음 작업자 인계 — 통합 최적화 작업 (커밋 완료, RPi5 재측정 전)
 
 아래 변경은 09-17 노진산 확인 후 `develop`에 5개 커밋으로 올렸다.
