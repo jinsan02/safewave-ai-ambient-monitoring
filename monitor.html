@@ -730,6 +730,7 @@
       ws.onmessage = (e) => {
         let msg;
         try { msg = JSON.parse(e.data); } catch { return; }
+        if (msg && msg.ping) return;  // 연결 유지 신호는 결과가 아님
         const parsed = parseResult(msg.data || msg);
         if (parsed) updateUI(parsed);
       };
@@ -744,7 +745,7 @@
     // 최초 /status 폴링 (WebSocket 연결 전 초기값)
     fetch(API + '/status')
       .then(r => r.json())
-      .then(d => { const p = parseResult(d.raw || d); if(p) updateUI(p); })
+      .then(d => { const p = parseResult(d.raw || d); if(p && p.ts_ms) updateUI(p); })
       .catch(() => {});
 
     initMinuteChart();

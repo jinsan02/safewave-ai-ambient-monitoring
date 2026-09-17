@@ -60,6 +60,18 @@ TTS_QUEUE_COOLDOWN_SEC = int(os.getenv("TTS_QUEUE_COOLDOWN_SEC", "10"))
 # 안내 문구 — 마이크가 재생음을 재녹음(에코)해도 api Phase 2 의도 분류
 # 키워드(위험/응급/괜찮 등)에 걸리지 않도록 중립 단어만 사용한다.
 NEUTRAL_PROMPT_TEXT = "이상이 감지되었습니다. 상태를 말씀해 주세요."
+# 합성·재생이 멈추면 직렬 발화 루프 전체가 막히므로 상한을 둔다.
+TTS_SYNTH_TIMEOUT_SEC = float(os.getenv("TTS_SYNTH_TIMEOUT_SEC", "10"))
+TTS_PLAY_TIMEOUT_SEC = float(os.getenv("TTS_PLAY_TIMEOUT_SEC", "20"))
+
+
+async def _wait_or_kill(proc) -> None:
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=TTS_PLAY_TIMEOUT_SEC)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        print(f"[tts] playback timeout after {TTS_PLAY_TIMEOUT_SEC}s — killed")
 
 
 def should_speak(payload: dict) -> bool:
@@ -77,7 +89,7 @@ async def synthesize(text: str) -> Path:
     for attempt in range(3):
         try:
             communicate = edge_tts.Communicate(text=text, voice=VOICE)
-            await communicate.save(str(out_path))
+            await asyncio.wait_for(communicate.save(str(out_path)), timeout=TTS_SYNTH_TIMEOUT_SEC)
             return out_path
         except Exception as exc:
             last_exc = exc
@@ -102,14 +114,14 @@ async def play_audio(path: Path):
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            await proc.wait()
+            await _wait_or_kill(proc)
             return
         proc = await asyncio.create_subprocess_exec(
             "mpg123", "-q", str(path),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        await proc.wait()
+        await _wait_or_kill(proc)
     except FileNotFoundError:
         print("[tts] mpg123 not found — audio playback skipped")
     except Exception as exc:
@@ -181,7 +193,8 @@ async def _mqtt_loop(client: mqtt.Client, r: aioredis.Redis):
     client.on_connect = on_connect
     client.on_message = on_message
     try:
-        client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
+        # 브로커가 늦게 떠도 loop_start 백그라운드에서 계속 재접속한다.
+        client.connect_async(MQTT_HOST, MQTT_PORT, keepalive=30)
     except Exception as exc:
         print(f"[tts] MQTT connect failed: {exc} — MQTT loop disabled")
         return

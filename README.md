@@ -180,8 +180,8 @@ ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶
 | `agg:minute:*` | Hash | TTL 3600s | 분 단위 집계 차트 |
 | `node:N:last_seen` | String | TTL 30s | 노드 마지막 수신 시각 |
 | `node:N:health` | Hash | TTL 3600s | rx/lost/loss_rate 패킷 통계 |
-| `sys:settings` | String | TTL 3600s | 앱 설정값(JSON) |
-| `fcm:token:*` | String | TTL 3600s | FCM 등록 기기 토큰 |
+| `sys:settings` | String | TTL 3600s (API 동작 중 10분마다 연장) | 앱 설정값(JSON) |
+| `fcm:token:*` | String | TTL 3600s (API 동작 중 10분마다 연장) | FCM 등록 기기 토큰 |
 | `mqtt:feedback:last` | String | TTL 3600s | MQTT 피드백 마지막 값 |
 | `tts:speak:queue` | List | — | TTS 발화 요청 큐 (`tts_worker.py` BLPOP 소비) |
 | `user:voice_response:N` | String | TTL 5s | TTS 재생 완료 신호 (노드별, Phase 2 응급 확인 트리거) |
@@ -338,6 +338,10 @@ AUDIO_CHANNELS=1
 | `RULE_ALERT_COOLDOWN_MS` | 규칙 경보 노드별 재기록 간격 (기본 90000ms, Phase 2 락과 동일) |
 | `VOICE_ENABLED` | API가 FCM 발송 뒤 TTS·STT 음성 확인을 진행할지 (기본 false, voice 프로필과 함께 true) |
 | `ALERT_REPLAY_MS` | API alert worker 시작 시 되짚어 읽는 구간 (기본 30000ms) |
+| `VOICE_NODE_ID` | 음성 응답을 찾을 마이크 노드 (Compose 기본 1, 0이면 경보 노드와 같은 노드) |
+| `TTL_REFRESH_SEC` | API가 `fcm:token:*`·`sys:settings` TTL(3600s)을 연장하는 주기 (기본 600s) |
+| `AUDIO_STALL_EXIT_SEC` | 오디오 워커가 한 건을 이 시간 넘게 처리하거나 죽으면 ai-experts 종료 후 재시작 (기본 180s) |
+| `TTS_SYNTH_TIMEOUT_SEC` / `TTS_PLAY_TIMEOUT_SEC` | TTS 합성·재생 상한 (기본 10s / 20s) |
 | `VAD_THRESHOLD_DB` | VAD 임계값(dBFS). `-55` ~ `-60`이면 원거리 소리에 민감 |
 | `M2_CSI_WINDOW_FRAMES` | M2 시간축 누적 프레임 수 (기본 300 = 3초 @ 100Hz). 호흡 완전 해상도는 1000프레임(10초) 권장 |
 

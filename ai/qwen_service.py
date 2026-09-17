@@ -243,6 +243,7 @@ def run():
 
         except Exception as exc:
             _log(logging.ERROR, "qwen_service_error", error=str(exc))
+            time.sleep(1)
 
 
 if __name__ == "__main__":

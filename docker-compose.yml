@@ -120,6 +120,7 @@ services:
       - M1_INFER_INTERVAL_MS=${M1_INFER_INTERVAL_MS:-200}
       - RULE_ALERT_ENABLED=${RULE_ALERT_ENABLED:-true}
       - RULE_ALERT_COOLDOWN_MS=${RULE_ALERT_COOLDOWN_MS:-90000}
+      - AUDIO_STALL_EXIT_SEC=${AUDIO_STALL_EXIT_SEC:-180}
       - M1_RESULT_MAX_AGE_MS=${M1_RESULT_MAX_AGE_MS:-1000}
       - M1_AGGREGATION_K=${M1_AGGREGATION_K:-3}
       - M1_AGGREGATION_N=${M1_AGGREGATION_N:-5}
@@ -197,6 +198,8 @@ services:
       # voice 프로필(tts-worker·audio-sensing)을 함께 띄울 때만 true
       - VOICE_ENABLED=${VOICE_ENABLED:-false}
       - ALERT_REPLAY_MS=${ALERT_REPLAY_MS:-30000}
+      # 단일 마이크 노드 번호(0이면 경보 노드와 같은 노드의 응답만 사용)
+      - VOICE_NODE_ID=${VOICE_NODE_ID:-1}
     volumes:
       - ./api/auth:/app/auth:ro
     networks:

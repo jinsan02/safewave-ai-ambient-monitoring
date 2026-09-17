@@ -77,6 +77,11 @@ M2_CSI_WINDOW_FRAMES = int(os.getenv("M2_CSI_WINDOW_FRAMES", "1000"))
 # 1000프레임 = 10초 @ 100Hz; FFT bin 폭 0.1 Hz → 호흡 대역(0.1-0.6 Hz) 5 bin
 CSI_BACKLOG_SKIP_STREAK = int(os.getenv("CSI_BACKLOG_SKIP_STREAK", "5"))
 EXPERT_INFER_TIMEOUT_MS = int(os.getenv("EXPERT_INFER_TIMEOUT_MS", "1000"))
+# 오디오 워커가 한 건을 이 시간 넘게 붙잡고 있거나 스레드가 죽으면 프로세스를 종료해
+# restart: always로 복구한다. 추론 스레드는 강제로 멈출 수 없기 때문이다.
+AUDIO_STALL_EXIT_SEC = int(os.getenv("AUDIO_STALL_EXIT_SEC", "180"))
+# ai:mN:latest 중 매 패킷 계산되는 M2는 노드별 최소 간격으로만 기록한다.
+EXPERT_LATEST_MIN_INTERVAL_MS = int(os.getenv("EXPERT_LATEST_MIN_INTERVAL_MS", "1000"))
 MQTT_ENABLED = os.getenv("MQTT_ENABLED", "0").lower() not in {"0", "false", "no"}
 MQTT_HOST = os.getenv("MQTT_HOST", "mqtt")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
@@ -110,8 +115,6 @@ def _init_mqtt(redis_client):
     if not MQTT_ENABLED:
         return None
 
-    client = make_client(MQTT_CLIENT_ID)
-
     def on_connect(_client, _userdata, _flags, rc):
         _log(logging.INFO, "mqtt_connected", rc=rc, host=MQTT_HOST, port=MQTT_PORT)
         _client.subscribe(MQTT_FEEDBACK_TOPIC)
@@ -127,10 +130,10 @@ def _init_mqtt(redis_client):
             except Exception as exc:
                 _log(logging.WARNING, "mqtt_feedback_store_failed", error=str(exc))
 
-    client.on_connect = on_connect
-    client.on_message = on_message
     try:
-        client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
+        client = make_client(MQTT_CLIENT_ID, on_message=on_message, on_connect=on_connect)
+        # connect_async + loop_start: 브로커가 늦게 떠도 백그라운드에서 계속 재접속한다.
+        client.connect_async(MQTT_HOST, MQTT_PORT, keepalive=30)
         client.loop_start()
         return client
     except Exception as exc:
@@ -496,11 +499,27 @@ def _load_latest_audio_result(node_id: int, now_ms: int) -> dict | None:
     return payload if age_ms <= AUDIO_RESULT_MAX_AGE_MS else None
 
 
+_audio_busy_since = 0.0  # 오디오 워커가 현재 건 처리를 시작한 monotonic 시각(0=대기)
+
+
+def _audio_watchdog(worker: threading.Thread) -> None:
+    while True:
+        time.sleep(10)
+        busy_since = _audio_busy_since
+        stalled = busy_since and time.monotonic() - busy_since > AUDIO_STALL_EXIT_SEC
+        if stalled or not worker.is_alive():
+            _log(logging.CRITICAL, "audio_worker_stalled", alive=worker.is_alive(),
+                 busy_sec=round(time.monotonic() - busy_since, 1) if busy_since else 0,
+                 action="exit_for_restart")
+            os._exit(1)
+
+
 def _audio_worker_loop(r, ai_engine) -> None:
     """M3(AST)+M4(Whisper) 독립 데몬 스레드.
     audio:events 구독 → M3/M4 순차 실행 → audio:result 저장.
     CSI 루프와 ThreadPoolExecutor를 공유하지 않으므로 CSI 처리 지연 없음.
     """
+    global _audio_busy_since
     _log(logging.INFO, "audio_worker_started")
     last_id = "$"
     m3 = ai_engine.experts.get("env_sound")
@@ -521,6 +540,7 @@ def _audio_worker_loop(r, ai_engine) -> None:
 
                 last_id = msg_id
                 ts_ms = _stream_id_ts_ms(msg_id)
+                _audio_busy_since = time.monotonic()
 
                 meta = _json_loads(fields.get(b"data", b"")) or {}
                 try:
@@ -572,18 +592,21 @@ def _audio_worker_loop(r, ai_engine) -> None:
                     "env_sound":   m3_result,
                     "speech_ko":   m4_result,
                 }
+                # 스트림 쓰기가 거부돼도(noeviction) 같은 프로세스의 CSI 병합은 유지한다.
+                _cache_audio_result(node_id, payload)
+                _audio_busy_since = 0.0
                 r.xadd(
                     AUDIO_RESULT_STREAM,
                     {"data": json.dumps(payload, ensure_ascii=False, default=str)},
                     maxlen=600,
                     approximate=True,
                 )
-                _cache_audio_result(node_id, payload)
                 _log(logging.INFO, "audio_result_written",
                      ts_ms=ts_ms,
                      env_label=m3_result.get("env_sound_label", ""),
                      transcript=str(m4_result.get("transcript_ko", ""))[:30])
         except Exception as exc:
+            _audio_busy_since = 0.0
             _log(logging.ERROR, "audio_worker_error", error=str(exc))
             time.sleep(1)
 
@@ -812,8 +835,12 @@ if __name__ == "__main__":
     ai_engine = AIEngine()
 
     # M3/M4 오디오 추론 — CSI 루프와 독립된 데몬 스레드
-    threading.Thread(
+    audio_worker = threading.Thread(
         target=_audio_worker_loop, args=(r, ai_engine), daemon=True, name="audio-worker"
+    )
+    audio_worker.start()
+    threading.Thread(
+        target=_audio_watchdog, args=(audio_worker,), daemon=True, name="audio-watchdog"
     ).start()
     _log(logging.INFO, "audio_worker_thread_started")
     _log(logging.INFO, "inference_loop_started", stream="csi:raw")
@@ -839,6 +866,7 @@ if __name__ == "__main__":
     _node_last_level:    dict[int, str] = {}
     _node_last_audio_ts: dict[int, int] = {}
     _node_rule_alert_ms: dict[int, int] = {}
+    _node_vital_latest_ms: dict[int, int] = {}
     _error_last_id = None
     _error_streak = 0
     while True:
@@ -1042,7 +1070,19 @@ if __name__ == "__main__":
                         expert_results["speech_ko"] = audio_from_stream.get("speech_ko") or expert_results.get("speech_ko", {})
                     audio_result = audio_from_stream  # snapshot audio 메타용
 
+                    # ai:mN:latest는 실제로 새 결과가 나온 것만 기록한다. 노드마다 패킷 단위로
+                    # 덮어쓰면 오디오가 없는 노드의 빈 M3/M4가 실제 결과를 지운다.
+                    latest_due = set()
+                    if m1_due and expert_results.get("fall"):
+                        latest_due.add("fall")
+                    if audio_from_stream and                             audio_from_stream.get("ts_ms") != _node_last_audio_ts.get(node_id):
+                        latest_due.update(("env_sound", "speech_ko"))
+                    if "vital" in expert_results and                             now_ms - _node_vital_latest_ms.get(node_id, 0) >= EXPERT_LATEST_MIN_INTERVAL_MS:
+                        latest_due.add("vital")
+                        _node_vital_latest_ms[node_id] = now_ms
                     for expert_name, output in expert_results.items():
+                        if expert_name not in latest_due:
+                            continue
                         write_output = output
                         if expert_name == "env_sound":
                             ats  = (audio_from_stream or {}).get("ts_ms")

@@ -74,6 +74,11 @@ class UnifiedSnapshot(BaseModel):
     correlated_with_history: bool = False
     qwen_reason: str | None = None
     slm_mode: str | None = None
+    slm_needed: bool = False
+    rule_alert: bool = False
+    emergency_breakdown: dict[str, Any] | None = None
+    expert_latency_ms: dict[str, Any] = Field(default_factory=dict)
+    model_latency_ms: dict[str, Any] = Field(default_factory=dict)
 
 
 class EmergencySummary(BaseModel):
@@ -83,6 +88,8 @@ class EmergencySummary(BaseModel):
     risk_level: str = "normal"
     emergency: bool = False
     summary: str = ""
+    slm_mode: str | None = None
+    qwen_reason: str | None = None
 
 
 class TokenRegistration(BaseModel):
@@ -193,6 +200,10 @@ TTS_WAIT_SEC        = int(os.getenv("TTS_WAIT_SEC", "15"))
 VOICE_ENABLED       = os.getenv("VOICE_ENABLED", "false").lower() in ("1", "true", "yes")
 # alert worker 시작·재시작 시 되짚어 읽는 구간. 중복 발송은 notify:sent 키가 막는다.
 ALERT_REPLAY_MS     = int(os.getenv("ALERT_REPLAY_MS", "30000"))
+# 단일 마이크 구성: 응답 transcript를 이 노드의 오디오에서 찾는다(빈 값이면 경보 노드와 같은 노드).
+VOICE_NODE_ID       = int(os.getenv("VOICE_NODE_ID", "0") or 0)
+# FCM 토큰·설정은 TTL 1시간을 지키되, API가 살아 있는 동안 주기적으로 연장한다.
+TTL_REFRESH_SEC     = int(os.getenv("TTL_REFRESH_SEC", "600"))
 AUDIO_CLIP_KEY_PREFIX = "ai:clip:"
 AUDIO_CLIP_TTL_SECONDS = int(os.getenv("AUDIO_CLIP_TTL_SECONDS", "3600"))
 AUDIO_CLIP_POST_WAIT_MS = int(os.getenv("AUDIO_CLIP_POST_WAIT_MS", "15000"))
@@ -532,7 +543,8 @@ async def _run_phase2(redis_client, payload: dict, node_id: int) -> str:
     after_entries = await redis_client.xrevrange(RESULT_STREAM, count=1)
     after_id = after_entries[0][0] if after_entries else "$"
     transcript = await _get_phase2_transcript(
-        redis_client, after_id, timeout=PHASE2_TIMEOUT_SEC, node_id=node_id, since_ms=since_ms
+        redis_client, after_id, timeout=PHASE2_TIMEOUT_SEC,
+        node_id=VOICE_NODE_ID or node_id, since_ms=since_ms,
     )
     intent = _classify_phase2(transcript)
     _log(logging.INFO, "phase2_result", node_id=node_id, transcript=transcript, intent=intent)
@@ -591,6 +603,27 @@ async def _handle_single_emergency(redis_client, msg_id: str, payload: dict):
             await redis_client.set(lock_key, "cooldown", xx=True, keepttl=True)
         except RedisError as exc:
             _log(logging.WARNING, "phase2_lock_update_failed", node_id=node_id, error=str(exc))
+
+
+async def _ttl_refresh_worker():
+    """등록 토큰과 설정의 TTL(≤3600s)을 주기적으로 연장한다.
+
+    운영 중에는 1시간 뒤 푸시가 끊기거나 설정이 기본값으로 돌아가지 않고,
+    시스템이 1시간 넘게 멈추면 규칙대로 만료된다.
+    """
+    while True:
+        try:
+            redis_client = await _ensure_redis()
+            refreshed = 0
+            async for key in redis_client.scan_iter(match=f"{TOKEN_KEY_PREFIX}*"):
+                refreshed += int(bool(await redis_client.expire(key, TOKEN_TTL_SECONDS)))
+            await redis_client.expire(SETTINGS_KEY, SETTINGS_TTL_SECONDS)
+            _log(logging.DEBUG, "ttl_refreshed", tokens=refreshed)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            _log(logging.WARNING, "ttl_refresh_failed", error=str(exc))
+        await asyncio.sleep(TTL_REFRESH_SEC)
 
 
 async def _alert_worker():
@@ -652,16 +685,18 @@ async def startup():
     task = asyncio.create_task(_alert_worker())
     task.add_done_callback(_restart_alert_worker)
     app.state.alert_worker = task
+    app.state.ttl_refresh = asyncio.create_task(_ttl_refresh_worker())
     _log(logging.INFO, "startup_completed", redis_host=REDIS_HOST, redis_port=REDIS_PORT)
 
 
 @app.on_event("shutdown")
 async def shutdown():
-    worker = getattr(app.state, "alert_worker", None)
-    if worker is not None:
-        worker.cancel()
-        with suppress(asyncio.CancelledError):
-            await worker
+    for name in ("alert_worker", "ttl_refresh"):
+        worker = getattr(app.state, name, None)
+        if worker is not None:
+            worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await worker
     pending_phase2 = list(_phase2_tasks)
     for task in pending_phase2:
         task.cancel()
