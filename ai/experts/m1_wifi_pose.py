@@ -11,6 +11,9 @@ import onnxruntime as ort
 
 from utils import get_ort_providers, get_session_opts
 
+# 인계 README(handoff/m1-m2-20260916) 권고값 — 빈 방 발화 대비 우도비 기준
+FALL_THRESHOLD = float(os.getenv("M1_FALL_THRESHOLD", "0.80"))
+
 
 class WifiPoseModel:
     def __init__(self, model_path):
@@ -54,16 +57,13 @@ class WifiPoseModel:
             score = motion_energy / 1.5
         else:
             score = float(output_arr.reshape(-1)[0])
-            # 학습 CNN-GRU(pose 레포)는 시그모이드 전 logit을 낸다 — clip만 하면 0/1로 포화
-            if self.session.get_outputs()[0].name == "fall_logit":
-                score = float(1.0 / (1.0 + np.exp(-np.clip(score, -60.0, 60.0))))
         score = float(np.clip(score, 0.0, 1.0))
-        return {"fall_score": score, "fall_detected": score >= 0.7, "infer_source": "onnx", "infer_confidence": 0.75}
+        return {"fall_score": score, "fall_detected": score >= FALL_THRESHOLD, "infer_source": "onnx", "infer_confidence": 0.75}
 
     def _infer_fallback(self, data):
         variance = float(np.var(data))
         score = float(np.clip(variance * 10.0, 0.0, 1.0))
-        return {"fall_score": score, "fall_detected": score >= 0.7, "infer_source": "heuristic", "infer_confidence": 0.40}
+        return {"fall_score": score, "fall_detected": score >= FALL_THRESHOLD, "infer_source": "heuristic", "infer_confidence": 0.40}
 
     def infer(self, sensor_data):
         data = self._preprocess(sensor_data)
