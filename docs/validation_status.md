@@ -76,6 +76,22 @@ these are **not** device evidence under the definitions above.
 - `docker stats` reports `0B` memory on this RPi5 because the memory cgroup is not enabled.
   Use host memory or process RSS for memory measurements.
 
+Afternoon additions (same day, raw data in the ignored `reports/rpi5-20260917/`, summary in
+`handoff/rpi5-20260917/`):
+
+- M4 on the RPi5 (28 directly recorded clips of the teammate's fixed evaluation set, service decoding
+  path, no repetition guard, 2 threads, other AI services stopped): fp32 `SungBeom/whisper-small-ko`
+  CER 44.2% / WER 80.0% / keyword 46.4% / 8.45 s per clip / peak RSS 4,666 MB; teammate INT8 with a
+  patched `generation_config.json` CER 15.2% / WER 27.5% / keyword 75.0% / 4.43 s / 2,259 MB.
+  This set was used for model selection, so it is not an independent test result.
+- Full stack (all models, speech every 15 s, M5 forced) for 120 s: the fp32 run restarted containers
+  (OOM) and is invalid; the INT8 run completed with no restarts, but speech event-to-result delay was
+  30.7 s p50 and ai-qwen RSS grew from 2.0 GB to 4.3 GB.
+- **M1 never received a real CSI window** in any pipeline run that day: its score stayed at the
+  all-zero-input output. The CSI loop cannot keep up with per-packet M1 inference, skips backlog, and
+  resets node buffers. No M1 detection behaviour on the RPi5 is established.
+- The RPi5 now boots to the console (desktop GUI disabled) and uses the INT8 M4 by default.
+
 ### Measurement caveats found
 
 - M3/M4 run in the audio worker thread, not in `process_experts`. `expert_latency_ms.env_sound`

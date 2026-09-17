@@ -3,21 +3,25 @@
 > 작성: 2026-09-17 · 작성자 노진산(+Claude) · 다음 작업자(Codex 포함)는 이 문서부터 읽을 것.
 > 규칙·제약은 `AGENTS.md` / `CLAUDE.md`, 근거 현황은 `docs/validation_status.md`.
 
-## 한 줄 요약
+## 한 줄 요약 (09-17 저녁)
 
-**오늘 목표는 RPi5에서 develop 기본값 속도 측정.** 팀원 모델 브랜치 병합은 그다음 단계다. 서두르지 않는다.
+RPi5 기본값 측정, M1·M2(김태연)·M4(이대경) 병합, fp32 대 INT8 비교까지 끝났다.
+**다음 단계는 통합 파트 전체 리팩토링**(누수·오류·허점 점검, 클린 코드)이고, 그와 함께
+`handoff/rpi5-20260917/TUNING_PROPOSAL.md`의 조정안을 반영한 뒤 같은 조건으로 1회 재측정한다.
+담당자 공유 문서: `handoff/rpi5-20260917/TO_KIMTAEYEON_M1_M2.md`, `TO_LEEDAEGYEONG_M4.md`.
+측정 원자료·상세 기록: 노트북·RPi5 `reports/rpi5-20260917/` (`TEST_LOG.md`, Git 제외).
 
 ---
 
-## 1. 현재 상태 (2026-09-17 오후)
+## 1. 현재 상태 (2026-09-17 16:58)
 
 ### 저장소
 
 | 위치 | 브랜치 / 커밋 | 비고 |
 |---|---|---|
-| GitHub `origin/develop` | 이 문서를 추가한 커밋 | 기준 |
-| 노트북 `C:\rp5` | `develop` | 로컬 Docker는 **검증용**(GPU 이미지, `ORT_USE_GPU=0`). 여기 수치를 RPi5 표에 넣지 말 것 |
-| RPi5 `~/safewave` | `develop` (오늘 `perf/ort-thread-limit`에서 전환) | 아래 stash 참고 |
+| GitHub `origin/develop` | 이 문서를 갱신한 커밋 | PR #3(M1·M2), PR #4(M4) 병합 포함. `feature/M1-M2`, `m4/lee-daegyeong-whisper-int8` 브랜치 유지 |
+| 노트북 `C:\rp5` | `develop` | 로컬 Docker 수치는 판단에 쓰지 않는다 (RPi5만 의미 있음) |
+| RPi5 `~/safewave` | `develop` `8d9d4f8` + **미커밋 3개** | `ai/experts/m1_wifi_pose.py`, `scripts/bench_rpi5.py`, `scripts/eval_m4_stt.py` — 노트북 커밋과 같은 내용. pull 전에 `git checkout -- <파일>`로 치울 것 |
 
 ### RPi5
 
@@ -25,9 +29,11 @@
 |---|---|
 | 접속 | `ssh csi@192.168.1.2` (노트북 `id_ed25519` 키 등록 완료) |
 | 주의 | IP가 DHCP로 바뀜. 예전 `192.168.0.13`/`rp5` 계정은 무효. 노트북 `~/.ssh/config`는 아직 옛 항목 |
-| 하드웨어 | Raspberry Pi 5 Model B Rev 1.1, 8 GB, 4코어, NVMe 234 GB(여유 약 78 GB) |
+| 하드웨어 | Raspberry Pi 5 Model B Rev 1.1, 8 GB, 4코어, NVMe 234 GB (**사용 33%**, 빌드 캐시 88 GB 정리) |
 | OS / Docker | Debian 13 기반, kernel 6.12.75+rpt-rpi-2712 / Docker 29.4.3, Compose v5.1.3 |
-| `.env` (Git 미추적) | `AI_DOCKER_TARGET=cpu-runtime`, `M1_MAX_NODES=1`, `M1_FALL_THRESHOLD=0.7` 등 |
+| 부팅 | **콘솔(`multi-user.target`)** — 09-17 데스크톱 GUI 해제. 되돌리기: `sudo systemctl set-default graphical.target` |
+| `.env` (Git 미추적) | `AI_DOCKER_TARGET=cpu-runtime`, **`M4_KO_STT_MODEL=whisper_onnx_int8_ft_svc`**. `M1_MAX_NODES`·`M1_FALL_THRESHOLD`는 삭제(코드 기본 5·0.80). 백업 `~/backup/.env.bak-20260917*` |
+| 상태 (16:58) | 6개 서비스 실행, 재시작 0, 메모리 5.3 GB·스왑 979 MB, ai-experts 2.2 GB, ai-qwen 3.3 GB, 72.5 °C |
 | ESP32 | 노드 1·2·3 연결, 합계 약 300 pkt/s. 09-17 전원 재시작 후 손실 0.3~4.5% (5절 1번) |
 | stash | `stash@{0}`: 팀원의 미커밋 수정(ORT 스레드 제한 실험 + M1 sigmoid). 삭제하지 말고 팀원과 정리 |
 
@@ -35,23 +41,18 @@
 
 | 모델 | 폴더 | 상태 |
 |---|---|---|
-| M1 | `m1_wifi_pose_onnx/` | **김태연 학습 CNN-GRU** (입력 `(1,1,64,100)`, 출력 `fall_logit`). 노트북의 5노드 스텁으로 덮어쓰지 말 것 |
-| M2 | `m2_frenel_vital_onnx/` | 노트북에서 복사한 미학습 스텁 |
-| M3 | `ast_onnx/` | 노트북에서 복사한 6/11자 구버전 AST |
-| M4 | `whisper_onnx/` | 노트북 fp32 ONNX 복사 (작성 시점에 복사 진행 중 — 크기 1.76 GB 확인할 것) |
-| M5 | `qwen_15b_gguf_q5/` + `qwen_15b/` | GGUF 1.23 GB + 토크나이저 (작성 시점에 GGUF 복사 진행 중) |
+| M1 | `m1_wifi_pose_onnx/` | **김태연 인계 모델** (3노드 학습 → 5채널, 입력 `(1,5,64,100)`, 출력 `fall_score`, 그래프 내 sigmoid). 이전 1노드 모델은 `m1_wifi_pose_onnx_1node_20260802/` |
+| M2 | `m2_frenel_vital_onnx/` | 미학습 스텁 (심박 118 고정 → 경고 유발, 조정안 M2) |
+| M3 | `ast_onnx/` | 6/11자 AST |
+| M4 (기본) | `whisper_onnx_int8_ft_svc/` | 이대경 INT8의 **평가·서비스용 복사본** — `generation_config.json`만 fp32 것으로 교체(원본 `.orig`), 가중치는 원본과 하드링크 |
+| M4 원본 | `whisper_onnx_int8_ft/` | 이대경 INT8 원본 (무수정) |
+| M4 이전 | `whisper_onnx/` | fp32 `SungBeom/whisper-small-ko` (되돌릴 때 `.env`의 `M4_KO_STT_MODEL` 줄 삭제) |
+| M5 | `qwen_15b_gguf_q5/` + `qwen_15b/` | GGUF 1.23 GB + 토크나이저 |
+| 평가 데이터 | `data/m4_eval_2398/` | 이대경 M4 고정 평가 세트 (공개 저장소 업로드 금지) |
 
-### 진행 중이던 작업 (작성 시점)
+### 진행 중인 작업
 
-- RPi5 이미지 빌드: `nohup docker compose build db sensing ai-experts ai-qwen api` → 로그 `~/build_20260917.log`
-  - db·sensing·api는 완료(단, 오늘 수정 **이전** 커밋 기준). ai-experts·ai-qwen(llama.cpp ARM 컴파일)은 진행 중이었음
-- 노트북 → RPi5 모델 복사(scp)
-
-확인 명령:
-
-```bash
-ssh csi@192.168.1.2 "pgrep -f 'compose build' >/dev/null && echo 빌드중 || echo 빌드끝; grep -iE '^ERROR|failed to solve' ~/build_20260917.log | tail; du -sh ~/safewave/volumes/models/*"
-```
+없음 (16:58 기준 모든 측정 종료, 백그라운드 작업 없음).
 
 ---
 
@@ -62,11 +63,17 @@ ssh csi@192.168.1.2 "pgrep -f 'compose build' >/dev/null && echo 빌드중 || ec
   `%LOCALAPPDATA%\docker-secrets-engine` 폴더를 **이름만 바꿔서** 해결(`*.stale-20260917`). 공장 초기화 불필요
 - RPi5 레포 develop 전환, 팀원 수정 stash 보관, 이미지 재빌드 시작, 모델 복사
 - 코드 수정 (이 문서와 같은 커밋)
-  - `ai/experts/m1_wifi_pose.py`: 출력 이름이 `fall_logit`이면 sigmoid. RPi5 모델로 확인 — 점수 0.29~0.62 연속값(수정 전 0/1 포화)
+  - `ai/experts/m1_wifi_pose.py`: 출력 이름이 `fall_logit`이면 sigmoid (오전) → **오후 M1 인계 병합 때 삭제**(인계 모델은 그래프 안에 sigmoid)
   - `sensing/main.py`: seq 차이를 uint32로 계산, 늦게 온·중복 패킷은 기준을 되돌리지 않음, 크게 역행하면 재부팅으로 보고 기준 재설정. 8개 시나리오 통과
   - `api/main.py`: `GET /system/resources` (호스트 CPU 전체·코어별, 온도, 메모리, 디스크 — 저장 없음)
   - `monitor.html`: 시스템 자원 패널. **제목에 연결된 API 주소가 표시됨** — `localhost`면 노트북 값이다
 - 문서: README·CLAUDE.md·`docs/validation_status.md` 갱신, `AGENTS.md`·이 문서 추가
+- (오후) RPi5 기본값 측정: 기동 3회, 전체 동작, 모델별 단독, OOM 22회 사건 기록 → `reports/rpi5-20260917/TEST_LOG.md`
+- (오후) 측정 도구: `bench_rpi5.py`(재시작·스왑 기록, 오염 회차 자동 무효 표시), `bench_startup.py`, `eval_m4_stt.py`(피크 메모리, 인계 wrapper 백엔드 옵션), `m4_handoff_eval.Dockerfile`(인계 wrapper 전용 환경 — RPi5 미사용)
+- (오후) 대시보드: ESP32 노드 통신 패널, `/nodes/health`에 RSSI
+- (오후) RPi5 데스크톱 GUI 해제, M1·M2 병합(PR #3) 및 M1 임계값 `M1_FALL_THRESHOLD` 0.80, M4 병합(PR #4)
+- (오후) M4 fp32 대 INT8 RPi5 평가(직접 녹음 28개) 및 전체 스택 비교 → **M4 기본값 INT8 전환**
+- (오후) 버전 v0.3.0 (`VERSION`, README)
 
 ---
 
@@ -197,6 +204,28 @@ M3·M4 입력이 필요하면 대시보드 마이크 패널이나 `scripts/dummy
   solo-m2·solo-m3만 온전. 데스크톱 GUI(`graphical.target`)가 켜져 있음.
 - 사건 후 ai-experts는 수동 정지 상태(`docker start rp5-ai-experts`로 재개). 조율안 합의 후 재측정 예정.
 
+### 3-7. 조정 대기 목록 (M1·M2 → M4 병합 측정이 끝난 뒤 한 번에 반영)
+
+> **09-17 저녁 갱신:** 우선순위·근거·확인 방법을 정리한 최신본은 `handoff/rpi5-20260917/TUNING_PROPOSAL.md`.
+> 아래 표는 초기 목록이며, A1(GUI 해제)은 반영 완료. M4 INT8 기본값 전환도 반영 완료.
+
+09-17 기본값 결과는 부하·OOM 포함 그대로 확정. 아래는 **아직 반영하지 않은** 후보다. 병합 측정 중 새로 나오는 항목도 여기에 추가한다.
+
+| 번호 | 항목 | 종류 | 근거 (09-17) |
+|---|---|---|---|
+| A1 | RPi5 데스크톱 GUI 해제 (콘솔 부팅) | 시스템 설정 — **사용자가 직접 실행** | OOM 촉발 `wf-panel-pi`, OS·데스크톱 약 1.2 GB |
+| A2 | ai-qwen 프롬프트 캐시 256 → 64 MB (`QWEN_GGUF_CACHE_MB`) | 설정 | ai-qwen 2.0 → 3.3 GB 증가 후 OOM |
+| A3 | 커널 메모리 cgroup 활성 + 컨테이너 메모리 상한 | 시스템 설정 + 재부팅 (선택) | 전역 OOM → 스왑 폭주 → sensing까지 정지 |
+| B1 | **[기능 차단]** M1 추론 간격 `M1_INFER_STRIDE` (노드당 N프레임마다, 후보 10) | 코드 | M1 약 5 ms × 300 pkt/s → backlog 건너뜀 → 노드 버퍼 리셋 → 100프레임 창이 안 참 → **M1이 전부 0 입력만 추론** (기본값·병합 후 모두 점수 한 값 고정, TEST_LOG 12절) |
+| C1 | 오디오 워커 순서 M3→M4 를 M4→M3 | 코드 | 음성 1건 M3 6.3 s + M4 11.1 s > Phase 2 15 s |
+| C2 | M4 최대 생성 토큰 128 → 48 (env 노출) | 코드 | 환각 시 장시간 생성, 워밍업 약 50 s |
+| D | 스레드 배분 A/B — 현행(M3 2·M4 2·M5 3) vs (M3 1·M4 2·M5 2) | 설정 | 동시 실행 CPU 91%, M5 9 s → 23 s |
+| E1 | bench에 컨테이너 재시작 횟수·스왑 기록, 오염 회차 자동 표시 | 도구 | OOM 섞인 회차 수동 판별 |
+| E2 | bench 회차 사이 M5 잔여 호출 소진 대기 | 도구 | check-all의 M5 호출이 solo-m1에 섞임 |
+| F | 대시보드 "AI 준비 중" 표시 | UI (선택) | api 준비 후 약 70 s 동안 이전 위험도 표시 |
+| G | ai-experts 이미지의 CUDA판 torch 제거 (CPU 인덱스 고정) | 빌드 | 이미지 8.8 GB, 빌드 약 40 분 (5절 9번) |
+| H | `/audio/events` `trigger_ai=True`가 노드 CSI 스트림 오염·`csi:raw` 절단 | 코드 | 측정 도구는 우회 중 |
+
 ## 4. 다음 단계 — 팀원 모델 병합 (기본값 측정이 끝난 뒤)
 
 원칙: 브랜치 병합 범위는 **팀 합의 완료**. 노진산이 브랜치를 하나씩 보며 진행할 때까지 대기한다.
@@ -205,8 +234,8 @@ M3·M4 입력이 필요하면 대시보드 마이크 패널이나 `scripts/dummy
 
 | 순서(제안) | 대상 | 원격 위치 | 확인할 것 |
 |---|---|---|---|
-| 1 | M4 이대경 — Whisper 파인튜닝 ONNX INT8 (크기·체크섬은 `m4_whisper/artifacts.json`) | `origin/m4/lee-daegyeong-whisper-int8`, 태그 `m4-onnx-int8-20260916` | ONNX INT8은 **Optimum 3파일 형식이라 현재 `WhisperSmallModel` 경로와 호환** — 병합 후 3-4의 `--ids-file`로 같은 표본 비교. 인계 문서 기준 무음 환각 미해결, ONNX 전체 2,398 평가 미실행 |
-| 2 | M1·M2 김태연 | `origin/feature/M1-M2` (09-16 인계 산출물) | M1 입력 노드 수와 `M1_MAX_NODES` 일치, `fall_logit` 여부, M2 기준 신호 확보 여부 |
+| 1 | M4 이대경 — **09-17 병합 완료** (PR #4 → `8d9d4f8`), RPi5 기본값 INT8 전환(설정 보완 복사본), 결과는 `handoff/rpi5-20260917/TO_LEEDAEGYEONG_M4.md`. 이하 병합 전 확인 내용 — Whisper 파인튜닝 ONNX INT8. 브랜치는 `main`(`bfbd552`) 기반이지만 변경은 파일 추가 39개(`m4_whisper/`, `tests/`, 루트 README 3줄·`.gitignore` 3줄·`.gitattributes`)뿐, develop과 시험 병합 충돌 없음. 가중치는 GitHub 릴리즈 `m4-onnx-int8-20260916`의 `m4-onnx-finetuned-int8.zip`(510.4 MB, 그래프 합계 FP32 약 1,844 MB → INT8 약 716 MB). 인계 README: 기존 `m4_whisper_small.py`에 폴더만 바꾸면 반복 방지 wrapper를 거치지 않음, `confidence=null`을 응급지수에 그대로 넣지 말 것, 자체 wrapper는 Python 3.10·ORT 1.23.2 기준 | `origin/m4/lee-daegyeong-whisper-int8`, 태그 `m4-onnx-int8-20260916` | ONNX INT8은 **Optimum 3파일 형식이라 현재 `WhisperSmallModel` 경로와 호환** — 병합 후 3-4의 `--ids-file`로 같은 표본 비교. 인계 문서 기준 무음 환각 미해결, ONNX 전체 2,398 평가 미실행 |
+| 2 | M1·M2 김태연 — **09-17 병합 완료** | PR #3 → `develop` `be5f00b` (`feature/M1-M2` 유지) | M1: 인계 모델 배치(노트북·RPi5), 조건부 시그모이드 삭제·임계값 `M1_FALL_THRESHOLD` 0.80 (**미커밋**), RPi5 `.env`의 `M1_MAX_NODES=1`·`M1_FALL_THRESHOLD=0.7` 삭제. 오프라인 확인 통과(슬롯 3·4 무영향 max|diff| 0). **실 파이프라인에서는 입력 창이 안 차서 전부 0 입력만 추론** → 3-7 B1로 일괄 조정 때 해결. M2: 파일만 병합, 배선 보류(인계 지시) |
 | 3 | M3 소민섭 — v3.4 (09-13 배포 결정) | 아직 인계 브랜치 없음 (`origin/feature/ast-base`는 5월 것) | HF 포맷 + `preprocessor_config.json` + `id2label`. **log-Mel 전처리 구현**, **라벨은 이름으로 매핑**(인덱스 매핑 시 7종↔6종 불일치), 운영 임계값 0.6. 계획서의 오탐 4.03회/h는 09-11 held-out 3.97시간 기준(8/30의 1.51회/h는 평가 녹음 일부가 학습에 섞인 낙관 편향) |
 
 병합 뒤 반드시: `emergency_score` 경계 테스트 회귀, 5노드/1노드 주입 시 expert 오류 0, 점수 범위 0~1.
