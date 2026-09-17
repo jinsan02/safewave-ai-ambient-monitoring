@@ -54,6 +54,9 @@ class WifiPoseModel:
             score = motion_energy / 1.5
         else:
             score = float(output_arr.reshape(-1)[0])
+            # 학습 CNN-GRU(pose 레포)는 시그모이드 전 logit을 낸다 — clip만 하면 0/1로 포화
+            if self.session.get_outputs()[0].name == "fall_logit":
+                score = float(1.0 / (1.0 + np.exp(-np.clip(score, -60.0, 60.0))))
         score = float(np.clip(score, 0.0, 1.0))
         return {"fall_score": score, "fall_detected": score >= 0.7, "infer_source": "onnx", "infer_confidence": 0.75}
 
