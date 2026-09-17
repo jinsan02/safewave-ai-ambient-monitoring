@@ -263,7 +263,7 @@ M3·M4 입력이 필요하면 대시보드 마이크 패널이나 `scripts/dummy
 M1 인계 지시(`_preprocess`·슬롯 조립·임계값 0.80·`.onnx` 무수정, M2 파일 무수정)는 계속 유효하다.
 검증: `tests/`의 경계·파이프라인 테스트 회귀, RPi5에서는 조정안 반영 뒤 같은 조건으로 1회만 재측정(`scripts/bench_rpi5.py`).
 
-참고: 노트북 `C:p5\.claude\worktrees\ecstatic-sanderson-5d7f73\`에 예전 작업 트리 사본이 있다. 전체 검색 때 결과가 중복되니 제외할 것.
+참고: 노트북 `C:\rp5\.claude\worktrees\ecstatic-sanderson-5d7f73\`에 예전 작업 트리 사본이 있다. 전체 검색 때 결과가 중복되니 제외할 것.
 
 ---
 
