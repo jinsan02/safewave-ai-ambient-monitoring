@@ -8,9 +8,13 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 COPY requirements.txt .
+# optimum(M4 생성 루프)이 끌어오는 torch를 CPU 전용 휠로 먼저 고정한다.
+# 기본 PyPI 휠은 CUDA 패키지 수 GB를 함께 설치한다(RPi5에는 GPU 없음).
+RUN pip install --no-cache-dir --timeout 600 torch --index-url https://download.pytorch.org/whl/cpu
 # ARM64/RPi 포함 범용 CPU 런타임에서는 onnxruntime CPU 패키지로 교체 설치
 RUN sed 's/^onnxruntime-gpu==/onnxruntime==/' requirements.txt > requirements.cpu.txt \
-	&& pip install --no-cache-dir --timeout 300 -r requirements.cpu.txt
+	&& pip install --no-cache-dir --timeout 300 -r requirements.cpu.txt \
+	&& ! pip list 2>/dev/null | grep -qi '^nvidia-'
 
 COPY . .
 
