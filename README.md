@@ -232,7 +232,7 @@ ai:emergency (critical)
 | GET | `/logs?n=60` | 최근 N개 로그 |
 | GET | `/history?n=100&level=warning` | 이벤트 이력 |
 | GET | `/charts/minute?minutes=10` | 분 단위 집계 차트 |
-| GET | `/nodes/health` | 노드별 패킷 통계 |
+| GET | `/nodes/health` | 노드별 패킷 통계 (상태, 마지막 수신, 누적 rx·lost, RSSI) |
 | GET | `/system/redis-memory` | Redis 메모리 사용량 |
 | GET | `/system/health` | 시스템 전체 상태 |
 | GET | `/system/resources` | 호스트 CPU(전체·코어별)·온도·메모리·디스크 — 조회 시 계산, 저장 없음 |
@@ -262,6 +262,8 @@ ai:emergency (critical)
 - **1시간 위험도 차트**: SLM 호출 마커 포함
 - **마이크 패널**: 브라우저 마이크 녹음 → `POST /audio/events` 즉시 전송 (M3/M4 즉시 테스트)
 - **모델 토글**: M1~M5 개별 on/off (`/settings`의 `models`)
+- **ESP32 노드 통신 패널**: 노드 1~6 온라인 여부, 초당 수신량, 구간·누적 손실, RSSI, 마지막 수신 시각 (2초 갱신).
+  구간 값은 페이지에서 직전 조회와의 차이로 계산하며 서버에 저장하지 않음
 - **시스템 자원 패널**: `?api=`로 연결된 기기의 CPU·온도·메모리·저장소 (3초 갱신). 제목에 연결 주소가 표시되므로
   노트북 Docker(`localhost`)와 RPi5를 혼동하지 않도록 확인
 
@@ -514,7 +516,8 @@ SafeWave/1학기 캡스톤의 연구 방향과 연결된 논문
 - M1: 출력 이름이 `fall_logit`인 학습 모델(pose 레포 CNN-GRU)에 sigmoid 적용 — 기존 clip만으로는 0/1 포화
 - sensing: 패킷 손실 계산을 wire contract(`seq_num` uint32)에 맞춤. 늦게 도착·중복 패킷은 기준 seq를 되돌리지 않음,
   크게 역행하면 재부팅으로 보고 기준 재설정
-- API: `GET /system/resources` 신규, 대시보드에 시스템 자원 패널 추가
+- API: `GET /system/resources` 신규, `/nodes/health`에 RSSI 추가. 대시보드에 시스템 자원·ESP32 노드 통신 패널 추가
+- scripts: `bench_rpi5.py`(부하·지연 측정), `bench_startup.py`(기동 준비 시간), `eval_m4_stt.py`(M4 고정 세트 평가)
 - 문서: `HANDOFF.md`(현재 작업 인계), `AGENTS.md`(Codex용 지침) 추가
 
 ### v0.2.0 — 2026-07-21 — M5 Qwen2.5-1.5B GGUF 통합 (qwen-llmops 이식)

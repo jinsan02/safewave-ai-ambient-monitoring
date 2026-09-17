@@ -120,6 +120,15 @@ $B --label base-long     --duration 1800 --interval 15                    # 발�
 `--audio-every`를 줄여 가며 M3+M4 지연이 누적되기 시작하는 간격(= 오디오 1건 처리 시간)을 찾는다.
 팀원 모델 병합 뒤에는 **같은 label 체계에 접두어만 바꿔** (`m4int8-audio` 등) 다시 돌려 비교한다.
 
+### 3-3b. 기동 준비 시간
+
+`python3 scripts/bench_startup.py --runs 3` — AI·API·sensing 컨테이너를 다시 만들고 서비스별 준비 신호
+(ai-experts `engine_init_completed`, ai-qwen `qwen_service_started`, api `/status`, sensing 노드 갱신)와
+첫 `ai:result`까지의 시간, 기동 중 메모리·스왑 최고치를 잰다. 회차마다 파이프라인이 1분가량 멈춘다.
+결과는 `reports/startup/<시각>/`. 모델이 페이지 캐시에 있는 warm 조건이며, 재부팅 직후 cold는 따로 잰다.
+09-17 첫 기동(로그 기준): ai-experts 약 62 s(그중 M4 워밍업 약 47 s), ai-qwen 워밍업 포함 약 60 s.
+기동 직후 메모리 사용 7.2 GB / 8 GB, 스왑 583 MB — 측정 시 스왑 여부를 함께 본다.
+
 ### 3-4. M4 STT 정확도·지연 평가 (이대경 고정 평가 세트)
 
 - 데이터: `data/m4_eval_2398/` (노트북·RPi5 모두, Git 제외). 2,398개 WAV = AI Hub 2,370 + 직접 녹음 28,
