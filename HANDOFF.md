@@ -94,7 +94,33 @@ docker compose ps
 - 로그: `docker compose logs --tail 50 ai-experts ai-qwen` — `warmup_failed`, `expert_failure`, `qwen_warmup_completed` 확인
 - 측정 기준 커밋 해시를 기록한다
 
-### 3-3. 측정 항목과 방법
+### 3-3. 측정 도구와 순서
+
+`scripts/bench_rpi5.py`를 RPi5 호스트에서 실행한다 (redis-py·ffmpeg·vcgencmd 설치돼 있음).
+결과는 `~/safewave/reports/bench/<시각>-<label>/`에 `summary.md`·`raw.json`·ai-experts 로그로 남는다.
+`--models`·`--threshold` 변경은 끝나면(오류 포함) 원래 설정으로 되돌린다. 음성 샘플은
+`~/safewave/data/bench_audio/{emergency_ko,safe_ko}.mp3` (edge-tts 생성, Git 미포함).
+
+```bash
+cd ~/safewave
+B="python3 scripts/bench_rpi5.py"
+A=data/bench_audio/emergency_ko.mp3
+$B --label base-idle     --duration 300                                   # 전 모델 on, 오디오 없음
+$B --label base-audio    --duration 300 --audio $A --audio-every 10       # M3+M4 부하
+$B --label base-m5       --duration 180 --threshold 0.0                   # M5 반복 호출(쿨다운 5초)
+$B --label base-peak     --duration 180 --threshold 0.0 --audio $A --audio-every 10   # 응급 시 M4+M5 동시
+$B --label solo-m1       --duration 120 --models m1
+$B --label solo-m2       --duration 120 --models m2
+$B --label solo-m3       --duration 120 --models m3 --audio $A --audio-every 10
+$B --label solo-m4       --duration 120 --models m4 --audio $A --audio-every 10
+$B --label solo-m5       --duration 120 --models m5 --threshold 0.0
+$B --label base-long     --duration 1800 --interval 15                    # 발열·안정성
+```
+
+`--audio-every`를 줄여 가며 M3+M4 지연이 누적되기 시작하는 간격(= 오디오 1건 처리 시간)을 찾는다.
+팀원 모델 병합 뒤에는 **같은 label 체계에 접두어만 바꿔** (`m4int8-audio` 등) 다시 돌려 비교한다.
+
+### 3-4. 측정 항목과 방법 (도구 내부 동작)
 
 `docs/benchmark_template.md` 양식에 채우고, **원시 로그를 같이 보관**한다. 입력 조건(실 ESP32 3노드 / 마이크 유무)을 적는다.
 
