@@ -64,7 +64,7 @@ RPi5 기본값 측정, M1·M2(김태연)·M4(이대경) 병합, fp32 대 INT8 �
 | Redis 가득 참 | 락·중복 방지 키·TTS 큐 쓰기 실패 시에도 FCM은 발송 |
 | 오래된 응답 | `_fresh_transcript`: TTS 재생 종료 이후 녹음된 오디오의 transcript만 인정 |
 | API 재시작 | alert worker가 `$` 대신 최근 `ALERT_REPLAY_MS`(30초)부터 읽음. 중복은 `notify:sent`가 막음 |
-| M1 투표 | 창끝 게이트만 놓친 tick은 K/N 투표 유지(`should_reset_m1_votes`), 창 미충족·결과 1초 초과일 때만 초기화 |
+| M1 투표 | (09-17 밤 김태연 2차 답변으로 변경) 추론 없이 끝난 200ms tick은 0표로 K/N 창에 포함(`record_skipped_m1_ticks`) |
 
 테스트 25개 통과(추가 7개). 남은 것: ai-experts·ai-qwen Redis 쓰기 실패 대응, ai-qwen 쿨다운 중 요청 보류,
 단일 마이크 노드 필터, `/status` stale 표시, M1 중복 시각·긴 공백 처리, ai-qwen 내부 규칙 대체 경로(생체신호 위기 0.75,
