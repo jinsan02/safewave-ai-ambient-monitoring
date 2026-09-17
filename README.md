@@ -2,7 +2,7 @@
 
 독거인 안전 모니터링 시스템 — Raspberry Pi 5 + Docker Compose 기반
 
-**현재 릴리즈: v0.2.0**
+**현재 릴리즈: v0.3.0** (2026-09-17, 팀 모델 병합 진행 중)
 
 > **검증 범위 고지**
 > 이 저장소는 센싱·추론·알림 인터페이스를 통합한 시스템 프로토타입입니다. Raspberry Pi 5용
@@ -102,7 +102,7 @@ ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶
 
 | ID | 파일 | 입력 | 출력 |
 |---|---|---|---|
-| M1 | `experts/m1_wifi_pose.py` | CSI `(1, M1_MAX_NODES, 64, 100)` — 기본 5노드. 1노드 학습 모델은 `.env`에 `M1_MAX_NODES=1` | 낙상 위험 점수 (0–1). 출력 이름이 `fall_logit`이면 sigmoid 적용 |
+| M1 | `experts/m1_wifi_pose.py` | CSI `(1, M1_MAX_NODES, 64, 100)` — 기본 5노드. 1노드 학습 모델은 `.env`에 `M1_MAX_NODES=1` | 낙상 위험 점수 (0–1, 모델 그래프 안에서 sigmoid). `fall_detected` 임계값 `M1_FALL_THRESHOLD` 기본 0.80 |
 | M2 | `experts/m2_frenel_vital.py` | CSI 시간 시리즈 (N,) @ 100Hz — per-node deque | 생체신호 점수 (HR, RR) |
 | M3 | `experts/m3_ast_base.py` | raw waveform → 고정 AST tensor | 휴리스틱 7종 라벨 + AST top class/confidence |
 | M4 | `experts/m4_whisper_small.py` | 오디오 PCM (최근 5s) | 한국어 STT |
@@ -514,9 +514,16 @@ SafeWave/1학기 캡스톤의 연구 방향과 연결된 논문
 
 ## 변경 이력
 
-### develop (미릴리즈) — 2026-09-17
+### v0.3.0 — 2026-09-17 — 팀 모델 병합 (M1·M2 김태연, M4 이대경) · RPi5 기본값 측정
 
-- M1: 출력 이름이 `fall_logit`인 학습 모델(pose 레포 CNN-GRU)에 sigmoid 적용 — 기존 clip만으로는 0/1 포화
+- 팀 인계 병합: M1·M2 김태연 (PR #3, `handoff/m1-m2-20260916/`), M4 이대경 Whisper 파인튜닝 ONNX INT8 (PR #4, `m4_whisper/`)
+- M1: 인계 모델(3노드 학습, 5채널 0 패딩, 그래프 내 sigmoid) 기준으로 `fall_detected` 임계값 `M1_FALL_THRESHOLD` 기본 0.80.
+  같은 날 넣었던 조건부 sigmoid(`fall_logit` 출력용)는 인계 모델과 이중 적용되지 않도록 제거
+- M2: 인계 스펙트럼 추정기는 파일만 병합, 서비스 배선은 보류
+- M4: INT8 가중치는 릴리즈 자산으로 받음. 서비스 이미지(transformers 4.46)에 폴더만 교체하면 `generation_config.json`
+  (`lang_to_id` 없음) 때문에 동작하지 않아, 설정 파일만 보완한 복사본을 `M4_KO_STT_MODEL`로 지정해 사용.
+  RPi5 비교(직접 녹음 28개): fp32 대비 메모리 약 −52%, 지연 약 −48%, 키워드 46.4% → 75.0% → RPi5 기본값 INT8로 전환
+- RPi5: 데스크톱 GUI 해제(콘솔 부팅). 측정 기록과 담당자 공유 문서는 `handoff/rpi5-20260917/`
 - sensing: 패킷 손실 계산을 wire contract(`seq_num` uint32)에 맞춤. 늦게 도착·중복 패킷은 기준 seq를 되돌리지 않음,
   크게 역행하면 재부팅으로 보고 기준 재설정
 - API: `GET /system/resources` 신규, `/nodes/health`에 RSSI 추가. 대시보드에 시스템 자원·ESP32 노드 통신 패널 추가
