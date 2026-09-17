@@ -13,15 +13,15 @@ RPi5 기본값 측정, M1·M2(김태연)·M4(이대경) 병합, fp32 대 INT8 �
 
 ---
 
-## 1. 현재 상태 (2026-09-17 16:58)
+## 1. 현재 상태 (2026-09-17 17:15)
 
 ### 저장소
 
 | 위치 | 브랜치 / 커밋 | 비고 |
 |---|---|---|
-| GitHub `origin/develop` | 이 문서를 갱신한 커밋 | PR #3(M1·M2), PR #4(M4) 병합 포함. `feature/M1-M2`, `m4/lee-daegyeong-whisper-int8` 브랜치 유지 |
+| GitHub `origin/develop` | 이 문서를 갱신한 커밋 (`f686d93` 이후) | PR #3(M1·M2), PR #4(M4) 병합 포함. `feature/M1-M2`, `m4/lee-daegyeong-whisper-int8` 브랜치 유지 |
 | 노트북 `C:\rp5` | `develop` | 로컬 Docker 수치는 판단에 쓰지 않는다 (RPi5만 의미 있음) |
-| RPi5 `~/safewave` | `develop` `8d9d4f8` + **미커밋 3개** | `ai/experts/m1_wifi_pose.py`, `scripts/bench_rpi5.py`, `scripts/eval_m4_stt.py` — 노트북 커밋과 같은 내용. pull 전에 `git checkout -- <파일>`로 치울 것 |
+| RPi5 `~/safewave` | `develop` `f686d93`, 워킹트리 깨끗 | 17:10 pull 완료. 남아 있던 미커밋 3개는 `origin/develop`과 같은 내용임을 확인하고 `stash@{0}`로 보관. 이 문서 커밋은 `git pull --ff-only origin develop`으로 받을 것 |
 
 ### RPi5
 
@@ -33,9 +33,9 @@ RPi5 기본값 측정, M1·M2(김태연)·M4(이대경) 병합, fp32 대 INT8 �
 | OS / Docker | Debian 13 기반, kernel 6.12.75+rpt-rpi-2712 / Docker 29.4.3, Compose v5.1.3 |
 | 부팅 | **콘솔(`multi-user.target`)** — 09-17 데스크톱 GUI 해제. 되돌리기: `sudo systemctl set-default graphical.target` |
 | `.env` (Git 미추적) | `AI_DOCKER_TARGET=cpu-runtime`, **`M4_KO_STT_MODEL=whisper_onnx_int8_ft_svc`**. `M1_MAX_NODES`·`M1_FALL_THRESHOLD`는 삭제(코드 기본 5·0.80). 백업 `~/backup/.env.bak-20260917*` |
-| 상태 (16:58) | 6개 서비스 실행, 재시작 0, 메모리 5.3 GB·스왑 979 MB, ai-experts 2.2 GB, ai-qwen 3.3 GB, 72.5 °C |
+| 상태 (17:10) | **ai-qwen 정지**(아래 참고), 나머지 5개 실행. 정지 직후 메모리 사용 3.2 GB·스왑 2,047 MB(가득) |
 | ESP32 | 노드 1·2·3 연결, 합계 약 300 pkt/s. 09-17 전원 재시작 후 손실 0.3~4.5% (5절 1번) |
-| stash | `stash@{0}`: 팀원의 미커밋 수정(ORT 스레드 제한 실험 + M1 sigmoid). 삭제하지 말고 팀원과 정리 |
+| stash | `stash@{0}`: 09-17 pull 전 보관한 노진산 수정(원격과 동일, drop 가능). `stash@{1}`: 팀원의 미커밋 수정(ORT 스레드 제한 실험 + M1 sigmoid) — 삭제하지 말고 팀원과 정리 |
 
 ### RPi5 모델 (`~/safewave/volumes/models/`, Git 미포함)
 
@@ -52,7 +52,13 @@ RPi5 기본값 측정, M1·M2(김태연)·M4(이대경) 병합, fp32 대 INT8 �
 
 ### 진행 중인 작업
 
-없음 (16:58 기준 모든 측정 종료, 백그라운드 작업 없음).
+측정은 모두 끝났고 백그라운드 작업은 없다.
+
+**ai-qwen은 17:09에 일부러 정지해 두었다.** 부하를 주지 않은 상태에서도 M2 스텁이 계속 critical을 내서
+M5가 약 11초마다 호출됐다(`qwen_invoked`, `risk_score` 0.6506 고정). 그 결과 ai-qwen RSS가 약 5.2 GB까지 커져
+전역 OOM으로 17:05·17:08에 연속 강제 종료됐다(재시작 4회). 조정안 A2(캐시)·M2 스텁 항목을 반영하기 전에는
+켜 두지 말 것. 다시 켜기: `docker compose start ai-qwen`. 스왑이 가득 찬 상태라 측정 전에는
+`sudo swapoff -a && sudo swapon -a`(사람이 실행) 또는 재부팅으로 비우고 시작한다.
 
 ---
 
@@ -240,6 +246,25 @@ M3·M4 입력이 필요하면 대시보드 마이크 패널이나 `scripts/dummy
 
 병합 뒤 반드시: `emergency_score` 경계 테스트 회귀, 5노드/1노드 주입 시 expert 오류 0, 점수 범위 0~1.
 
+## 4-1. 다음 작업 — 통합 파트 리팩토링 (Codex 시작점)
+
+목표: 통합 파트의 누수·오류·허점을 점검하고 클린 코드로 정리한다. 모델 내부(M1~M4 가중치·전처리)는 담당자 영역이라 건드리지 않는다.
+진행 방식: **점검 목록을 먼저 만들어 노진산에게 보여주고, 승인된 항목만 고친다.** 조정안 반영은 노진산이 결정한다.
+
+| 대상 | 줄 수 | 먼저 볼 것 |
+|---|---|---|
+| `ai/main.py` | 940 | CSI 루프(패킷마다 M1 → 백로그 스킵 → 버퍼 리셋, 조정안 B1), M1 워밍업 형상(5절 3번), 오디오 워커 순서·밀림(C1·C3), M2 스텁 배선 |
+| `ai/qwen_service.py`, `ai/logic/qwen_15b.py`·`qwen_gguf.py` | 178 / 931 / 147 | 호출 간격, 메모리 증가(A2), `_apply_context_window`가 critical을 강제하는지(이전 리뷰에서 미수정으로 기록, 확인 필요) |
+| `api/main.py` | 917 | `_alert_worker`의 블로킹 호출(이전 리뷰에서 미수정으로 기록, 확인 필요), `/system/resources`의 0.5초 대기 |
+| `sensing/main.py` | 153 | 손실 카운터(09-17 uint32 처리 수정 완료) |
+| 공통 | — | `_log` 함수가 `ai/main.py`·`ai/qwen_service.py`·`api/main.py`에 각각 정의됨(중복). 서비스 간 import 금지라 공유 모듈로 합칠지는 결정 필요 |
+
+지켜야 할 것: Redis 키·TTL·스트림 구조를 바꾸려면 먼저 확인. `ThreadPoolExecutor`·타임아웃 패턴은 임의로 교체하지 않는다.
+M1 인계 지시(`_preprocess`·슬롯 조립·임계값 0.80·`.onnx` 무수정, M2 파일 무수정)는 계속 유효하다.
+검증: `tests/`의 경계·파이프라인 테스트 회귀, RPi5에서는 조정안 반영 뒤 같은 조건으로 1회만 재측정(`scripts/bench_rpi5.py`).
+
+참고: 노트북 `C:p5\.claude\worktrees\ecstatic-sanderson-5d7f73\`에 예전 작업 트리 사본이 있다. 전체 검색 때 결과가 중복되니 제외할 것.
+
 ---
 
 ## 5. 알려진 문제 · 결정 필요
@@ -252,7 +277,7 @@ M3·M4 입력이 필요하면 대시보드 마이크 패널이나 `scripts/dummy
    RPi5에서 건당 처리 시간이 입력 간격보다 길면 Phase 2 응답이 15초 창을 넘겨 응급으로 오판정될 수 있다.
 3. **M1 워밍업 버그.** `ai/main.py`가 1차원 신호로 워밍업 → `(1,1,64,100)`. 1노드 모델에선 동작하지만
    5노드 모델에선 실패해 첫 추론에 세션 초기화 비용이 섞인다. 5노드 모델 병합 전에 고칠 것.
-4. **RPi5 `stash@{0}` 정리.** sigmoid는 develop에 반영됨, ORT 스레드 제한은 develop의 `get_session_opts`와 중복,
+4. **RPi5 `stash@{1}` 정리.** sigmoid는 develop에 반영됨, ORT 스레드 제한은 develop의 `get_session_opts`와 중복,
    M3 부분은 `sess_options`를 두 번 넘기는 오류가 있었다. 팀원 확인 후 drop 여부 결정.
 5. RPi5 메모리 cgroup 비활성 → 컨테이너별 메모리 측정 불가. 필요하면 `cmdline.txt`에
    `cgroup_enable=memory` (재부팅 필요, 사람 확인 후).
