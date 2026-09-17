@@ -1,0 +1,5 @@
+# Use a dedicated environment; do not upgrade the training environment.
+faster-whisper==1.2.1
+ctranslate2==4.8.1
+numpy==2.2.6
+soundfile==0.14.0

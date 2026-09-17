@@ -1,0 +1,61 @@
+{
+  "device": "cpu",
+  "cpu_threads": 6,
+  "workers": 1,
+  "seed": 42,
+  "faster_whisper": "1.2.1",
+  "ctranslate2": "4.8.1",
+  "transcribe": {
+    "language": "ko",
+    "task": "transcribe",
+    "beam_size": 5,
+    "best_of": 5,
+    "patience": 1,
+    "length_penalty": 1,
+    "repetition_penalty": 1,
+    "no_repeat_ngram_size": 0,
+    "temperature": [
+      0.0,
+      0.2,
+      0.4,
+      0.6,
+      0.8,
+      1.0
+    ],
+    "compression_ratio_threshold": 2.4,
+    "log_prob_threshold": -1.0,
+    "no_speech_threshold": 0.6,
+    "condition_on_previous_text": true,
+    "prompt_reset_on_temperature": 0.5,
+    "initial_prompt": null,
+    "prefix": null,
+    "suppress_blank": true,
+    "suppress_tokens": [
+      -1
+    ],
+    "without_timestamps": false,
+    "max_initial_timestamp": 1.0,
+    "word_timestamps": false,
+    "vad_filter": false,
+    "max_new_tokens": null,
+    "chunk_length": null,
+    "clip_timestamps": "0",
+    "hallucination_silence_threshold": null,
+    "hotwords": null
+  },
+  "guard": {
+    "mode": "selection_regenerate",
+    "detector": {
+      "min_repetitions": 3,
+      "single_item_min_repetitions": 4,
+      "min_repeated_fraction": 0.6,
+      "trailing_min_repetitions": 4,
+      "token_min_repetitions": 4,
+      "max_trailing_gap_items": 1,
+      "max_text_unit_chars": 12,
+      "max_token_unit_length": 8
+    },
+    "regeneration_no_repeat_ngram_size": 3,
+    "generation_cap_tokens": 224
+  }
+}

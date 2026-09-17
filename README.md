@@ -11,6 +11,9 @@
 > 상세 근거와 미검증 항목은 [`docs/validation_status.md`](docs/validation_status.md), 기여 범위는
 > [`CONTRIBUTIONS.md`](CONTRIBUTIONS.md)를 확인하세요.
 
+M4 신규 검증용 인계본: [이대경의 ONNX INT8 모델 및 실행 안내](m4_whisper/README.md).
+기본 서비스 모델은 유지되며, 이 브랜치의 인계본은 별도 검증 후 통합합니다.
+
 ---
 
 ## 목차

@@ -1,0 +1,2 @@
+# Preserve the exact vendored guard bytes recorded in the artifact provenance.
+m4_whisper/guard.py -text
