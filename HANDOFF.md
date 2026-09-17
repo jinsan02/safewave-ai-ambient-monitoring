@@ -149,6 +149,11 @@ M3·M4 입력이 필요하면 대시보드 마이크 패널이나 `scripts/dummy
 6. RPi5에 다른 프로젝트 이미지(`csi-*`, `ai_hack_camp_2026-*`, 약 15 GB)가 있다. 삭제는 소유자 확인 후.
 7. 노트북 `~/.ssh/config`의 RPi5 항목이 옛 주소(`192.168.0.13`, `rp5`)다.
 8. `sensing` 손실 누적 카운터는 컨테이너 재시작 전까지 과거 값을 유지한다. 측정은 증가량으로.
+9. **ai-experts 이미지에 CUDA판 torch가 들어간다.** `requirements.txt`에 torch는 없지만 `optimum`이 끌어오고,
+   ARM용 최신 torch 휠이 `nvidia-*` CUDA 13 패키지를 함께 설치한다(8/2 이미지: torch 2.13.0+cu130, nvidia 패키지 15개,
+   이미지 8.79 GB). RPi5엔 GPU가 없어 용량·빌드 시간만 늘어난다. 또 M4(`ORTModelForSpeechSeq2Seq`)의 생성 루프가
+   torch를 쓰므로 "M1~M4는 ONNX Runtime만" 제약과 어긋난다. 기본값 측정이 끝난 뒤 `cpu-runtime`에서 CPU 전용 torch
+   인덱스(`https://download.pytorch.org/whl/cpu`)로 고정하는 방안을 검토 — 측정 기준 커밋이 바뀌므로 측정 전에는 손대지 않는다.
 
 ---
 
