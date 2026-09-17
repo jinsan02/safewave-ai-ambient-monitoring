@@ -120,7 +120,40 @@ $B --label base-long     --duration 1800 --interval 15                    # 발�
 `--audio-every`를 줄여 가며 M3+M4 지연이 누적되기 시작하는 간격(= 오디오 1건 처리 시간)을 찾는다.
 팀원 모델 병합 뒤에는 **같은 label 체계에 접두어만 바꿔** (`m4int8-audio` 등) 다시 돌려 비교한다.
 
-### 3-4. 측정 항목과 방법 (도구 내부 동작)
+### 3-4. M4 STT 정확도·지연 평가 (이대경 고정 평가 세트)
+
+- 데이터: `data/m4_eval_2398/` (노트북·RPi5 모두, Git 제외). 2,398개 WAV = AI Hub 2,370 + 직접 녹음 28,
+  라벨 fall_related/help_direct 각 1,199. SHA-256 2,398개 대조 완료. **원본 음성이라 공개 저장소 업로드 금지.**
+  이 세트는 개발 판단에 쓰인 세트라 최종 독립 테스트 결과로 보고하지 않는다.
+- 도구: `scripts/eval_m4_stt.py` — 운영 `WhisperSmallModel`을 그대로 불러 CER/WER/키워드/지연/RTF 측정.
+  지표 정의는 이대경 `CT2_REFERENCE.md`와 같지만 디코딩 경로(transformers greedy)가 CT2와 달라
+  **CT2 수치(파인튜닝 INT8 CER 4.28% 등)와 직접 비교하지 않는다.**
+- 현재 기본 M4: `SungBeom/whisper-small-ko` fp32 Optimum ONNX (이대경 표의 Zeroth 기본 모델과 다른 모델).
+- 노트북 참고(28개 직접 녹음, x86 CPU): CER 44.2%, WER 80.0%, 키워드 46.4%, 파일당 1.76 s.
+  짧은 응급 발화에서 환각 삽입이 많다("119 불러줘" → "저기 요즘은 너무 많이 배우고 싶어요"). RPi5 수치 아님.
+
+RPi5 실행 순서 (`~/safewave`):
+
+```bash
+E="docker compose run --rm --no-deps -v ./data/m4_eval_2398:/eval:ro -v ./scripts:/scripts:ro -v ./reports:/reports"
+M="python3 /scripts/eval_m4_stt.py --manifest /eval/manifest.csv --model /app/models/whisper_onnx"
+
+# ① 격리 스레드 스윕 — 운영 AI 컨테이너를 잠시 멈춘다 (sensing·api·db는 유지)
+docker compose stop ai-experts ai-qwen
+for t in 1 2 4; do $E -e M4_ORT_THREADS=$t ai-experts $M --label base-fp32-direct28-t$t --limit 28; done
+# ② 기본값 표본 200 (①에서 고른 스레드) — ids.txt를 이후 모델 비교에 재사용
+$E -e M4_ORT_THREADS=2 ai-experts $M --label base-fp32-s200 --limit 200
+docker compose up -d ai-experts ai-qwen
+# ③ 부하 조건 — 운영 스택 + M5 반복 호출 중에 같은 28개
+python3 scripts/bench_rpi5.py --label m4eval-load --duration 600 --threshold 0.0 &
+$E -e M4_ORT_THREADS=2 ai-experts $M --label base-fp32-direct28-load --limit 28
+# ④ 전체 2,398개 — ②의 파일당 시간으로 소요를 추정한 뒤 격리 상태에서 야간 실행 (중단 시 같은 명령으로 재개)
+```
+
+판단 기준: 파일당 지연 p95가 **Phase 2 대기 15초**(`TTS_WAIT_SEC`)와 실제 오디오 이벤트 간격 안에 들어오는지.
+결과는 `reports/m4eval/<label>/summary.md`.
+
+### 3-5. 측정 항목과 방법 (bench 도구 내부 동작)
 
 `docs/benchmark_template.md` 양식에 채우고, **원시 로그를 같이 보관**한다. 입력 조건(실 ESP32 3노드 / 마이크 유무)을 적는다.
 
@@ -151,7 +184,7 @@ M3·M4 입력이 필요하면 대시보드 마이크 패널이나 `scripts/dummy
 
 | 순서(제안) | 대상 | 원격 위치 | 확인할 것 |
 |---|---|---|---|
-| 1 | M4 이대경 — Whisper LoRA 파인튜닝 INT8 (234 MB) | `origin/m4/lee-daegyeong-whisper-int8`, 태그 `m4-onnx-int8-20260916` | 브랜치가 `ai/` 여러 파일을 건드림 → develop과의 diff 검토 후 병합. `m4_whisper/README.md`, `VERIFICATION.md`, `artifacts.json`(체크섬) 확인 |
+| 1 | M4 이대경 — Whisper 파인튜닝 ONNX INT8 (크기·체크섬은 `m4_whisper/artifacts.json`) | `origin/m4/lee-daegyeong-whisper-int8`, 태그 `m4-onnx-int8-20260916` | ONNX INT8은 **Optimum 3파일 형식이라 현재 `WhisperSmallModel` 경로와 호환** — 모델 폴더만 바꿔 3-4의 `--ids-file`로 같은 표본 비교부터. 브랜치의 `ai/` 변경과 `m4_whisper/` 런타임(온도 폴백·반복 guard의 자체 디코딩)은 develop과 diff 검토 후 결정. CT2 런타임은 "M1~M4 ONNX만" 제약과 충돌하므로 팀 결정 필요. **무음 환각 미해결**(무음 → "MBC 뉴스 이덕영입니다"). ONNX 전체 2,398 평가는 인계 측에서도 미실행 |
 | 2 | M1·M2 김태연 | `origin/feature/M1-M2` (09-16 인계 산출물) | M1 입력 노드 수와 `M1_MAX_NODES` 일치, `fall_logit` 여부, M2 기준 신호 확보 여부 |
 | 3 | M3 소민섭 — v3.4 (09-13 배포 결정) | 아직 인계 브랜치 없음 (`origin/feature/ast-base`는 5월 것) | HF 포맷 + `preprocessor_config.json` + `id2label`. **log-Mel 전처리 구현**, **라벨은 이름으로 매핑**(인덱스 매핑 시 7종↔6종 불일치), 운영 임계값 0.6. 계획서의 오탐 4.03회/h는 09-11 held-out 3.97시간 기준(8/30의 1.51회/h는 평가 녹음 일부가 학습에 섞인 낙관 편향) |
 
