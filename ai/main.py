@@ -839,6 +839,8 @@ if __name__ == "__main__":
     _node_last_level:    dict[int, str] = {}
     _node_last_audio_ts: dict[int, int] = {}
     _node_rule_alert_ms: dict[int, int] = {}
+    _error_last_id = None
+    _error_streak = 0
     while True:
         try:
             settings = _load_cached_settings(r)
@@ -1160,4 +1162,18 @@ if __name__ == "__main__":
             r = _connect_redis(redis_host, redis_port)
         except Exception as exc:
             _log(logging.ERROR, "inference_loop_error", error=str(exc))
+            # 같은 위치에서 반복 실패하면(형식 오류 패킷, Redis 쓰기 거부 등) 같은 배치를
+            # 무한 재시도하지 않도록 최신 위치로 건너뛴다.
+            _error_streak = _error_streak + 1 if last_id == _error_last_id else 1
+            _error_last_id = last_id
+            if _error_streak >= 3:
+                try:
+                    tail = r.xrevrange("csi:raw", count=1)
+                    if tail:
+                        last_id = tail[0][0]
+                        _log(logging.WARNING, "csi_error_skipped",
+                             jumped_to=str(last_id), streak=_error_streak)
+                except _redis.exceptions.RedisError:
+                    pass
+                _error_streak = 0
             time.sleep(1)

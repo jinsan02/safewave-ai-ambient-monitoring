@@ -48,6 +48,28 @@ RPi5 기본값 측정, M1·M2(김태연)·M4(이대경) 병합, fp32 대 INT8 �
 `label` 미참조), cooldown 락 90초 동안 같은 노드 두 번째 사건 미평가(정책 결정 필요).
 **RPi5 확인 항목:** 규칙 경보가 M1 3/5 확정 시 1회만 기록되는지, ai-qwen을 멈춘 상태에서도 FCM이 나가는지.
 
+#### 09-17 전체 파이프라인 점검 (코드 읽기, 미실행)
+
+수정함: alert worker가 형식이 깨진 `ai:emergency` 항목 하나에 같은 위치를 무한 재시도하던 문제(먼저 전진 후 건너뜀),
+CSI 루프가 같은 위치에서 3회 연속 실패하면 최신 위치로 건너뛰도록(`csi_error_skipped`).
+
+남은 문제 (심각도 순, 결정·수정 필요):
+
+| # | 문제 | 위치 | 비고 |
+|---|---|---|---|
+| 1 | **FCM 토큰·설정 TTL 1시간** — 앱이 매시간 재등록하지 않으면 푸시가 끊기고, 설정은 기본값으로 돌아감 | `api/main.py` `TOKEN_TTL_SECONDS`·`SETTINGS_TTL_SECONDS` | "TTL ≤1시간" 제약과 충돌. 앱 주기 재등록 또는 예외 허용 결정 필요 |
+| 2 | 단일 마이크(노드 1)와 CSI 노드 불일치 — 노드 2·3 경보는 Phase 2 응답을 못 받음 | `ai/main.py` 오디오 캐시, `api/main.py` transcript 필터 | 이제 FCM이 먼저 나가므로 누락은 아니고 "괜찮다" 해제만 불가 |
+| 3 | `ai:mN:latest`를 모든 노드가 패킷마다 덮어씀(노드 2·3의 빈 M3/M4가 노드 1 결과를 지움, 초당 약 1,200 SET) | `_write_expert_latest` | 읽는 곳 없음. 새 추론 때만 쓰기 또는 제거 |
+| 4 | `UnifiedSnapshot`이 `emergency_breakdown`·`expert_latency_ms`·`rule_alert` 등을 버림 → 대시보드 분해 막대가 항상 0 | `api/main.py` 모델 `extra` 설정 | `EmergencySummary`도 `slm_mode`·`qwen_reason` 버림 |
+| 5 | 웹소켓 `{"ping": true}`를 대시보드가 결과로 그려 유휴 시 "정상 0.00" 표시 | `monitor.html` `updateUI` | 기존 인라인 스크립트 수정 허용 범위 |
+| 6 | 오디오 워커의 M3·M4 추론에 타임아웃 없음 — 한 번 멈추면 오디오 전체 정지 | `ai/main.py` 오디오 워커 | 프로세스는 살아 있어 감지 어려움 |
+| 7 | TTS 합성·mpg123 재생에 타임아웃 없음 | `scripts/tts_worker.py` | |
+| 8 | MQTT 첫 연결 실패 시 재시도 없음 | `ai/main.py` `_init_mqtt`, `tts_worker.py` | |
+| 9 | ai-qwen 일반 예외 경로에 sleep 없음(busy loop) | `ai/qwen_service.py` | |
+| 10 | 재연결 시 이전 Redis 클라이언트 미종료, 오디오 스레드는 옛 클라이언트 사용 | sensing·ai | |
+| 11 | ai-qwen은 `cooldown` 락도 잠금으로 봄 → 경보 후 90초간 같은 노드 M5 미평가 | `qwen_service._phase2_locked` | 정책 결정 필요 |
+| 12 | M3 입력이 log-Mel이 아닌 PCM reshape | `m3_ast_base.py` | M3 담당자 영역(v3.4 인계 때 해결 예정) |
+
 #### 해결·조정한 문제
 
 | 영역 | 기존 문제 | 로컬 반영 내용 | 현재 판정 |

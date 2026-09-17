@@ -605,8 +605,15 @@ async def _alert_worker():
 
             for _stream, messages in entries:
                 for msg_id, fields in messages:
-                    payload = _normalize_emergency(_parse_result_payload(fields.get("data", "")), msg_id)
+                    # 형식이 깨진 항목 하나가 이후 경보를 모두 막지 않도록 먼저 전진한다.
                     last_id = msg_id
+                    try:
+                        payload = _normalize_emergency(
+                            _parse_result_payload(fields.get("data", "")), msg_id
+                        )
+                    except Exception as exc:
+                        _log(logging.ERROR, "alert_entry_invalid", msg_id=msg_id, error=str(exc))
+                        continue
 
                     if payload["risk_level"] != "critical":
                         continue
