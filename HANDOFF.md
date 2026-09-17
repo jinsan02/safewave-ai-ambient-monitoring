@@ -6,19 +6,28 @@
 ## 한 줄 요약 (09-17 저녁)
 
 RPi5 기본값 측정, M1·M2(김태연)·M4(이대경) 병합, fp32 대 INT8 비교까지 끝났다.
-통합 파트의 CPU·메모리·M5·오디오·Redis 리팩토링은 **노트북 로컬 작업 트리에 반영됐지만 아직
-커밋하지 않았고 RPi5에서도 실행하지 않았다.** 다음 모델 업데이트 뒤 같은 조건으로 RPi5에서 1회
+통합 파트의 CPU·메모리·M5·오디오·Redis 리팩토링은 **`develop`에 커밋·push했지만(`fa008cc`~) RPi5에는
+아직 배포·실행하지 않았다.** 다음 모델 업데이트 뒤 같은 조건으로 RPi5에서 1회
 재측정하기 전까지 성능 개선이나 안정성 검증 완료로 표현하지 않는다.
 09-17 원자료와 현재 코드를 다시 교차 검토한 2차 최적화 결과는
 `handoff/rpi5-20260917/DATA_DRIVEN_OPTIMIZATION.md`에 정리했다. 이 문서의 새 후보도 아직 미반영·미검증이다.
 담당자 공유 문서: `handoff/rpi5-20260917/TO_KIMTAEYEON_M1_M2.md`, `handoff/rpi5-20260917/REPLY_TO_KIMTAEYEON_M1.md`, `TO_LEEDAEGYEONG_M4.md`.
 측정 원자료·상세 기록: 노트북·RPi5 `reports/rpi5-20260917/` (`TEST_LOG.md`, Git 제외).
 
-### 다음 Claude 인계 — 통합 최적화 작업 (로컬 반영, RPi5 재측정 전)
+### 다음 작업자 인계 — 통합 최적화 작업 (커밋 완료, RPi5 재측정 전)
 
-작업 기준은 로컬 `develop`/`origin/develop` **`5b30f96`**이다. 아래 변경은 `C:\rp5`의 미커밋
-작업 트리에 있으므로 pull·reset·checkout으로 덮어쓰지 않는다. 먼저 `git diff`와 `git status`를
-검토한다. 커밋·push는 노진산 확인 후 한다.
+아래 변경은 09-17 노진산 확인 후 `develop`에 5개 커밋으로 올렸다.
+
+| 커밋 | 범위 |
+|---|---|
+| `fa008cc` feat(ai) | M1 5Hz 창끝 게이트·K/N, 오디오 최신 1건·M4 우선, `runtime_inputs.py` |
+| `a5c2795` refactor(m5) | `risk_policy.py` 통합, drain·쿨다운·문맥 cache, `tests/test_m5_pipeline.py` |
+| `6ed4380` fix(api,sensing,tts) | task 수명주기, `sensing/redis_client.py`, TTS 큐 경계, M2 기본 off |
+| `c40c6ee` chore(infra) | Compose profile·자원 한도, Redis 512MB/noeviction, bench 계측 추가 |
+| `f2436b9` docs | 이 문서, `RESOURCE_BUDGET`·`DATA_DRIVEN_OPTIMIZATION`·`REPLY_TO_KIMTAEYEON_M1` |
+
+커밋 전 재확인: `compileall`, `tests.test_m5_pipeline` 18개 통과, 기본·audio·voice·integration·home profile
+`docker compose config --quiet` 통과, `git diff --check` 이상 없음. 이미지 빌드·컨테이너 실행은 하지 않았다.
 
 #### 해결·조정한 문제
 
@@ -79,8 +88,7 @@ profile을 포함한 `docker compose config --quiet`, `git diff --check`. 노트
 10. Redis healthcheck/readiness는 반영했다. ai-experts는 별도 readiness 신호가 없어 API/M5가
     `service_started`만 기다린다. 모델 warmup 전 표시·동작을 실제 재시작 시나리오로 검증해야 한다.
 11. 로컬 검증은 compile/unit/config뿐이다. Docker 이미지 build·컨테이너 실행·API/Redis 통합 테스트와
-    `bench_rpi5.py`의 E2(회차 사이 잔여 M5 호출 소진)는 수행하지 않았다. 새 공통 모듈 3개,
-    자원 문서와 테스트 파일도 아직 untracked다.
+    `bench_rpi5.py`의 E2(회차 사이 잔여 M5 호출 소진)는 수행하지 않았다.
 
 12. M1 담당자 회신을 반영해 `M1_INFER_INTERVAL_MS=200`, `M1_REQUIRED_NODES=1,2,3`,
     device uint32 시계 기반 zero-fill, 창끝 생존 게이트, K=3/N=5를 적용했다. 소폭 역행 패킷은
@@ -127,9 +135,9 @@ p95 6.4~6.8GB이나 **변경 후 실측값이 아니다.**
 
 | 위치 | 브랜치 / 커밋 | 비고 |
 |---|---|---|
-| GitHub `origin/develop` | 로컬 ref `5b30f96` | PR #3(M1·M2), PR #4(M4) 병합 포함. 이번 통합 수정은 아직 원격에 없음 |
-| 노트북 `C:\rp5` | `develop` `5b30f96` + 미커밋 통합 수정 | reset/checkout 금지. 로컬 Docker 수치는 판단에 쓰지 않는다 |
-| RPi5 `~/safewave` | 마지막 확인 `develop` `f686d93`, 워킹트리 깨끗 | 09-17 당시 상태이며 이후 재확인하지 않음. 로컬 통합 수정을 커밋·push하기 전에는 pull하지 말 것. 기존 `stash@{0,1}`도 보존 |
+| GitHub `origin/develop` | 이 문서를 갱신한 커밋 | PR #3(M1·M2), PR #4(M4) 병합 + 통합 리팩토링 5개 커밋 포함 |
+| 노트북 `C:\rp5` | `develop`, 원격과 동일 | 로컬 Docker 수치는 판단에 쓰지 않는다 |
+| RPi5 `~/safewave` | `develop` `5b30f96`, 워킹트리 깨끗 (09-17 17:20 확인) | 통합 리팩토링은 **아직 pull하지 않음**. 받으면 이미지 재빌드가 필요하고 측정 기준 코드가 바뀐다. 다음 모델 업데이트와 함께 받고 재측정. 기존 `stash@{0,1}` 보존 |
 
 ### RPi5
 
@@ -193,9 +201,9 @@ M5가 약 11초마다 호출됐다(`qwen_invoked`, `risk_score` 0.6506 고정). 
 
 ## 3. 오늘 남은 일 — RPi5 develop 기본값 속도 측정
 
-> **다음 Claude 주의:** 이 절은 09-17 당시의 원래 측정 절차·기록을 보존한 것이다. 위의 로컬
-> 통합 수정은 아직 RPi5에 배포되지 않았다. 아래 명령을 그대로 실행하기 전에 변경을 커밋·push할지
-> 노진산에게 확인하고, 다음 모델 업데이트 커밋과 함께 `RESOURCE_BUDGET.md` 6절 순서로 재측정한다.
+> **다음 작업자 주의:** 이 절은 09-17 당시의 원래 측정 절차·기록을 보존한 것이다. 위의 통합
+> 수정은 `develop`에 있지만 아직 RPi5에 배포되지 않았다. 다음 모델 업데이트 커밋과 함께 RPi5에서
+> pull·재빌드한 뒤 `RESOURCE_BUDGET.md` 6절 순서로 재측정한다.
 
 ### 3-1. 최신 코드 반영 (빌드가 끝난 뒤)
 
@@ -355,7 +363,7 @@ M3·M4 입력이 필요하면 대시보드 마이크 패널이나 `scripts/dummy
 | 순서(제안) | 대상 | 원격 위치 | 확인할 것 |
 |---|---|---|---|
 | 1 | M4 이대경 — **09-17 병합 완료** (PR #4 → `8d9d4f8`), RPi5 기본값 INT8 전환(설정 보완 복사본), 결과는 `handoff/rpi5-20260917/TO_LEEDAEGYEONG_M4.md`. 이하 병합 전 확인 내용 — Whisper 파인튜닝 ONNX INT8. 브랜치는 `main`(`bfbd552`) 기반이지만 변경은 파일 추가 39개(`m4_whisper/`, `tests/`, 루트 README 3줄·`.gitignore` 3줄·`.gitattributes`)뿐, develop과 시험 병합 충돌 없음. 가중치는 GitHub 릴리즈 `m4-onnx-int8-20260916`의 `m4-onnx-finetuned-int8.zip`(510.4 MB, 그래프 합계 FP32 약 1,844 MB → INT8 약 716 MB). 인계 README: 기존 `m4_whisper_small.py`에 폴더만 바꾸면 반복 방지 wrapper를 거치지 않음, `confidence=null`을 응급지수에 그대로 넣지 말 것, 자체 wrapper는 Python 3.10·ORT 1.23.2 기준 | `origin/m4/lee-daegyeong-whisper-int8`, 태그 `m4-onnx-int8-20260916` | ONNX INT8은 **Optimum 3파일 형식이라 현재 `WhisperSmallModel` 경로와 호환** — 병합 후 3-4의 `--ids-file`로 같은 표본 비교. 인계 문서 기준 무음 환각 미해결, ONNX 전체 2,398 평가 미실행 |
-| 2 | M1·M2 김태연 — **09-17 병합 완료** | PR #3 → `develop` `be5f00b` (`feature/M1-M2` 유지) | M1: 인계 모델 배치(노트북·RPi5), 조건부 시그모이드 삭제·임계값 `M1_FALL_THRESHOLD` 0.80 (**미커밋**), RPi5 `.env`의 `M1_MAX_NODES=1`·`M1_FALL_THRESHOLD=0.7` 삭제. 오프라인 확인 통과(슬롯 3·4 무영향 max|diff| 0). **실 파이프라인에서는 입력 창이 안 차서 전부 0 입력만 추론** → 3-7 B1로 일괄 조정 때 해결. M2: 파일만 병합, 배선 보류(인계 지시) |
+| 2 | M1·M2 김태연 — **09-17 병합 완료** | PR #3 → `develop` `be5f00b` (`feature/M1-M2` 유지) | M1: 인계 모델 배치(노트북·RPi5), 조건부 시그모이드 삭제·임계값 `M1_FALL_THRESHOLD` 0.80 (`f5dc6cc`), RPi5 `.env`의 `M1_MAX_NODES=1`·`M1_FALL_THRESHOLD=0.7` 삭제. 오프라인 확인 통과(슬롯 3·4 무영향 max|diff| 0). **실 파이프라인에서는 입력 창이 안 차서 전부 0 입력만 추론** → 3-7 B1로 일괄 조정 때 해결. M2: 파일만 병합, 배선 보류(인계 지시) |
 | 3 | M3 소민섭 — v3.4 (09-13 배포 결정) | 아직 인계 브랜치 없음 (`origin/feature/ast-base`는 5월 것) | HF 포맷 + `preprocessor_config.json` + `id2label`. **log-Mel 전처리 구현**, **라벨은 이름으로 매핑**(인덱스 매핑 시 7종↔6종 불일치), 운영 임계값 0.6. 계획서의 오탐 4.03회/h는 09-11 held-out 3.97시간 기준(8/30의 1.51회/h는 평가 녹음 일부가 학습에 섞인 낙관 편향) |
 
 병합 뒤 반드시: `emergency_score` 경계 테스트 회귀, 5노드/1노드 주입 시 expert 오류 0, 점수 범위 0~1.
