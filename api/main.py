@@ -25,6 +25,7 @@ import time
 from typing import Any
 
 import redis.asyncio as aioredis
+from redis.exceptions import RedisError
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -188,6 +189,10 @@ VOICE_RESP_PREFIX   = "user:voice_response:"
 PHASE2_TIMEOUT_SEC  = int(os.getenv("VOICE_RESPONSE_TIMEOUT_SEC", "15"))
 PHASE2_LOCK_SEC     = int(os.getenv("PHASE2_LOCK_SEC", "90"))
 TTS_WAIT_SEC        = int(os.getenv("TTS_WAIT_SEC", "15"))
+# 음성 확인(TTS·STT) 서비스가 떠 있을 때만 Phase 2를 진행한다. 기본 Core 구성에는 없다.
+VOICE_ENABLED       = os.getenv("VOICE_ENABLED", "false").lower() in ("1", "true", "yes")
+# alert worker 시작·재시작 시 되짚어 읽는 구간. 중복 발송은 notify:sent 키가 막는다.
+ALERT_REPLAY_MS     = int(os.getenv("ALERT_REPLAY_MS", "30000"))
 AUDIO_CLIP_KEY_PREFIX = "ai:clip:"
 AUDIO_CLIP_TTL_SECONDS = int(os.getenv("AUDIO_CLIP_TTL_SECONDS", "3600"))
 AUDIO_CLIP_POST_WAIT_MS = int(os.getenv("AUDIO_CLIP_POST_WAIT_MS", "15000"))
@@ -404,10 +409,28 @@ async def _capture_audio_clip(redis_client, ts_ms: int, node_id: int):
 EMERGENCY_TTS_TEXT = "이상이 감지되었습니다. 상태를 말씀해 주세요."
 
 
+def _fresh_transcript(data: dict, since_ms: int) -> str | None:
+    """since_ms 이후에 녹음된 오디오의 transcript만 돌려준다.
+
+    ai-experts는 최근 오디오 결과를 최대 30초간 스냅샷마다 다시 싣기 때문에,
+    경보 전 발화나 TTS 에코가 응답으로 잡히지 않도록 오디오 시각으로 거른다.
+    """
+    try:
+        audio_ts = int((data.get("audio") or {}).get("ts_ms"))
+    except (TypeError, ValueError):
+        return None
+    if audio_ts < since_ms:
+        return None
+    speech = (data.get("experts") or {}).get("speech_ko") or {}
+    if not speech.get("speech_detected"):
+        return None
+    return str(speech.get("transcript_ko", "")).strip() or None
+
+
 async def _get_phase2_transcript(
-    redis_client, after_id: str, timeout: int, node_id: int
+    redis_client, after_id: str, timeout: int, node_id: int, since_ms: int = 0
 ) -> str | None:
-    """같은 노드의 ai:result에서 첫 STT transcript를 반환한다."""
+    """같은 노드의 ai:result에서 since_ms 이후 녹음된 첫 STT transcript를 반환한다."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     last_id = after_id
@@ -432,12 +455,10 @@ async def _get_phase2_transcript(
                         result_node_id = 0
                     if node_id and result_node_id != node_id:
                         continue
-                    speech = (data.get("experts") or {}).get("speech_ko") or {}
-                    if speech.get("speech_detected"):
-                        transcript = str(speech.get("transcript_ko", "")).strip()
-                        if transcript:
-                            return transcript
-                        # STT가 텍스트를 못 뽑은 항목은 무시하고 타임아웃까지 계속 대기
+                    transcript = _fresh_transcript(data, since_ms)
+                    if transcript:
+                        return transcript
+                    # 오래된 오디오·빈 STT 항목은 무시하고 타임아웃까지 계속 대기
         except Exception:
             await asyncio.sleep(0.5)
     return None
@@ -461,76 +482,120 @@ def _classify_phase2(transcript: str | None) -> str:
     return "call_emergency"
 
 
-async def _handle_single_emergency(redis_client, msg_id: str, payload: dict):
-    node_id = payload.get("node_id", 0)
+async def _notify_all(redis_client, dedupe_prefix: str, *send_args) -> int:
+    """등록된 모든 기기에 FCM을 보낸다. 중복 방지 키 쓰기가 실패해도 발송은 한다."""
+    try:
+        tokens = await _list_registered_tokens(redis_client)
+    except RedisError as exc:
+        _log(logging.ERROR, "fcm_token_list_failed", error=str(exc))
+        return 0
+    sent = 0
+    for device_id, token in tokens:
+        try:
+            claimed = await redis_client.set(
+                f"{dedupe_prefix}:{device_id}", "1", ex=ALERT_DEDUP_TTL_SECONDS, nx=True
+            )
+        except RedisError as exc:
+            _log(logging.WARNING, "notify_dedupe_failed", device_id=device_id, error=str(exc))
+            claimed = True
+        if not claimed:
+            continue
+        try:
+            await asyncio.to_thread(send_risk_notification, token, *send_args)
+            sent += 1
+        except Exception as exc:
+            _log(logging.ERROR, "fcm_send_failed", device_id=device_id, error=str(exc))
+    return sent
 
-    # 노드별 Phase 2 중복 실행 방지 락. critical 지속 시 ai:emergency에 ~5초마다
-    # 새 엔트리가 쌓여 핸들러가 중첩 스폰되는 것을 차단한다.
-    # 락은 삭제하지 않고 EX 자연 만료 — 재알림 쿨다운을 겸한다.
-    lock_key = f"phase2:active:{node_id}"
-    acquired = await redis_client.set(lock_key, "active", ex=PHASE2_LOCK_SEC, nx=True)
-    if not acquired:
-        _log(logging.INFO, "phase2_skipped_active", node_id=node_id)
-        return
 
-    asyncio.create_task(
-        _capture_audio_clip(redis_client, payload["ts_ms"], node_id)
-    )
-
-    tts_text = EMERGENCY_TTS_TEXT
+async def _run_phase2(redis_client, payload: dict, node_id: int) -> str:
+    """TTS로 안부를 묻고 음성 응답을 분류한다. 반환값은 _classify_phase2 결과."""
     resp_key = f"{VOICE_RESP_PREFIX}{node_id}"
-    await redis_client.delete(resp_key)
     tts_payload = json.dumps(
-        {"text": tts_text, "node_id": node_id, "ts_ms": payload["ts_ms"]},
+        {"text": EMERGENCY_TTS_TEXT, "node_id": node_id, "ts_ms": payload["ts_ms"]},
         ensure_ascii=False,
     )
+    await redis_client.delete(resp_key)
     pipe = redis_client.pipeline()
     pipe.lpush(TTS_SPEAK_QUEUE, tts_payload)
     pipe.ltrim(TTS_SPEAK_QUEUE, 0, max(0, TTS_QUEUE_MAXLEN - 1))
     pipe.expire(TTS_SPEAK_QUEUE, TTS_QUEUE_TTL_SECONDS)
     await pipe.execute()
-    _log(logging.INFO, "tts_queued", node_id=node_id, text=tts_text)
+    _log(logging.INFO, "tts_queued", node_id=node_id, text=EMERGENCY_TTS_TEXT)
 
     tts_signal = await redis_client.blpop(resp_key, timeout=TTS_WAIT_SEC)
     if tts_signal is None:
         _log(logging.WARNING, "tts_signal_timeout", node_id=node_id)
+    # 재생이 끝난 뒤 녹음된 오디오만 응답으로 인정한다.
+    since_ms = int(time.time() * 1000)
 
-    # Phase 2: TTS 재생 후 ai:result 스트림에서 STT transcript 추출 → 의도 분류
     after_entries = await redis_client.xrevrange(RESULT_STREAM, count=1)
     after_id = after_entries[0][0] if after_entries else "$"
     transcript = await _get_phase2_transcript(
-        redis_client, after_id, timeout=PHASE2_TIMEOUT_SEC, node_id=node_id
+        redis_client, after_id, timeout=PHASE2_TIMEOUT_SEC, node_id=node_id, since_ms=since_ms
     )
     intent = _classify_phase2(transcript)
     _log(logging.INFO, "phase2_result", node_id=node_id, transcript=transcript, intent=intent)
+    return intent
 
-    for device_id, token in await _list_registered_tokens(redis_client):
-        dedupe_key = f"notify:sent:{msg_id}:{device_id}"
-        claimed = await redis_client.set(dedupe_key, "1", ex=ALERT_DEDUP_TTL_SECONDS, nx=True)
-        if not claimed:
-            continue
+
+async def _handle_single_emergency(redis_client, msg_id: str, payload: dict):
+    node_id = payload.get("node_id", 0)
+
+    # 노드별 Phase 2 중복 실행 방지 락. critical 지속 시 ai:emergency에 엔트리가 이어서
+    # 쌓여 핸들러가 중첩 스폰되는 것을 차단한다. 락은 EX 자연 만료 — 재알림 쿨다운을 겸한다.
+    # Redis 쓰기가 실패하면(noeviction 등) 경보를 우선해 락 없이 진행한다.
+    lock_key = f"phase2:active:{node_id}"
+    lock_failed = False
+    try:
+        # redis-py는 NX 실패 시 None을 반환한다.
+        acquired = bool(await redis_client.set(lock_key, "active", ex=PHASE2_LOCK_SEC, nx=True))
+    except RedisError as exc:
+        _log(logging.ERROR, "phase2_lock_failed", node_id=node_id, error=str(exc))
+        acquired, lock_failed = False, True
+    if not acquired and not lock_failed:
+        _log(logging.INFO, "phase2_skipped_active", node_id=node_id)
+        return
+
+    _spawn_phase2_task(
+        _capture_audio_clip(redis_client, payload["ts_ms"], node_id),
+        node_id=node_id,
+        msg_id=f"{msg_id}:clip",
+    )
+
+    # 1차 알림은 음성 확인을 기다리지 않고 즉시 보낸다.
+    sent = await _notify_all(
+        redis_client, f"notify:sent:{msg_id}",
+        payload["risk_score"], payload["risk_level"], True,
+        {"summary": payload["summary"], "ts_ms": payload["ts_ms"]},
+    )
+    _log(logging.WARNING, "alert_sent", node_id=node_id, msg_id=msg_id, devices=sent,
+         voice_enabled=VOICE_ENABLED)
+
+    if VOICE_ENABLED:
         try:
-            if intent == "cancel_alarm":
-                await asyncio.to_thread(
-                    send_risk_notification,
-                    token, payload["risk_score"], "warning", False,
-                    {"summary": "대상자 음성 응답 확인됨", "ts_ms": payload["ts_ms"]},
-                )
-            else:
-                await asyncio.to_thread(
-                    send_risk_notification,
-                    token, payload["risk_score"], payload["risk_level"], True,
-                    {"summary": payload["summary"], "ts_ms": payload["ts_ms"]},
-                )
-        except Exception as exc:
-            _log(logging.ERROR, "fcm_send_failed", device_id=device_id, error=str(exc))
+            intent = await _run_phase2(redis_client, payload, node_id)
+        except RedisError as exc:
+            _log(logging.ERROR, "phase2_redis_failed", node_id=node_id, error=str(exc))
+            intent = "call_emergency"
+        if intent == "cancel_alarm":
+            await _notify_all(
+                redis_client, f"notify:followup:{msg_id}",
+                payload["risk_score"], "warning", False,
+                {"summary": "대상자 음성 응답 확인됨 (괜찮다고 응답)", "ts_ms": payload["ts_ms"]},
+            )
 
     # 키는 재알림 쿨다운을 위해 TTL까지 유지하되, 추론 억제는 실제 Phase 2 동안만 적용한다.
-    await redis_client.set(lock_key, "cooldown", xx=True, keepttl=True)
+    if acquired:
+        try:
+            await redis_client.set(lock_key, "cooldown", xx=True, keepttl=True)
+        except RedisError as exc:
+            _log(logging.WARNING, "phase2_lock_update_failed", node_id=node_id, error=str(exc))
 
 
 async def _alert_worker():
-    last_id = "$"
+    # 재시작 사이에 기록된 경보를 놓치지 않도록 최근 구간부터 읽는다.
+    last_id = f"{max(0, int(time.time() * 1000) - ALERT_REPLAY_MS)}-0"
     while True:
         try:
             redis_client = await _ensure_redis()

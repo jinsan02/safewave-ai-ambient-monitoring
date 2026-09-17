@@ -377,6 +377,118 @@ class RuntimeInputTests(unittest.TestCase):
         self.assertTrue(insufficient["insufficient_input"])
         self.assertFalse(insufficient["fall_detected"])
 
+    def test_tail_miss_keeps_votes_but_empty_or_stale_window_resets(self):
+        reset = runtime_inputs.should_reset_m1_votes
+        self.assertFalse(reset(True, 10_500, 10_000, 1000))   # 창끝 지터만 놓침
+        self.assertTrue(reset(False, 10_500, 10_000, 1000))   # 필수 노드 창 미충족
+        self.assertTrue(reset(True, 11_001, 10_000, 1000))    # 마지막 성공 추론이 오래됨
+
+
+def _extract_functions(path: Path, names: set, namespace: dict) -> dict:
+    """무거운 서비스 모듈을 import하지 않고 순수 함수만 뽑아 실행한다."""
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
+    assert {n.name for n in nodes} == names, names
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), "exec"), namespace)
+    return namespace
+
+
+class RuleAlertTests(unittest.TestCase):
+    def test_reason_only_for_confirmed_rules(self):
+        reason = risk_policy.rule_alert_reason
+        experts = {
+            "fall": {"fall_votes": 3, "fall_vote_samples": 5},
+            "vital": {"heart_rate": 135, "breathing_rate": 20},
+            "env_sound": {"label": "impact"},
+        }
+        self.assertIn("낙상 확정(M1 3/5)", reason({"fall_consensus_bypass": True}, experts))
+        self.assertIn("impact", reason({"fall_hazard_bypass": True}, experts))
+        self.assertIn("HR=135", reason({"vital_bypass": True}, experts))
+        self.assertIsNone(reason({"fall": 1.0, "keyword_fall_bonus": True}, experts))
+        self.assertIsNone(reason({"temporal_escalation": ["sustained_warn"]}, experts))
+        self.assertIsNone(reason(None, None))
+
+    def test_single_window_fall_does_not_trigger_rule_alert(self):
+        score, breakdown = emergency_score.compute_emergency_score({
+            "fall": {"fall_score": 0.95, "fall_detected": False, "window_fall_detected": True},
+        })
+        self.assertIsNone(risk_policy.rule_alert_reason(breakdown, {}))
+
+    def _writer(self):
+        logs = []
+        ns = {
+            "json": json,
+            "_redis": redis_stub,
+            "CRITICAL_THRESHOLD": risk_policy.CRITICAL_THRESHOLD,
+            "EMERGENCY_STREAM": "ai:emergency",
+            "EMERGENCY_STREAM_MAXLEN": 3600,
+            "PHASE2_LOCK_PREFIX": "phase2:active:",
+            "logging": __import__("logging"),
+            "_log": lambda level, event, **fields: logs.append(event),
+        }
+        _extract_functions(ROOT / "ai" / "main.py", {"_write_rule_alert"}, ns)
+        return ns["_write_rule_alert"], logs
+
+    def test_rule_alert_entry_matches_api_contract(self):
+        write, _ = self._writer()
+        redis = _FakeRedis()
+        outcome = write(redis, 1000, 2, 0.65, {"fall_consensus_bypass": True}, "낙상 확정")
+        self.assertEqual(outcome, "written")
+        stream, fields, kwargs = redis.written
+        entry = json.loads(fields["data"])
+        self.assertEqual(stream, "ai:emergency")
+        self.assertEqual(kwargs["maxlen"], 3600)
+        self.assertEqual(entry["risk_level"], "critical")
+        self.assertTrue(entry["emergency"])
+        self.assertEqual(entry["risk_score"], 0.85)
+        self.assertEqual(entry["gate_score"], 0.65)
+        self.assertEqual(entry["slm_mode"], "rule")
+        self.assertEqual((entry["node_id"], entry["ts_ms"], entry["summary"]), (2, 1000, "낙상 확정"))
+
+    def test_rule_alert_respects_phase2_lock_and_redis_errors(self):
+        write, logs = self._writer()
+        locked = _FakeRedis(active=True)
+        self.assertEqual(write(locked, 1, 1, 0.7, {}, "x"), "locked")
+        self.assertIsNone(locked.written)
+
+        class _FullRedis(_FakeRedis):
+            def xadd(self, *_args, **_kwargs):
+                raise _RedisError("OOM command not allowed")
+
+        self.assertEqual(write(_FullRedis(), 1, 1, 0.7, {}, "x"), "failed")
+        self.assertIn("rule_alert_write_failed", logs)
+
+
+class Phase2TranscriptTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.ns = _extract_functions(
+            ROOT / "api" / "main.py", {"_fresh_transcript", "_classify_phase2"}, {}
+        )
+
+    def _snapshot(self, audio_ts, text="괜찮아요", detected=True):
+        return {
+            "audio": {"ts_ms": audio_ts},
+            "experts": {"speech_ko": {"speech_detected": detected, "transcript_ko": text}},
+        }
+
+    def test_only_audio_recorded_after_tts_counts(self):
+        fresh = self.ns["_fresh_transcript"]
+        self.assertIsNone(fresh(self._snapshot(999), since_ms=1000))   # 경보 전 발화·에코
+        self.assertEqual(fresh(self._snapshot(1000), since_ms=1000), "괜찮아요")
+        self.assertIsNone(fresh(self._snapshot(2000, detected=False), since_ms=1000))
+        self.assertIsNone(fresh(self._snapshot(2000, text="  "), since_ms=1000))
+        self.assertIsNone(fresh({"experts": {}}, since_ms=0))
+
+    def test_intent_classification_regression(self):
+        classify = self.ns["_classify_phase2"]
+        self.assertEqual(classify(None), "call_emergency")
+        self.assertEqual(classify("괜찮아요"), "cancel_alarm")
+        self.assertEqual(classify("안 괜찮아"), "call_emergency")
+        self.assertEqual(classify("살려주세요"), "call_emergency")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -186,6 +186,7 @@ ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶
 | `tts:speak:queue` | List | — | TTS 발화 요청 큐 (`tts_worker.py` BLPOP 소비) |
 | `user:voice_response:N` | String | TTL 5s | TTS 재생 완료 신호 (노드별, Phase 2 응급 확인 트리거) |
 | `notify:sent:{msg_id}:{device_id}` | String | TTL 3600s | FCM 중복 발송 방지 dedupe 키 |
+| `notify:followup:{msg_id}:{device_id}` | String | TTL 3600s | 음성 확인 후속 알림 중복 방지 키 |
 
 모든 데이터는 메모리에만 유지되며, 컨테이너 재시작 시 이력이 복구되지 않습니다.
 
@@ -207,19 +208,23 @@ Home Assistant MQTT 통합 설정은 `docs/api-db-spec.html` 참조.
 
 ## 응급 알림 흐름 (Phase 2 Active Verification)
 
-`ai:emergency`에 critical 이벤트가 들어오면 `api/main.py`의 `_alert_worker`가 즉시 FCM을 보내지 않고, 1차로 음성 확인을 시도합니다.
+`ai:emergency`는 두 곳에서 기록됩니다. ai-experts가 확정 규칙(M1 낙상 3/5 확정, 낙상+충격·경보음,
+생체신호 위기)을 만나면 M5를 기다리지 않고 `slm_mode="rule"` critical 항목을 바로 쓰고, M5(ai-qwen)는
+나머지 임계 초과 상황을 판단해 씁니다. `api/main.py`의 `_alert_worker`는 critical 항목을 받으면
+**먼저 FCM을 보내고**, `VOICE_ENABLED=true`일 때만 음성 확인을 이어서 진행합니다.
 
 ```
-ai:emergency (critical)
-  → TTS 발화 큐 적재 (tts:speak:queue)
-  → tts_worker.py가 "괜찮으세요?" 음성 재생 → user:voice_response:N 신호
-  → api가 ai:result 스트림에서 STT(M4) 응답 대기 (PHASE2_TIMEOUT_SEC, 기본 15s)
-  → transcript 키워드 분류
-      - 응급 키워드("아파","도와","살려","119" 등) → call_emergency
-      - 안전 키워드("괜찮","아니야","없어" 등)     → cancel_alarm
-      - 무응답/timeout                              → call_emergency (fail-safe)
-  → FCM 발송 (cancel_alarm: warning 알림 / call_emergency: critical 알림)
+ai:emergency (critical, rule 또는 M5)
+  → phase2:active:N 락 (90s, 같은 노드 중복 경보·M5 재호출 억제)
+  → FCM critical 알림 즉시 발송 (notify:sent:{msg_id}:{device})
+  → VOICE_ENABLED=true일 때만:
+      TTS 발화 큐 적재 (tts:speak:queue) → tts_worker.py "괜찮으세요?" 재생 → user:voice_response:N
+      → 재생 종료 이후 녹음된 STT(M4) 응답만 대기 (VOICE_RESPONSE_TIMEOUT_SEC, 기본 15s)
+      → 안전 키워드("괜찮","아니야","없어" 등) → 후속 warning 알림 "대상자 음성 응답 확인됨"
+        (notify:followup:{msg_id}:{device}), 그 외·무응답은 추가 알림 없음
 ```
+
+API가 재시작되면 최근 `ALERT_REPLAY_MS`(기본 30s) 구간의 경보를 다시 읽고, 이미 보낸 경보는 중복 방지 키로 건너뜁니다.
 
 각 응급 이벤트는 `asyncio.create_task`로 비동기 처리되어 다음 이벤트의 큐 처리를 막지 않습니다.
 
@@ -329,6 +334,10 @@ AUDIO_CHANNELS=1
 | `M1_INFER_INTERVAL_MS` | M1 전역 추론 간격 (기본 200ms = 5Hz; 노드별 추론 아님) |
 | `M1_REQUIRED_NODES` | M1 학습 입력에 필요한 노드 목록 (기본 `1,2,3`) |
 | `M1_TAIL_MAX_AGE_MS` | 필수 노드 창끝 프레임의 호스트 수신 허용 지연 (기본 10ms) |
+| `RULE_ALERT_ENABLED` | 확정 규칙 1차 경보를 M5 없이 기록 (기본 true) |
+| `RULE_ALERT_COOLDOWN_MS` | 규칙 경보 노드별 재기록 간격 (기본 90000ms, Phase 2 락과 동일) |
+| `VOICE_ENABLED` | API가 FCM 발송 뒤 TTS·STT 음성 확인을 진행할지 (기본 false, voice 프로필과 함께 true) |
+| `ALERT_REPLAY_MS` | API alert worker 시작 시 되짚어 읽는 구간 (기본 30000ms) |
 | `VAD_THRESHOLD_DB` | VAD 임계값(dBFS). `-55` ~ `-60`이면 원거리 소리에 민감 |
 | `M2_CSI_WINDOW_FRAMES` | M2 시간축 누적 프레임 수 (기본 300 = 3초 @ 100Hz). 호흡 완전 해상도는 1000프레임(10초) 권장 |
 
