@@ -179,12 +179,13 @@ M3·M4 입력이 필요하면 대시보드 마이크 패널이나 `scripts/dummy
 
 ## 4. 다음 단계 — 팀원 모델 병합 (기본값 측정이 끝난 뒤)
 
-원칙: **한 번에 하나씩** 병합 → 모델 교체 → 3-3과 같은 방법으로 측정 → 기본값과 비교.
+원칙: 브랜치 병합 범위는 **팀 합의 완료**. 노진산이 브랜치를 하나씩 보며 진행할 때까지 대기한다.
+**한 번에 하나씩** 병합 → 모델 교체 → 3-3·3-4와 같은 방법으로 측정 → 기본값과 비교.
 `feature/*` 등 팀원 브랜치에는 커밋하지 않는다.
 
 | 순서(제안) | 대상 | 원격 위치 | 확인할 것 |
 |---|---|---|---|
-| 1 | M4 이대경 — Whisper 파인튜닝 ONNX INT8 (크기·체크섬은 `m4_whisper/artifacts.json`) | `origin/m4/lee-daegyeong-whisper-int8`, 태그 `m4-onnx-int8-20260916` | ONNX INT8은 **Optimum 3파일 형식이라 현재 `WhisperSmallModel` 경로와 호환** — 모델 폴더만 바꿔 3-4의 `--ids-file`로 같은 표본 비교부터. 브랜치의 `ai/` 변경과 `m4_whisper/` 런타임(온도 폴백·반복 guard의 자체 디코딩)은 develop과 diff 검토 후 결정. CT2 런타임은 "M1~M4 ONNX만" 제약과 충돌하므로 팀 결정 필요. **무음 환각 미해결**(무음 → "MBC 뉴스 이덕영입니다"). ONNX 전체 2,398 평가는 인계 측에서도 미실행 |
+| 1 | M4 이대경 — Whisper 파인튜닝 ONNX INT8 (크기·체크섬은 `m4_whisper/artifacts.json`) | `origin/m4/lee-daegyeong-whisper-int8`, 태그 `m4-onnx-int8-20260916` | ONNX INT8은 **Optimum 3파일 형식이라 현재 `WhisperSmallModel` 경로와 호환** — 병합 후 3-4의 `--ids-file`로 같은 표본 비교. 인계 문서 기준 무음 환각 미해결, ONNX 전체 2,398 평가 미실행 |
 | 2 | M1·M2 김태연 | `origin/feature/M1-M2` (09-16 인계 산출물) | M1 입력 노드 수와 `M1_MAX_NODES` 일치, `fall_logit` 여부, M2 기준 신호 확보 여부 |
 | 3 | M3 소민섭 — v3.4 (09-13 배포 결정) | 아직 인계 브랜치 없음 (`origin/feature/ast-base`는 5월 것) | HF 포맷 + `preprocessor_config.json` + `id2label`. **log-Mel 전처리 구현**, **라벨은 이름으로 매핑**(인덱스 매핑 시 7종↔6종 불일치), 운영 임계값 0.6. 계획서의 오탐 4.03회/h는 09-11 held-out 3.97시간 기준(8/30의 1.51회/h는 평가 녹음 일부가 학습에 섞인 낙관 편향) |
 
