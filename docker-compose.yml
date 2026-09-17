@@ -3,8 +3,17 @@ services:
     build: ./db
     container_name: rp5-db
     restart: always
+    # RPi5/Linux cgroup 상대 가중치. 상한이 아니므로 유휴 CPU는 제한하지 않는다.
+    cpu_shares: 1536
+    mem_limit: 768m
+    oom_score_adj: -500
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks:
       - rp5-network
 
@@ -12,11 +21,17 @@ services:
     build: ./sensing
     container_name: rp5-sensing
     restart: always
+    # UDP 300 pkt/s 수신 지연과 패킷 드롭 방지를 최우선으로 보호한다.
+    cpu_shares: 2048
+    mem_limit: 256m
+    oom_score_adj: -700
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     env_file: .env
     environment:
       - REDIS_HOST=db
+      - CSI_STREAM_MAXLEN=${CSI_STREAM_MAXLEN:-36000}
     ports:
       - "5005:5005/udp"
     networks:
@@ -26,6 +41,12 @@ services:
     image: eclipse-mosquitto:2
     container_name: rp5-mqtt
     restart: always
+    cpu_shares: 512
+    mem_limit: 128m
+    oom_score_adj: -300
+    profiles:
+      - integration
+      - home
     ports:
       - "1883:1883"
     volumes:
@@ -39,10 +60,15 @@ services:
     build: ./sensing
     container_name: rp5-audio-sensing
     restart: always
+    cpu_shares: 1024
+    mem_limit: 256m
+    oom_score_adj: -100
     profiles:
       - audio
+      - voice
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     env_file: .env
     environment:
       - REDIS_HOST=db
@@ -53,6 +79,7 @@ services:
       - VAD_MIN_ACTIVE_MS=300
       - VAD_HANGOVER_MS=250
       - AUDIO_MAX_EVENT_SECONDS=6
+      - AUDIO_STREAM_MAXLEN=${AUDIO_STREAM_MAXLEN:-120}
     command: ["python", "audio_main.py"]
     devices:
       - "/dev/snd:/dev/snd"
@@ -65,21 +92,43 @@ services:
       target: ${AI_DOCKER_TARGET:-gpu-runtime}
     container_name: rp5-ai-experts
     restart: always
+    # M1/M2 응답성과 Phase 2 STT를 M5보다 우선한다.
+    cpu_shares: 2048
+    mem_limit: 3g
+    memswap_limit: 3g
+    oom_score_adj: -300
     depends_on:
-      - db
-      - mqtt
+      db:
+        condition: service_healthy
     env_file: .env
     environment:
       - MQTT_HOST=mqtt
       - MQTT_PORT=1883
       - MQTT_BASE_TOPIC=safewave
-      - MQTT_ENABLED=1
+      - MQTT_ENABLED=${MQTT_ENABLED:-0}
       - EXPERT_INFER_TIMEOUT_MS=1000
       - ORT_USE_GPU=${ORT_USE_GPU:-0}
       # ORT 스레드/스핀 튜닝. RPi5의 post-change CPU 절감값은 재측정 필요.
       - ORT_INTRA_OP_THREADS=${ORT_INTRA_OP_THREADS:-1}
-      - M3_ORT_THREADS=${M3_ORT_THREADS:-2}
+      - ORT_INTER_OP_THREADS=${ORT_INTER_OP_THREADS:-1}
+      - M3_ORT_THREADS=${M3_ORT_THREADS:-1}
       - M4_ORT_THREADS=${M4_ORT_THREADS:-2}
+      - M4_MAX_NEW_TOKENS=${M4_MAX_NEW_TOKENS:-48}
+      - M1_REQUIRED_NODES=${M1_REQUIRED_NODES:-1,2,3}
+      - M1_FRAME_INTERVAL_MS=${M1_FRAME_INTERVAL_MS:-10}
+      - M1_TAIL_MAX_AGE_MS=${M1_TAIL_MAX_AGE_MS:-10}
+      - M1_INFER_INTERVAL_MS=${M1_INFER_INTERVAL_MS:-200}
+      - M1_RESULT_MAX_AGE_MS=${M1_RESULT_MAX_AGE_MS:-1000}
+      - M1_AGGREGATION_K=${M1_AGGREGATION_K:-3}
+      - M1_AGGREGATION_N=${M1_AGGREGATION_N:-5}
+      - AUDIO_RESULT_MAX_AGE_MS=${AUDIO_RESULT_MAX_AGE_MS:-30000}
+      # NumPy/Optimum 하위 BLAS·OpenMP의 숨은 코어 확장을 막는다.
+      - OMP_NUM_THREADS=1
+      - OMP_WAIT_POLICY=PASSIVE
+      - OPENBLAS_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
+      - NUMEXPR_NUM_THREADS=1
+      - MALLOC_ARENA_MAX=2
     volumes:
       - ./volumes/models:/app/models
     networks:
@@ -91,20 +140,31 @@ services:
       target: ${AI_QWEN_DOCKER_TARGET:-gguf-runtime}
     container_name: rp5-ai-qwen
     restart: always
+    # 유휴 시 2코어를 모두 쓰되 경합 시 sensing/ai-experts에 양보한다.
+    cpu_shares: 1024
+    mem_limit: 3g
+    memswap_limit: 3g
+    oom_score_adj: 300
     depends_on:
-      - db
-      - ai-experts
+      db:
+        condition: service_healthy
+      ai-experts:
+        condition: service_started
     env_file: .env
     environment:
       - REDIS_HOST=db
-      - SLM_MIN_INTERVAL_MS=5000
+      - SLM_MIN_INTERVAL_MS=${SLM_MIN_INTERVAL_MS:-5000}
+      - SLM_CANDIDATE_MAX_AGE_MS=${SLM_CANDIDATE_MAX_AGE_MS:-30000}
+      - SLM_HOURLY_EMERGENCY_SCAN_LIMIT=${SLM_HOURLY_EMERGENCY_SCAN_LIMIT:-300}
+      - SLM_HOURLY_CACHE_MS=${SLM_HOURLY_CACHE_MS:-60000}
       - ORT_USE_GPU=${ORT_USE_GPU:-0}
       - SLM_BACKEND=${SLM_BACKEND:-gguf}
       - SLM_MODEL=${SLM_MODEL:-qwen_15b_gguf_q5}
       - SLM_TOKENIZER=${SLM_TOKENIZER:-qwen_15b}
-      # RPi5 자원 분리 설계값: Qwen 3스레드, 나머지 루프용 1코어 여유를 목표로 함.
-      # 실제 지연·처리량·자원 점유는 docs/benchmark_template.md로 측정해야 함.
-      - QWEN_GGUF_THREADS=${QWEN_GGUF_THREADS:-3}
+      # RPi5 4코어 운영 후보: M5 2코어 + sensing/Redis/CSI 처리 여유.
+      - QWEN_GGUF_THREADS=${QWEN_GGUF_THREADS:-2}
+      - QWEN_GGUF_CACHE_MB=${QWEN_GGUF_CACHE_MB:-64}
+      - MALLOC_ARENA_MAX=2
     volumes:
       - ./volumes/models:/app/models
     command: ["python3", "qwen_service.py"]
@@ -115,11 +175,23 @@ services:
     build: ./api
     container_name: rp5-api
     restart: always
+    cpu_shares: 1024
+    mem_limit: 384m
+    oom_score_adj: -200
     ports:
       - "8000:8000"
     depends_on:
-      - ai-experts
+      db:
+        condition: service_healthy
+      ai-experts:
+        condition: service_started
     env_file: .env
+    environment:
+      - AUDIO_STREAM_MAXLEN=${AUDIO_STREAM_MAXLEN:-120}
+      - REDIS_MEMORY_WARN_BYTES=${REDIS_MEMORY_WARN_BYTES:-268435456}
+      - REDIS_MEMORY_CRITICAL_BYTES=${REDIS_MEMORY_CRITICAL_BYTES:-402653184}
+      - TTS_QUEUE_MAXLEN=${TTS_QUEUE_MAXLEN:-32}
+      - TTS_QUEUE_TTL_SECONDS=${TTS_QUEUE_TTL_SECONDS:-3600}
     volumes:
       - ./api/auth:/app/auth:ro
     networks:
@@ -129,9 +201,16 @@ services:
     build: ./api
     container_name: rp5-tts-worker
     restart: always
+    cpu_shares: 512
+    mem_limit: 384m
+    oom_score_adj: 100
+    init: true
+    profiles:
+      - audio
+      - voice
     depends_on:
-      - mqtt
-      - db
+      db:
+        condition: service_healthy
     env_file: .env
     environment:
       - MQTT_HOST=mqtt
@@ -153,8 +232,14 @@ services:
     image: ghcr.io/home-assistant/home-assistant:stable
     container_name: rp5-ha
     restart: always
+    cpu_shares: 256
+    mem_limit: 512m
+    oom_score_adj: 500
+    profiles:
+      - home
     depends_on:
-      - mqtt
+      mqtt:
+        condition: service_started
     environment:
       - TZ=Asia/Seoul
     volumes:

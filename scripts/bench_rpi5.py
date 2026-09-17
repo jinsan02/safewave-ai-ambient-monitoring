@@ -34,12 +34,25 @@ from pathlib import Path
 import redis
 
 REPO = Path(__file__).resolve().parents[1]
-CONTAINERS = ["rp5-ai-experts", "rp5-ai-qwen", "rp5-sensing", "rp5-api", "rp5-db", "rp5-mqtt"]
+CONTAINERS = [
+    "rp5-ai-experts",
+    "rp5-ai-qwen",
+    "rp5-sensing",
+    "rp5-api",
+    "rp5-db",
+    "rp5-mqtt",
+    "rp5-audio-sensing",
+    "rp5-tts-worker",
+    "rp5-ha",
+]
 EXPERT_LOG_EVENTS = [
     "csi_backlog_skipped", "packet_gap_detected", "expert_timeout", "expert_failure",
     "audio_m3_failed", "audio_m4_failed", "warmup_failed", "audio_worker_error",
 ]
-ENV_KEYS = re.compile(r"^(ORT_|M[1-5]_|QWEN_|SLM_|EXPERT_|AI_DOCKER|SNAPSHOT_|RESULT_STREAM)")
+ENV_KEYS = re.compile(
+    r"^(ORT_|M[1-5]_|QWEN_|SLM_|EXPERT_|AI_DOCKER|SNAPSHOT_|RESULT_STREAM|"
+    r"OMP_|OPENBLAS_|MKL_|NUMEXPR_|MALLOC_)"
+)
 
 
 # ── 유틸 ────────────────────────────────────────────────────────
@@ -79,6 +92,18 @@ def swap_used_mb():
         return None
 
 
+def pressure_avg10(resource):
+    """Linux PSI avg10. CPU 경합과 메모리 stall을 단순 CPU%와 별도로 기록한다."""
+    try:
+        rows = {}
+        for line in Path(f"/proc/pressure/{resource}").read_text().splitlines():
+            parts = line.split()
+            rows[parts[0]] = {k: float(v) for k, v in (part.split("=", 1) for part in parts[1:])}
+        return {kind: values.get("avg10") for kind, values in rows.items()}
+    except (OSError, ValueError, IndexError):
+        return {}
+
+
 def restart_counts():
     out = {}
     for name in CONTAINERS:
@@ -99,6 +124,23 @@ def dist(values):
         return {"n": 0}
     return {"n": len(values), "p50": pct(values, 50), "p95": pct(values, 95),
             "max": max(values), "mean": round(statistics.fmean(values), 2)}
+
+
+def parse_size_mb(value):
+    """docker stats의 2.5GiB/430MiB 형식을 MiB로 변환한다. 0B는 측정 불가로 본다."""
+    match = re.fullmatch(r"\s*([0-9.]+)\s*([KMGT]?i?B)\s*", str(value), re.IGNORECASE)
+    if not match:
+        return None
+    number = float(match.group(1))
+    unit = match.group(2).lower()
+    factors = {
+        "b": 1 / (1024 * 1024), "kb": 1000 / (1024 * 1024), "kib": 1 / 1024,
+        "mb": 1_000_000 / (1024 * 1024), "mib": 1,
+        "gb": 1_000_000_000 / (1024 * 1024), "gib": 1024,
+        "tb": 1_000_000_000_000 / (1024 * 1024), "tib": 1024 * 1024,
+    }
+    size_mb = number * factors[unit]
+    return round(size_mb, 2) if size_mb > 0 else None
 
 
 def stream_id_ms(entry_id):
@@ -139,18 +181,28 @@ class Collector:
 
     def sample(self):
         t = time.time()
+        os_pressure = {
+            "cpu": pressure_avg10("cpu"),
+            "memory": pressure_avg10("memory"),
+        }
         try:
-            self.resources.append({"t": t, **http(self.api, "/system/resources"), "swap_used_mb": swap_used_mb()})
+            self.resources.append({"t": t, **http(self.api, "/system/resources"),
+                                   "swap_used_mb": swap_used_mb(), "pressure": os_pressure})
         except Exception as exc:
-            self.resources.append({"t": t, "error": str(exc), "swap_used_mb": swap_used_mb()})
-        stats = {}
+            self.resources.append({"t": t, "error": str(exc),
+                                   "swap_used_mb": swap_used_mb(), "pressure": os_pressure})
+        stats, memory_mb = {}, {}
         for line in sh(["docker", "stats", "--no-stream", "--format", "{{json .}}"]).splitlines():
             try:
                 row = json.loads(line)
                 stats[row["Name"]] = float(row["CPUPerc"].rstrip("%"))
+                used_memory = str(row.get("MemUsage", "")).split("/", 1)[0].strip()
+                parsed_memory = parse_size_mb(used_memory)
+                if parsed_memory is not None:
+                    memory_mb[row["Name"]] = parsed_memory
             except (ValueError, KeyError):
                 pass
-        self.docker_stats.append({"t": t, "cpu": stats})
+        self.docker_stats.append({"t": t, "cpu": stats, "memory_mb": memory_mb})
         self.throttled.append({"t": t, "raw": sh(["vcgencmd", "get_throttled"]).strip()})
         self.nodes.append({"t": t, "nodes": self.node_health()})
         self.pull_stream("ai:result", self.ai_result)
@@ -196,8 +248,20 @@ def summarize(c, qwen_ms, log_counts, start, end, injections):
     out["container_cpu_percent"] = {
         name: dist([s["cpu"][name] for s in c.docker_stats if name in s["cpu"]]) for name in CONTAINERS
     }
+    out["container_memory_mb"] = {
+        name: dist([s["memory_mb"][name] for s in c.docker_stats if name in s.get("memory_mb", {})])
+        for name in CONTAINERS
+    }
     out["throttled"] = sorted({x["raw"] for x in c.throttled})
     out["swap_used_mb"] = dist([x["swap_used_mb"] for x in c.resources if x.get("swap_used_mb") is not None])
+    out["cpu_pressure_some_avg10"] = dist([
+        x.get("pressure", {}).get("cpu", {}).get("some") for x in c.resources
+        if x.get("pressure", {}).get("cpu", {}).get("some") is not None
+    ])
+    out["memory_pressure_full_avg10"] = dist([
+        x.get("pressure", {}).get("memory", {}).get("full") for x in c.resources
+        if x.get("pressure", {}).get("memory", {}).get("full") is not None
+    ])
 
     ai = [p for _, p in c.ai_result]
     lat = lambda k: [p["expert_latency_ms"][k] for p in ai if p.get("expert_latency_ms", {}).get(k)]
@@ -270,9 +334,13 @@ def write_markdown(path, meta, s):
          f"| CPU 온도 °C | {fmt(s['host_temp_c'])} |",
          f"| 메모리 사용 GB | {fmt(s['host_mem_used_gb'])} |",
          f"| 스왑 사용 MB | {fmt(s['swap_used_mb'])} |",
+         f"| CPU PSI some avg10 % | {fmt(s['cpu_pressure_some_avg10'])} |",
+         f"| 메모리 PSI full avg10 % | {fmt(s['memory_pressure_full_avg10'])} |",
          f"| 디스크 사용 % | {s.get('disk_used_percent', '—')} |"]
     for name, d in s["container_cpu_percent"].items():
         L.append(f"| {name} CPU % | {fmt(d)} |")
+    for name, d in s["container_memory_mb"].items():
+        L.append(f"| {name} memory MiB | {fmt(d)} |")
     a, au, m5 = s["ai_result"], s["audio"], s["m5"]
     L += ["", "## 지연", "", "| 모델 | 값 (ms) | 비고 |", "|---|---|---|",
           f"| M1 낙상 | {fmt(a['m1_fall_ms'])} | source {a['m1_source']} |",
@@ -338,6 +406,14 @@ def main():
             if Path("/proc/device-tree/model").exists() else platform.machine(),
             "kernel": platform.release(),
             "docker": sh(["docker", "version", "--format", "{{.Server.Version}}"]).strip(),
+            "cpu_governor": (
+                Path("/sys/devices/system/cpu/cpufreq/policy0/scaling_governor").read_text().strip()
+                if Path("/sys/devices/system/cpu/cpufreq/policy0/scaling_governor").exists() else None
+            ),
+            "cgroup_controllers": (
+                Path("/sys/fs/cgroup/cgroup.controllers").read_text().strip().split()
+                if Path("/sys/fs/cgroup/cgroup.controllers").exists() else []
+            ),
         },
         "settings_before": original,
         "settings_during": changed,
@@ -350,7 +426,11 @@ def main():
         info = sh(["docker", "inspect", "--format", "{{json .}}", name])
         try:
             j = json.loads(info)
-            meta["container_images"][name] = {"image": j["Config"]["Image"], "created": j["Created"]}
+            meta["container_images"][name] = {
+                "image": j["Config"]["Image"],
+                "created": j["Created"],
+                "cpu_shares": j.get("HostConfig", {}).get("CpuShares"),
+            }
             meta["container_env"][name] = sorted(e for e in j["Config"]["Env"] if ENV_KEYS.match(e))
         except (ValueError, KeyError):
             meta["container_images"][name] = "not running"
