@@ -1,7 +1,7 @@
 # SafeWave validation status
 
-Last audited: 2026-09-02
-Audited revision: `324ae4354761b1caa13c260e532c067d5efd7e41` (`develop`; fetched `origin/develop` matched)
+Last audited: 2026-09-17 (observations below; see "2026-09-17 device observations")
+Previous full audit: 2026-09-02 at `324ae4354761b1caa13c260e532c067d5efd7e41` (`develop`)
 
 ## How to read this page
 
@@ -23,7 +23,7 @@ clinical validation.
 |---|---|---|---|---|---|---|
 | Docker Compose services | Yes | Compose configuration can be validated | Dummy injection supported | **No raw run log** | RPi5 full-stack run | Architecture and configuration are implemented; RPi5 completion is unverified here. |
 | CSI UDP ingestion / Redis | Yes | Packet and integration paths exist | `dummy_inject.py` | **No raw run log in Git** | Live ESP32 capture | Wire/interface behavior can be reproduced without claiming sensing accuracy. |
-| M1 interface | Yes, input `(1,5,64,100)` and fall-score output | Pipeline tests cover plumbing | Synthetic CSI | **No accuracy log** | Labelled multi-person fall/non-fall CSI | The export script creates an untrained simplified network unless a trained checkpoint is supplied. No fall accuracy is established. |
+| M1 interface | Yes, input `(1, M1_MAX_NODES, 64, 100)` and fall-score output; `fall_logit` outputs get a sigmoid | Pipeline tests cover plumbing | Synthetic CSI | **No accuracy log in this repo** | Labelled multi-person fall/non-fall CSI | The export script in this repo creates an untrained simplified network. The RPi5 currently runs a trained single-node CNN-GRU from the separate pose repository; its accuracy evidence lives there, not here. |
 | M2 interface | Yes, HR/RR output with ONNX or FFT fallback | Boundary/pipeline tests cover plumbing | Synthetic signals | **No paired reference log** | CSI paired with reference HR/RR | The export script creates an untrained network. No HR/RR MAE or clinical accuracy is established. |
 | M3 interface | Partial | `test_m3_m4_experts.py` exists | Synthetic/injected audio | **No labelled device evaluation** | Correct feature extraction and labelled household audio | AST produces a generic AudioSet top class; the seven-class label is selected by a heuristic. Runtime pads/reshapes raw waveform instead of applying the expected log-Mel feature extractor, so AST semantics and seven-class accuracy are unverified. |
 | M4 Korean STT | Yes when Whisper artifacts and dependencies load | Expert test exists | Injected/upstream text path | **No RPi5 WER log** | Representative Korean speech with transcripts | Export/runtime integration exists; no WER or real-room robustness result is established. |
@@ -60,6 +60,35 @@ hardware-specific verification.
   therefore **evidence insufficient**.
 - A synthetic rule/LLM score is not fall accuracy, vital-sign error, clinical sensitivity, or
   real-world reliability.
+
+## 2026-09-17 device observations
+
+Observations made over SSH/Redis while preparing the RPi5 baseline. No raw log is committed yet, so
+these are **not** device evidence under the definitions above.
+
+- Device: Raspberry Pi 5 Model B Rev 1.1, 8 GB, 4 cores, kernel 6.12.75+rpt-rpi-2712, NVMe root.
+- Live ESP32-S3 CSI from nodes 1–3 at about 300 packets/s in total.
+- A 5-second counter sample showed node 1 missing about 35% of its sequence range while nodes 2 and 3
+  were near 0%. The lifetime `node:1:health` counter had accumulated an implausible value from
+  earlier sequence jumps; compare deltas between two samples rather than the lifetime ratio.
+- Before this update the RPi5 ran an image built from `a778480`; it reported repeated
+  `csi_backlog_skipped` with three nodes. The post-update stack has not been measured yet.
+- `docker stats` reports `0B` memory on this RPi5 because the memory cgroup is not enabled.
+  Use host memory or process RSS for memory measurements.
+
+### Measurement caveats found
+
+- M3/M4 run in the audio worker thread, not in `process_experts`. `expert_latency_ms.env_sound`
+  and `expert_latency_ms.speech_ko` in `ai:result` therefore measure an empty-input path (~0 ms)
+  and must not be reported as M3/M4 latency. Use `audio:result` stream-ID time minus the payload
+  `ts_ms` (event → result delay).
+- On the development laptop (x86, CPU ORT), one injected audio event took about 2.75 s for M3+M4
+  while events arrived every 2.0 s, so the delay grew linearly (3.2 s → 17.1 s) until injection
+  stopped. If the RPi5 per-event time also exceeds the event interval, Phase 2 replies can miss
+  the 15 s window. This is a laptop observation, not an RPi5 result.
+- M1 warm-up in `ai/main.py` feeds a 1-D signal that becomes `(1,1,64,100)`. It works for the
+  current single-node model but fails for five-node models, so the first M1 inference then
+  includes session start-up cost.
 
 ## Research outcome
 

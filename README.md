@@ -99,7 +99,7 @@ ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶
 
 | ID | 파일 | 입력 | 출력 |
 |---|---|---|---|
-| M1 | `experts/m1_wifi_pose.py` | CSI `(1,5,64,100)` | 낙상 위험 점수 (0–1) |
+| M1 | `experts/m1_wifi_pose.py` | CSI `(1, M1_MAX_NODES, 64, 100)` — 기본 5노드. 1노드 학습 모델은 `.env`에 `M1_MAX_NODES=1` | 낙상 위험 점수 (0–1). 출력 이름이 `fall_logit`이면 sigmoid 적용 |
 | M2 | `experts/m2_frenel_vital.py` | CSI 시간 시리즈 (N,) @ 100Hz — per-node deque | 생체신호 점수 (HR, RR) |
 | M3 | `experts/m3_ast_base.py` | raw waveform → 고정 AST tensor | 휴리스틱 7종 라벨 + AST top class/confidence |
 | M4 | `experts/m4_whisper_small.py` | 오디오 PCM (최근 5s) | 한국어 STT |
@@ -235,6 +235,7 @@ ai:emergency (critical)
 | GET | `/nodes/health` | 노드별 패킷 통계 |
 | GET | `/system/redis-memory` | Redis 메모리 사용량 |
 | GET | `/system/health` | 시스템 전체 상태 |
+| GET | `/system/resources` | 호스트 CPU(전체·코어별)·온도·메모리·디스크 — 조회 시 계산, 저장 없음 |
 | WS  | `/ws/monitor` | 실시간 스트리밍 |
 
 **제어 및 관리:**
@@ -260,6 +261,9 @@ ai:emergency (critical)
 - **10분 추이 차트**: 위험도 / 심박 / 호흡 시계열
 - **1시간 위험도 차트**: SLM 호출 마커 포함
 - **마이크 패널**: 브라우저 마이크 녹음 → `POST /audio/events` 즉시 전송 (M3/M4 즉시 테스트)
+- **모델 토글**: M1~M5 개별 on/off (`/settings`의 `models`)
+- **시스템 자원 패널**: `?api=`로 연결된 기기의 CPU·온도·메모리·저장소 (3초 갱신). 제목에 연결 주소가 표시되므로
+  노트북 Docker(`localhost`)와 RPi5를 혼동하지 않도록 확인
 
 ```powershell
 # 로컬 정적 서버로 열기 (마이크 권한 안정)
@@ -270,8 +274,10 @@ python -m http.server 8081
 외부 기기 접근 시 URL 파라미터:
 
 ```
-http://192.168.0.25/monitor.html?api=http://192.168.0.25:8000
+http://127.0.0.1:8081/monitor.html?api=http://<RPi5-IP>:8000
 ```
+
+RPi5 주소는 DHCP로 바뀔 수 있습니다. 현재 값은 `HANDOFF.md`를 확인하세요.
 
 ---
 
@@ -502,6 +508,14 @@ SafeWave/1학기 캡스톤의 연구 방향과 연결된 논문
 ---
 
 ## 변경 이력
+
+### develop (미릴리즈) — 2026-09-17
+
+- M1: 출력 이름이 `fall_logit`인 학습 모델(pose 레포 CNN-GRU)에 sigmoid 적용 — 기존 clip만으로는 0/1 포화
+- sensing: 패킷 손실 계산을 wire contract(`seq_num` uint32)에 맞춤. 늦게 도착·중복 패킷은 기준 seq를 되돌리지 않음,
+  크게 역행하면 재부팅으로 보고 기준 재설정
+- API: `GET /system/resources` 신규, 대시보드에 시스템 자원 패널 추가
+- 문서: `HANDOFF.md`(현재 작업 인계), `AGENTS.md`(Codex용 지침) 추가
 
 ### v0.2.0 — 2026-07-21 — M5 Qwen2.5-1.5B GGUF 통합 (qwen-llmops 이식)
 
