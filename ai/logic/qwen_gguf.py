@@ -41,11 +41,10 @@ class QwenLogic(_QwenLogic15B):
         self.n_ctx = int(os.getenv("QWEN_GGUF_N_CTX", "2048"))
         self.n_threads = int(os.getenv("QWEN_GGUF_THREADS", "0")) or None  # 0 → llama 기본
         self.hourly_window_ms = int(os.getenv("SLM_HOURLY_WINDOW_MS", "3600000"))
-        self.hourly_result_scan_limit = int(os.getenv("SLM_HOURLY_RESULT_SCAN_LIMIT", "1800"))
-        self.hourly_emergency_scan_limit = int(os.getenv("SLM_HOURLY_EMERGENCY_SCAN_LIMIT", "600"))
-        self.hourly_speech_sample_limit = int(os.getenv("SLM_HOURLY_SPEECH_SAMPLE_LIMIT", "8"))
+        self.hourly_emergency_scan_limit = int(os.getenv("SLM_HOURLY_EMERGENCY_SCAN_LIMIT", "300"))
         self.hourly_event_sample_limit = int(os.getenv("SLM_HOURLY_EVENT_SAMPLE_LIMIT", "8"))
-        self.hourly_cache_ms = int(os.getenv("SLM_HOURLY_CACHE_MS", "10000"))
+        self.hourly_event_dedup_ms = int(os.getenv("SLM_HOURLY_EVENT_DEDUP_MS", "90000"))
+        self.hourly_cache_ms = int(os.getenv("SLM_HOURLY_CACHE_MS", "60000"))
         self.redis_client = None
         self._hourly_cache_at_ms = 0
         self._hourly_cache_data = None
@@ -86,7 +85,7 @@ class QwenLogic(_QwenLogic15B):
             if os.getenv("QWEN_GGUF_CACHE", "1") == "1":
                 try:
                     from llama_cpp import LlamaRAMCache
-                    cache_mb = int(os.getenv("QWEN_GGUF_CACHE_MB", "256"))
+                    cache_mb = int(os.getenv("QWEN_GGUF_CACHE_MB", "64"))
                     self._llama.set_cache(LlamaRAMCache(capacity_bytes=cache_mb * 1024 * 1024))
                     _LOGGER.info("qwen_gguf_cache_enabled capacity_mb=%d", cache_mb)
                 except Exception as e:

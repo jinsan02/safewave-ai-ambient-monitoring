@@ -6,6 +6,12 @@ import json
 import numpy as np
 import onnxruntime as ort
 
+from logic.risk_policy import (
+    apply_context_window,
+    apply_feedback_adjustment,
+    apply_hourly_fallback_weight,
+    classify_score,
+)
 from utils import safe_float as _safe_float, stream_id_ts_ms as _stream_id_ts_ms
 
 _LOGGER = logging.getLogger("rp5.ai.qwen")
@@ -37,11 +43,12 @@ class QwenLogic:
         self.max_new_tokens = int(os.getenv("QWEN_MAX_NEW_TOKENS", "56"))
         self.max_new_tokens = max(40, min(80, self.max_new_tokens))
         self.hourly_window_ms = int(os.getenv("SLM_HOURLY_WINDOW_MS", "3600000"))
-        self.hourly_result_scan_limit = int(os.getenv("SLM_HOURLY_RESULT_SCAN_LIMIT", "1800"))
-        self.hourly_emergency_scan_limit = int(os.getenv("SLM_HOURLY_EMERGENCY_SCAN_LIMIT", "600"))
+        self.hourly_result_scan_limit = int(os.getenv("SLM_HOURLY_RESULT_SCAN_LIMIT", "300"))
+        self.hourly_emergency_scan_limit = int(os.getenv("SLM_HOURLY_EMERGENCY_SCAN_LIMIT", "300"))
         self.hourly_speech_sample_limit = int(os.getenv("SLM_HOURLY_SPEECH_SAMPLE_LIMIT", "8"))
         self.hourly_event_sample_limit = int(os.getenv("SLM_HOURLY_EVENT_SAMPLE_LIMIT", "8"))
-        self.hourly_cache_ms = int(os.getenv("SLM_HOURLY_CACHE_MS", "10000"))
+        self.hourly_event_dedup_ms = int(os.getenv("SLM_HOURLY_EVENT_DEDUP_MS", "90000"))
+        self.hourly_cache_ms = int(os.getenv("SLM_HOURLY_CACHE_MS", "60000"))
         self.redis_client = None  # qwen_service.py가 외부에서 주입
         self._hourly_cache_at_ms = 0
         self._hourly_cache_data = None
@@ -179,12 +186,6 @@ class QwenLogic:
             except Exception:
                 continue
 
-            risk_level = str(payload.get("risk_level", "normal"))
-            if risk_level == "critical":
-                context["critical_count"] += 1
-            elif risk_level == "warning":
-                context["warning_count"] += 1
-
             experts = payload.get("experts", {})
             vital = experts.get("vital", {}) if isinstance(experts, dict) else {}
             hr = _safe_float(vital.get("heart_rate"), default=-1.0)
@@ -202,6 +203,8 @@ class QwenLogic:
 
             context["sampled_result_points"] += 1
 
+        last_event_ts_by_node = {}
+        event_summaries = set()
         for msg_id, fields in emergency_entries:
             ts_ms = _stream_id_ts_ms(msg_id)
             if ts_ms < since_ts_ms:
@@ -215,8 +218,25 @@ class QwenLogic:
             except Exception:
                 continue
 
+            try:
+                node_id = int(payload.get("node_id", 0) or 0)
+            except (TypeError, ValueError):
+                node_id = 0
+            newer_ts = last_event_ts_by_node.get(node_id)
+            if newer_ts is not None and newer_ts - ts_ms < self.hourly_event_dedup_ms:
+                continue
+            last_event_ts_by_node[node_id] = ts_ms
+
+            risk_level = str(payload.get("risk_level", "normal"))
+            if risk_level == "critical":
+                context["critical_count"] += 1
+            elif risk_level == "warning":
+                context["warning_count"] += 1
+
             summary = str(payload.get("summary", "")).strip()
-            if summary and len(context["important_events"]) < self.hourly_event_sample_limit:
+            if summary and summary not in event_summaries \
+                    and len(context["important_events"]) < self.hourly_event_sample_limit:
+                event_summaries.add(summary)
                 context["important_events"].append(summary[:96])
 
         context["heart_rate_trend"] = self._series_trend_summary(heart_rates, "심박", "bpm")
@@ -587,63 +607,16 @@ class QwenLogic:
         return float(np.clip(risk, 0.0, 1.0))
     
     def _apply_context_window(self, risk_score, context_window):
-        if not context_window:
-            return risk_score
-
-        warning_count = int(context_window.get("recent_warning_count", 0))
-        if warning_count >= 3:
-            risk_score = min(1.0, risk_score + 0.1)
-
-        return float(np.clip(risk_score, 0.0, 1.0))
+        return apply_context_window(risk_score, context_window)
 
     def _apply_hourly_fallback_weight(self, risk_score, hourly_context, expert_results):
         """Qwen 폴백 경로에서 1시간 시계열 맥락을 더 강하게 반영한다."""
-        if not hourly_context:
-            return float(np.clip(risk_score, 0.0, 1.0))
-
-        warning_count = int(hourly_context.get("warning_count", 0))
-        critical_count = int(hourly_context.get("critical_count", 0))
-        speech_samples = hourly_context.get("speech_samples", [])
-
-        weighted = float(risk_score)
-        if warning_count >= 3:
-            weighted *= 1.2
-        if critical_count >= 1:
-            weighted *= 1.1
-
-        # 과거 발화 이력이 있고 현재도 음성 위험 키워드가 있으면 추가 가중
-        speech = expert_results.get("speech_ko", {}) if isinstance(expert_results, dict) else {}
-        transcript = str(speech.get("transcript_ko", "")).strip()
-        if speech_samples and transcript:
-            keywords = ("살려", "도와", "응급", "위험", "119", "불", "화재")
-            if any(k in transcript for k in keywords):
-                weighted += 0.08
-
-        return float(np.clip(weighted, 0.0, 1.0))
+        return apply_hourly_fallback_weight(risk_score, hourly_context, expert_results)
 
     def _apply_feedback_adjustment(self, risk_score):
-        if self.redis_client is None:
-            return float(np.clip(risk_score, 0.0, 1.0))
-
-        try:
-            raw = self.redis_client.get(self.feedback_topic_key)
-            if not raw:
-                return float(np.clip(risk_score, 0.0, 1.0))
-            if isinstance(raw, bytes):
-                raw = raw.decode("utf-8", errors="ignore")
-            payload = json.loads(raw)
-        except Exception:
-            return float(np.clip(risk_score, 0.0, 1.0))
-
-        feedback = str(payload.get("feedback", "")).lower().strip()
-        delta = _safe_float(payload.get("delta"), default=0.0)
-        if delta == 0.0:
-            if feedback in {"up", "missed_alert", "positive"}:
-                delta = 0.08
-            elif feedback in {"down", "false_alarm", "negative"}:
-                delta = -0.08
-        adjusted = float(np.clip(risk_score + delta, 0.0, 1.0))
-        return adjusted
+        return apply_feedback_adjustment(
+            risk_score, self.redis_client, self.feedback_topic_key
+        )
     
     def evaluate(self, expert_results, context_window=None):
         """
@@ -703,16 +676,11 @@ class QwenLogic:
         risk_score = self._apply_feedback_adjustment(risk_score)
         
         # 위험 레벨 분류
-        if risk_score >= 0.85:
-            level = "critical"
-        elif risk_score >= 0.6:
-            level = "warning"
-        else:
-            level = "normal"
+        risk_score, level, emergency = classify_score(risk_score)
         
         # 응답 구성
         result = {
-            "emergency": risk_score >= 0.6,
+            "emergency": emergency,
             "risk_level": level,
             "risk_score": round(risk_score, 4),
             "experts": expert_results,

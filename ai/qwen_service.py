@@ -33,6 +33,9 @@ RESULT_STREAM    = "ai:result"
 EMERGENCY_STREAM = "ai:emergency"
 EMERGENCY_STREAM_MAXLEN = int(os.getenv("EMERGENCY_STREAM_MAXLEN", "3600"))
 SLM_MIN_INTERVAL_MS     = int(os.getenv("SLM_MIN_INTERVAL_MS", "5000"))
+SLM_CANDIDATE_MAX_AGE_MS = int(os.getenv("SLM_CANDIDATE_MAX_AGE_MS", "30000"))
+SLM_READ_COUNT          = int(os.getenv("SLM_READ_COUNT", "100"))
+SLM_DRAIN_MAX_BATCHES   = int(os.getenv("SLM_DRAIN_MAX_BATCHES", "20"))
 CONTEXT_WINDOW_MINUTES  = int(os.getenv("CONTEXT_WINDOW_MINUTES", "10"))
 MODEL_PATH = os.getenv("MODEL_PATH", "/app/models")
 SLM_MODEL  = os.getenv("SLM_MODEL",  "qwen_15b_gguf_q5")
@@ -92,7 +95,7 @@ def _write_emergency(r: _redis.Redis, snapshot: dict, fused: dict):
     entry = {
         "ts_ms":                  snapshot.get("ts_ms"),
         "node_id":                snapshot.get("node_id", 0),
-        "risk_score":             snapshot.get("risk_score", 0.0),
+        "risk_score":             fused.get("risk_score", snapshot.get("risk_score", 0.0)),
         "risk_level":             fused.get("risk_level", snapshot.get("risk_level", "warning")),
         "emergency":              fused.get("emergency", snapshot.get("emergency", False)),
         "qwen_reason":            fused.get("qwen_reason"),
@@ -111,8 +114,75 @@ def _write_emergency(r: _redis.Redis, snapshot: dict, fused: dict):
     )
 
 
+def _select_candidate(messages, now_ms: int) -> tuple[bytes, dict] | None:
+    """한 번에 읽은 M5 후보 중 최고 위험을, 동점이면 최신 항목을 선택한다."""
+    candidates: list[tuple[float, int, bytes, dict]] = []
+    for msg_id, fields in messages:
+        if fields.get(b"slm_needed") != b"True":
+            continue
+        snapshot = _json_loads(fields.get(b"data", b""))
+        if not snapshot.get("experts"):
+            continue
+        stream_ts_ms = _stream_id_ts_ms(msg_id)
+        age_ms = max(0, now_ms - stream_ts_ms)
+        if age_ms > SLM_CANDIDATE_MAX_AGE_MS:
+            continue
+        try:
+            risk_score = float(snapshot.get("risk_score", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            risk_score = 0.0
+        candidates.append((risk_score, stream_ts_ms, msg_id, snapshot))
+
+    if not candidates:
+        return None
+    _, _, msg_id, snapshot = max(candidates, key=lambda item: (item[0], item[1]))
+    return msg_id, snapshot
+
+
+def _phase2_locked(r: _redis.Redis, node_id: int) -> bool:
+    try:
+        return r.get(f"phase2:active:{node_id}") is not None
+    except _redis.exceptions.RedisError:
+        return False
+
+
+def _drain_result_messages(r: _redis.Redis, entries, last_id):
+    """현재 ai:result backlog를 설정된 상한까지 소진해 flat list와 마지막 ID를 반환한다."""
+    messages = []
+    pending = entries
+    for _ in range(max(1, SLM_DRAIN_MAX_BATCHES)):
+        for _, batch in pending:
+            if batch:
+                messages.extend(batch)
+                last_id = batch[-1][0]
+        pending = r.xread({RESULT_STREAM: last_id}, count=max(1, SLM_READ_COUNT))
+        if not pending:
+            break
+    return messages, last_id
+
+
+def _select_unlocked_candidate(r: _redis.Redis, messages, now_ms: int) -> dict | None:
+    """Phase 2 lock이 없는 노드 중 최고 위험·최신 snapshot을 선택한다."""
+    remaining = list(messages)
+    while remaining:
+        selected = _select_candidate(remaining, now_ms)
+        if selected is None:
+            return None
+        selected_id, snapshot = selected
+        node_id = int(snapshot.get("node_id", 0) or 0)
+        if not _phase2_locked(r, node_id):
+            return snapshot
+        _log(logging.INFO, "qwen_skipped_phase2_lock", node_id=node_id)
+        remaining = [item for item in remaining if item[0] != selected_id]
+    return None
+
+
 def run():
     r = _connect_redis()
+
+    # 모델 로딩·워밍업 중 들어온 최신 후보를 복구하되, 오래된 운영 백로그는 재생하지 않는다.
+    startup_ms = int(time.time() * 1000)
+    last_id = f"{max(0, startup_ms - SLM_CANDIDATE_MAX_AGE_MS)}-0"
     if _SLM_BACKEND == "gguf":
         qwen = QwenLogic(os.path.join(MODEL_PATH, SLM_MODEL),
                          tokenizer_dir=os.path.join(MODEL_PATH, SLM_TOKENIZER))
@@ -121,48 +191,49 @@ def run():
     qwen.redis_client = r
     _warmup_qwen(qwen)
 
-    # 서비스 기동 시점 이후 항목만 소비 (백로그 무시)
-    latest = r.xrevrange(RESULT_STREAM, count=1)
-    last_id = latest[0][0] if latest else b"0-0"
-
-    last_invoked_ms: int = 0
-    _log(logging.INFO, "qwen_service_started", stream=RESULT_STREAM)
+    last_completed_ms: int = 0
+    _log(logging.INFO, "qwen_service_started", stream=RESULT_STREAM,
+         candidate_max_age_ms=SLM_CANDIDATE_MAX_AGE_MS,
+         min_interval_ms=SLM_MIN_INTERVAL_MS)
 
     while True:
         try:
-            entries = r.xread({RESULT_STREAM: last_id}, count=5, block=2000)
+            entries = r.xread(
+                {RESULT_STREAM: last_id}, count=max(1, SLM_READ_COUNT), block=2000
+            )
             if not entries:
                 continue
 
-            for _, messages in entries:
-                for msg_id, fields in messages:
-                    last_id = msg_id
+            # M5 추론 중 쌓인 ai:result를 bounded drain해 첫 batch가 아니라
+            # 현재 backlog의 위험 후보를 비교한다.
+            flat_messages, last_id = _drain_result_messages(r, entries, last_id)
 
-                    if fields.get(b"slm_needed") != b"True":
-                        continue
+            now_ms = int(time.time() * 1000)
+            snapshot = _select_unlocked_candidate(r, flat_messages, now_ms)
+            if snapshot is None:
+                continue
 
-                    now_ms = int(time.time() * 1000)
-                    if now_ms - last_invoked_ms < SLM_MIN_INTERVAL_MS:
-                        continue
+            node_id = int(snapshot.get("node_id", 0) or 0)
+            if now_ms - last_completed_ms < SLM_MIN_INTERVAL_MS:
+                continue
 
-                    snapshot = _json_loads(fields.get(b"data", b""))
-                    expert_results = snapshot.get("experts")
-                    if not expert_results:
-                        continue
-
-                    ts_ms = int(snapshot.get("ts_ms", now_ms))
-                    context_window = _build_context_window(r, ts_ms)
-                    try:
-                        fused = qwen.evaluate(expert_results, context_window=context_window)
-                        _write_emergency(r, snapshot, fused)
-                        last_invoked_ms = now_ms
-                        _log(logging.INFO, "qwen_invoked",
-                             node_id=snapshot.get("node_id", 0),
-                             risk_score=snapshot.get("risk_score", 0.0),
-                             risk_level=fused.get("risk_level", "?"),
-                             qwen_infer_ms=fused.get("qwen_infer_ms"))
-                    except Exception as exc:
-                        _log(logging.ERROR, "qwen_failed", error=str(exc))
+            expert_results = snapshot["experts"]
+            ts_ms = int(snapshot.get("ts_ms", now_ms))
+            context_window = _build_context_window(r, ts_ms)
+            try:
+                fused = qwen.evaluate(expert_results, context_window=context_window)
+                _write_emergency(r, snapshot, fused)
+                _log(logging.INFO, "qwen_invoked",
+                     node_id=node_id,
+                     gate_risk_score=snapshot.get("risk_score", 0.0),
+                     risk_score=fused.get("risk_score", snapshot.get("risk_score", 0.0)),
+                     risk_level=fused.get("risk_level", "?"),
+                     qwen_infer_ms=fused.get("qwen_infer_ms"))
+            except Exception as exc:
+                _log(logging.ERROR, "qwen_failed", error=str(exc))
+            finally:
+                # 성공·실패 모두 완료 시점부터 간격을 둬 오류 루프와 backlog 재실행을 막는다.
+                last_completed_ms = int(time.time() * 1000)
 
         except _redis.exceptions.ConnectionError as exc:
             _log(logging.WARNING, "redis_reconnecting", error=str(exc))
