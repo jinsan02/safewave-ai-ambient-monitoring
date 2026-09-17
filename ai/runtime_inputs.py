@@ -118,6 +118,20 @@ def aggregate_m1_result(
     return aggregated
 
 
+def should_reset_m1_votes(
+    window_ready: bool,
+    now_ms: int,
+    last_result_ms: int,
+    max_age_ms: int,
+) -> bool:
+    """추론하지 못한 tick에서 K/N 투표를 버릴지 판정한다.
+
+    창끝 게이트만 놓친 tick(노드 간 수 ms 지터)은 투표를 유지한다. 필수 노드 창이
+    비었거나 마지막 성공 추론이 오래됐을 때만 사건 집계를 새로 시작한다.
+    """
+    return (not window_ready) or (int(now_ms) - int(last_result_ms) > int(max_age_ms))
+
+
 def insufficient_m1_result(*, required_votes: int = 3, window_size: int = 5) -> dict:
     """모델을 호출하지 못한 입력 부족 상태. 모델 점수와 혼동하지 않는다."""
     return {

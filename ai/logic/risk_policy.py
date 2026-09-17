@@ -41,6 +41,32 @@ def normalize_result(result: dict) -> dict:
     return result
 
 
+def rule_alert_reason(breakdown: dict | None, expert_results: dict | None) -> str | None:
+    """M5를 거치지 않고 1차 경보를 낼 확정 규칙의 사유. 해당 없으면 None.
+
+    compute_emergency_score가 표시한 확정 규칙만 사용한다. M1 단일 창 양성이나
+    가중합·시계열 floor처럼 판단이 필요한 경우는 M5 경로에 남긴다.
+    """
+    breakdown = breakdown or {}
+    experts = expert_results or {}
+    reasons = []
+    if breakdown.get("fall_consensus_bypass"):
+        fall = experts.get("fall") or {}
+        reasons.append(
+            f"낙상 확정(M1 {fall.get('fall_votes', '?')}/{fall.get('fall_vote_samples', '?')})"
+        )
+    if breakdown.get("fall_hazard_bypass"):
+        label = (experts.get("env_sound") or {}).get("label") \
+            or (experts.get("env_sound") or {}).get("env_sound_label") or "위험음"
+        reasons.append(f"낙상 의심과 {label} 동시 감지")
+    if breakdown.get("vital_bypass"):
+        vital = experts.get("vital") or {}
+        reasons.append(
+            f"생체신호 위기(HR={vital.get('heart_rate', '?')}, RR={vital.get('breathing_rate', '?')})"
+        )
+    return " / ".join(reasons) if reasons else None
+
+
 def apply_context_window(risk_score: Any, context_window: dict | None) -> float:
     score = clamp_score(risk_score)
     if context_window and int(context_window.get("recent_warning_count", 0)) >= 3:

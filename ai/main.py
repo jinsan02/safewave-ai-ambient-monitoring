@@ -20,8 +20,10 @@ from runtime_inputs import (
     insufficient_m1_result,
     m1_tail_ready,
     m1_window_ready,
+    should_reset_m1_votes,
 )
 from logic.emergency_score import compute_emergency_score
+from logic.risk_policy import CRITICAL_THRESHOLD, rule_alert_reason
 from utils import (
     stream_id_ts_ms as _stream_id_ts_ms,
     safe_float as _safe_float,
@@ -52,6 +54,11 @@ M3_AUDIO_WINDOW_MS = int(os.getenv("M3_AUDIO_WINDOW_MS", "3000"))
 M4_AUDIO_WINDOW_MS = int(os.getenv("M4_AUDIO_WINDOW_MS", "5000"))
 AUDIO_RESULT_MAX_AGE_MS = int(os.getenv("AUDIO_RESULT_MAX_AGE_MS", "30000"))
 SLM_MIN_INTERVAL_MS = int(os.getenv("SLM_MIN_INTERVAL_MS", "5000"))
+# 확정 규칙(낙상 K/N, 낙상+위험음, 생체신호 위기)은 M5 없이 ai:emergency에 1차 경보를 쓴다.
+RULE_ALERT_ENABLED = os.getenv("RULE_ALERT_ENABLED", "true").lower() in ("1", "true", "yes")
+RULE_ALERT_COOLDOWN_MS = int(os.getenv("RULE_ALERT_COOLDOWN_MS", "90000"))  # API Phase 2 락과 동일
+EMERGENCY_STREAM_MAXLEN = int(os.getenv("EMERGENCY_STREAM_MAXLEN", "3600"))
+PHASE2_LOCK_PREFIX = "phase2:active:"
 STREAM_START_ID = os.getenv("CSI_STREAM_START_ID", "0-0")
 M1_CSI_WINDOW_FRAMES = int(os.getenv("M1_CSI_WINDOW_FRAMES", "100"))
 M1_MAX_NODES         = int(os.getenv("M1_MAX_NODES", "5"))   # M1 입력 (1, M1_MAX_NODES, 64, 100) — 노드=채널축
@@ -671,7 +678,48 @@ def _build_snapshot(ts_ms: int, node_id: int, result: dict, audio_result: dict |
         },
         "expert_latency_ms": result.get("expert_latency_ms", {}),
         "emergency_breakdown": result.get("emergency_breakdown"),
+        "rule_alert": bool(result.get("rule_alert", False)),
     }
+
+
+def _write_rule_alert(r, ts_ms: int, node_id: int, emg_score: float,
+                      breakdown: dict, reason: str) -> str:
+    """M5와 무관한 1차 경보. 형식은 qwen_service._write_emergency와 같다.
+
+    같은 노드의 Phase 2가 진행·쿨다운 중이면 쓰지 않는다(API도 같은 락으로 중복을 막는다).
+    Redis 오류는 루프를 멈추지 않도록 기록만 한다.
+    반환값: "written" | "locked" | "failed"
+    """
+    try:
+        if r.exists(f"{PHASE2_LOCK_PREFIX}{node_id}"):
+            return "locked"
+        entry = {
+            "ts_ms":                   int(ts_ms),
+            "node_id":                 int(node_id),
+            "risk_score":              round(max(float(emg_score), CRITICAL_THRESHOLD), 4),
+            "gate_score":              round(float(emg_score), 4),
+            "risk_level":              "critical",
+            "emergency":               True,
+            "qwen_reason":             reason,
+            "slm_invoked":             False,
+            "is_outlier":              False,
+            "correlated_with_history": False,
+            "slm_mode":                "rule",
+            "summary":                 reason,
+            "emergency_breakdown":     breakdown,
+        }
+        r.xadd(
+            EMERGENCY_STREAM,
+            {"data": json.dumps(entry, ensure_ascii=False)},
+            maxlen=EMERGENCY_STREAM_MAXLEN,
+            approximate=True,
+        )
+    except _redis.exceptions.RedisError as exc:
+        _log(logging.WARNING, "rule_alert_write_failed", node_id=node_id, error=str(exc))
+        return "failed"
+    _log(logging.WARNING, "rule_alert_written", node_id=node_id, reason=reason,
+         gate_score=round(float(emg_score), 4))
+    return "written"
 
 
 def _update_minute_aggregate(r, snapshot: dict):
@@ -790,6 +838,7 @@ if __name__ == "__main__":
     _node_last_write_ms: dict[int, int] = {}
     _node_last_level:    dict[int, str] = {}
     _node_last_audio_ts: dict[int, int] = {}
+    _node_rule_alert_ms: dict[int, int] = {}
     while True:
         try:
             settings = _load_cached_settings(r)
@@ -966,14 +1015,17 @@ if __name__ == "__main__":
                             expert_latency_ms["fall"] = 0.0
                         last_m1_inferred_at_ms = now_ms
                     elif m1_tick_due:
-                        # 입력 부족은 정상 음성(False)과 구분한다. 다음 패킷에서 같은
-                        # 200ms tick을 다시 확인할 수 있도록 타이머는 전진시키지 않는다.
-                        # 그래야 tick 직후 도착하는 필수 노드의 마지막 프레임을 기다릴 수 있다.
-                        m1_votes.clear()
-                        cached_m1_result = insufficient_m1_result(
-                            required_votes=M1_AGGREGATION_K,
-                            window_size=M1_AGGREGATION_N,
-                        )
+                        # 다음 패킷에서 같은 200ms tick을 다시 확인할 수 있도록 타이머는
+                        # 전진시키지 않는다. 창끝 게이트만 놓친 경우(노드 간 수 ms 지터)는
+                        # K/N 투표를 유지하고, 창이 비었거나 결과가 오래됐을 때만 초기화한다.
+                        if should_reset_m1_votes(
+                            m1_ready, now_ms, last_m1_result_at_ms, M1_RESULT_MAX_AGE_MS
+                        ):
+                            m1_votes.clear()
+                            cached_m1_result = insufficient_m1_result(
+                                required_votes=M1_AGGREGATION_K,
+                                window_size=M1_AGGREGATION_N,
+                            )
                         expert_results["fall"] = cached_m1_result
                         expert_latency_ms["fall"] = 0.0
                     elif enabled_experts.get("fall", True) \
@@ -1018,6 +1070,18 @@ if __name__ == "__main__":
                     if invoke_slm:
                         last_slm_invoked_at_ms = now_ms
 
+                    rule_alert = False
+                    rule_reason = rule_alert_reason(emg_breakdown, expert_results) \
+                        if RULE_ALERT_ENABLED else None
+                    if rule_reason and \
+                            now_ms - _node_rule_alert_ms.get(node_id, 0) >= RULE_ALERT_COOLDOWN_MS:
+                        outcome = _write_rule_alert(
+                            r, ts_ms, node_id, emg_score, emg_breakdown, rule_reason
+                        )
+                        rule_alert = outcome == "written"
+                        # 기록 성공은 전체 쿨다운, 락·실패는 1초 뒤 재확인(패킷마다 조회 방지)
+                        _node_rule_alert_ms[node_id] = now_ms if rule_alert                             else now_ms - RULE_ALERT_COOLDOWN_MS + 1000
+
                     skip_reason = None if invoke_slm else (
                         "m5_disabled" if not m5_enabled else
                         "below_threshold" if emg_score < threshold else "cooldown"
@@ -1033,6 +1097,7 @@ if __name__ == "__main__":
                         "slm_needed":          invoke_slm,  # ai-qwen 트리거 신호
                         "slm_skip_reason":     skip_reason,
                         "emergency_breakdown": emg_breakdown,
+                        "rule_alert":          rule_alert,  # M5 우회 1차 경보 기록 여부
                         "models":              models_cfg,  # 모델별 on/off 상태 (UI 동기화)
                     }
 
@@ -1051,6 +1116,7 @@ if __name__ == "__main__":
                         ts_ms - _node_last_write_ms.get(node_id, 0) >= SNAPSHOT_MIN_INTERVAL_MS
                         or _lvl != _node_last_level.get(node_id)
                         or invoke_slm
+                        or rule_alert
                         or (_audio_ts is not None and _audio_ts != _node_last_audio_ts.get(node_id))
                     )
                     if not _write_due:
