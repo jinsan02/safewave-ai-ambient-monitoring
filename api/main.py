@@ -32,7 +32,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 import uvicorn
 
-from notifier import load_risk_threshold, router as notify_router, send_risk_notification
+from notifier import (
+    FCM_READY,
+    load_risk_threshold,
+    router as notify_router,
+    send_risk_notification,
+    send_voice_ok_notification,
+)
 
 
 class SystemSettings(BaseModel):
@@ -481,19 +487,24 @@ def _classify_phase2(transcript: str | None) -> str:
         return "call_emergency"
     # 부정형 안전 표현("안 괜찮아")이 safe_kw "괜찮"에 매칭되어 cancel_alarm으로
     # 오분류되는 것을 방지 — 긴급 키워드보다도 먼저 검사한다.
-    neg_unsafe = ("안 괜찮", "괜찮지 않")
+    # "일어날 수가 없어", "힘이 없어", "아니, 못 일어나겠어"는 도움 요청이다.
+    # 그래서 "없어"·"아니"는 안전 키워드로 쓰지 않고, 거동 불가 표현을 긴급으로 먼저 본다.
+    neg_unsafe = ("안 괜찮", "괜찮지 않", "못 일어", "못 움직", "수가 없", "수 없어", "힘이 없",
+                  "힘없", "숨이", "숨을 못", "어지러")
     emg_kw = {"아파", "도와", "살려", "119", "응급", "위험", "불러"}
-    safe_kw = {"괜찮", "아니", "안 다쳤", "없어", "멀쩡"}
+    safe_kw = {"괜찮", "안 다쳤", "멀쩡", "안 아파", "안아파"}
     if any(kw in transcript for kw in neg_unsafe):
         return "call_emergency"
-    if any(kw in transcript for kw in emg_kw):
+    # "안 아파"의 "아파"가 긴급 키워드로 잡히지 않게 부정 표현을 뺀 뒤 검사한다.
+    without_negated = transcript.replace("안 아파", "").replace("안아파", "")
+    if any(kw in without_negated for kw in emg_kw):
         return "call_emergency"
     if any(kw in transcript for kw in safe_kw):
         return "cancel_alarm"
     return "call_emergency"
 
 
-async def _notify_all(redis_client, dedupe_prefix: str, *send_args) -> int:
+async def _notify_all(redis_client, dedupe_prefix: str, send_fn, *send_args) -> int:
     """등록된 모든 기기에 FCM을 보낸다. 중복 방지 키 쓰기가 실패해도 발송은 한다."""
     try:
         tokens = await _list_registered_tokens(redis_client)
@@ -512,15 +523,15 @@ async def _notify_all(redis_client, dedupe_prefix: str, *send_args) -> int:
         if not claimed:
             continue
         try:
-            await asyncio.to_thread(send_risk_notification, token, *send_args)
+            await asyncio.to_thread(send_fn, token, *send_args)
             sent += 1
         except Exception as exc:
             _log(logging.ERROR, "fcm_send_failed", device_id=device_id, error=str(exc))
     return sent
 
 
-async def _run_phase2(redis_client, payload: dict, node_id: int) -> str:
-    """TTS로 안부를 묻고 음성 응답을 분류한다. 반환값은 _classify_phase2 결과."""
+async def _run_phase2(redis_client, payload: dict, node_id: int) -> tuple[str, str | None]:
+    """TTS로 안부를 묻고 음성 응답을 분류한다. 반환값은 (의도, transcript)."""
     resp_key = f"{VOICE_RESP_PREFIX}{node_id}"
     tts_payload = json.dumps(
         {"text": EMERGENCY_TTS_TEXT, "node_id": node_id, "ts_ms": payload["ts_ms"]},
@@ -547,8 +558,10 @@ async def _run_phase2(redis_client, payload: dict, node_id: int) -> str:
         node_id=VOICE_NODE_ID or node_id, since_ms=since_ms,
     )
     intent = _classify_phase2(transcript)
-    _log(logging.INFO, "phase2_result", node_id=node_id, transcript=transcript, intent=intent)
-    return intent
+    # 대화 내용은 로그에 남기지 않는다(개인정보). 길이와 분류 결과만 기록한다.
+    _log(logging.INFO, "phase2_result", node_id=node_id,
+         transcript_len=len(transcript or ""), intent=intent)
+    return intent, transcript
 
 
 async def _handle_single_emergency(redis_client, msg_id: str, payload: dict):
@@ -577,24 +590,24 @@ async def _handle_single_emergency(redis_client, msg_id: str, payload: dict):
 
     # 1차 알림은 음성 확인을 기다리지 않고 즉시 보낸다.
     sent = await _notify_all(
-        redis_client, f"notify:sent:{msg_id}",
+        redis_client, f"notify:sent:{msg_id}", send_risk_notification,
         payload["risk_score"], payload["risk_level"], True,
-        {"summary": payload["summary"], "ts_ms": payload["ts_ms"]},
+        {"summary": payload["summary"], "ts_ms": payload["ts_ms"], "node_id": node_id},
     )
     _log(logging.WARNING, "alert_sent", node_id=node_id, msg_id=msg_id, devices=sent,
          voice_enabled=VOICE_ENABLED)
 
     if VOICE_ENABLED:
         try:
-            intent = await _run_phase2(redis_client, payload, node_id)
+            intent, transcript = await _run_phase2(redis_client, payload, node_id)
         except RedisError as exc:
             _log(logging.ERROR, "phase2_redis_failed", node_id=node_id, error=str(exc))
-            intent = "call_emergency"
+            intent, transcript = "call_emergency", None
         if intent == "cancel_alarm":
+            # 응급 채널이 아닌 일반 알림으로 "괜찮다고 응답"을 따로 알린다.
             await _notify_all(
-                redis_client, f"notify:followup:{msg_id}",
-                payload["risk_score"], "warning", False,
-                {"summary": "대상자 음성 응답 확인됨 (괜찮다고 응답)", "ts_ms": payload["ts_ms"]},
+                redis_client, f"notify:followup:{msg_id}", send_voice_ok_notification,
+                node_id, payload["ts_ms"], transcript,
             )
 
     # 키는 재알림 쿨다운을 위해 TTL까지 유지하되, 추론 억제는 실제 Phase 2 동안만 적용한다.
@@ -686,7 +699,11 @@ async def startup():
     task.add_done_callback(_restart_alert_worker)
     app.state.alert_worker = task
     app.state.ttl_refresh = asyncio.create_task(_ttl_refresh_worker())
-    _log(logging.INFO, "startup_completed", redis_host=REDIS_HOST, redis_port=REDIS_PORT)
+    _log(logging.INFO, "startup_completed", redis_host=REDIS_HOST, redis_port=REDIS_PORT,
+         fcm_ready=FCM_READY, voice_enabled=VOICE_ENABLED)
+    if not FCM_READY:
+        _log(logging.ERROR, "fcm_unavailable",
+             detail="Firebase 키 파일이 없어 휴대폰 알림을 보낼 수 없습니다 (FIREBASE_KEY_PATH)")
 
 
 @app.on_event("shutdown")
@@ -743,25 +760,40 @@ async def ws_monitor(websocket: WebSocket):
     r = await _ensure_redis()
     last_id = "$"
     last_sent = 0.0
+    last_ping = time.time()
     WS_MIN_INTERVAL = 0.25  # 4Hz — 브라우저 DOM 포화 방지
+    # 노드별 최신 스냅샷을 모아 보낸다. 위험 수준이 바뀌거나 critical이면 즉시 보낸다
+    # (다른 노드의 normal 스냅샷에 가려 경보 화면이 누락되지 않게).
+    pending: dict[int, tuple[str, dict]] = {}
+    sent_level: dict[int, str] = {}
 
     try:
         while True:
-            entries = await r.xread({RESULT_STREAM: last_id}, count=50, block=1000)
-            if entries:
-                latest_msg_id = last_id
-                latest_payload = None
-                for _stream, messages in entries:
-                    for msg_id, fields in messages:
-                        latest_payload = _parse_result_payload(fields.get("data", ""))
-                        latest_msg_id = msg_id
-                last_id = latest_msg_id
-                now = time.time()
-                if latest_payload and (now - last_sent) >= WS_MIN_INTERVAL:
-                    await websocket.send_json(_normalize_snapshot(latest_payload, latest_msg_id))
-                    last_sent = now
-            else:
+            entries = await r.xread({RESULT_STREAM: last_id}, count=100, block=250)
+            for _stream, messages in entries or []:
+                for msg_id, fields in messages:
+                    last_id = msg_id
+                    payload = _parse_result_payload(fields.get("data", ""))
+                    try:
+                        node = int(payload.get("node_id", 0) or 0)
+                    except (TypeError, ValueError):
+                        node = 0
+                    level = payload.get("risk_level", "normal")
+                    if level == "critical" or level != sent_level.get(node, "normal"):
+                        await websocket.send_json(_normalize_snapshot(payload, msg_id))
+                        sent_level[node] = level
+                        pending.pop(node, None)
+                    else:
+                        pending[node] = (msg_id, payload)
+            now = time.time()
+            if pending and now - last_sent >= WS_MIN_INTERVAL:
+                for msg_id, payload in pending.values():
+                    await websocket.send_json(_normalize_snapshot(payload, msg_id))
+                pending.clear()
+                last_sent = last_ping = now
+            elif not entries and now - last_ping >= 1.0:
                 await websocket.send_json({"ping": True})
+                last_ping = now
 
     except WebSocketDisconnect:
         pass

@@ -311,41 +311,47 @@ class RuntimeInputTests(unittest.TestCase):
             )
         )
 
-    def test_m1_gap_preserves_grid_with_zero_frames(self):
+    def test_m1_grid_uses_receive_time_slots(self):
         import numpy as np
 
-        buffer = deque(maxlen=4)
-        runtime_inputs.append_m1_grid_frame(
-            buffer, np.ones(64), 0, frame_interval_ms=10
-        )
-        missing, clock_reset = runtime_inputs.append_m1_grid_frame(
-            buffer, np.full(64, 2.0), 30, frame_interval_ms=10
-        )
-        self.assertEqual(missing, 2)
-        self.assertFalse(clock_reset)
-        self.assertTrue(np.all(buffer[0] == 1.0))
-        self.assertTrue(np.all(buffer[1] == 0.0))
-        self.assertTrue(np.all(buffer[2] == 0.0))
-        self.assertTrue(np.all(buffer[3] == 2.0))
-
-    def test_m1_device_clock_delta_handles_uint32_wrap(self):
-        self.assertEqual(
-            runtime_inputs.device_time_delta_ms(0x00000005, 0xFFFFFFFB), 10
-        )
-        self.assertEqual(runtime_inputs.device_time_delta_ms(990, 1000), -10)
-
-    def test_m1_clock_reset_restarts_only_the_grid(self):
-        import numpy as np
+        slot = runtime_inputs.grid_slot
+        self.assertEqual(slot(1_000_004), slot(1_000_000))   # ±5ms 스냅
+        self.assertEqual(slot(1_000_006), slot(1_000_010))
 
         buffer = deque(maxlen=4)
-        buffer.append(np.ones(64))
-        missing, clock_reset = runtime_inputs.append_m1_grid_frame(
-            buffer, np.full(64, 2.0), -100, frame_interval_ms=10
-        )
-        self.assertEqual(missing, 0)
-        self.assertTrue(clock_reset)
-        self.assertEqual(len(buffer), 1)
-        self.assertTrue(np.all(buffer[0] == 2.0))
+        place = runtime_inputs.place_m1_grid_frame
+        self.assertEqual(place(buffer, np.ones(64), 100, None), (0, False))
+        self.assertEqual(place(buffer, np.full(64, 2.0), 103, 100), (2, False))  # 2슬롯 결측
+        self.assertEqual([float(f[0]) for f in buffer], [1.0, 0.0, 0.0, 2.0])
+        # 같은 슬롯에 두 번째 프레임 → 최신으로 교체, 길이 유지
+        self.assertEqual(place(buffer, np.full(64, 3.0), 103, 103), (0, True))
+        self.assertEqual([float(f[0]) for f in buffer], [1.0, 0.0, 0.0, 3.0])
+        # 긴 공백은 창 길이까지만 0으로 채운다
+        self.assertEqual(place(buffer, np.full(64, 4.0), 1_000, 103), (4, False))
+        self.assertEqual([float(f[0]) for f in buffer], [0.0, 0.0, 0.0, 4.0])
+
+    def test_skipped_ticks_count_as_zero_votes(self):
+        expired = runtime_inputs.expired_m1_ticks
+        self.assertEqual(expired(10_199, 10_000, 200), 0)   # 현재 tick 진행 중
+        self.assertEqual(expired(10_399, 10_000, 200), 0)   # 다음 tick 진행 중
+        self.assertEqual(expired(10_400, 10_000, 200), 1)   # 한 tick이 추론 없이 끝남
+        self.assertEqual(expired(11_000, 0, 200), 0)        # 시작 전
+
+        votes = deque(maxlen=5)
+        result = {}
+        for detected in (True, True, True, True):
+            result = runtime_inputs.aggregate_m1_result(
+                {"fall_score": 0.9, "fall_detected": detected}, votes
+            )
+        result = runtime_inputs.record_skipped_m1_ticks(votes, 1, result)
+        self.assertTrue(result["fall_detected"])          # 4/5
+        self.assertEqual(result["fall_votes"], 4)
+        result = runtime_inputs.record_skipped_m1_ticks(votes, 2, result)
+        self.assertFalse(result["fall_detected"])         # 2/5: 오래된 발화가 밀려남
+        self.assertEqual(result["skipped_ticks"], 3)
+        result = runtime_inputs.record_skipped_m1_ticks(votes, 9, result, insufficient=True)
+        self.assertEqual(result["fall_votes"], 0)
+        self.assertEqual(result["input_status"], "insufficient_input")
 
     def test_m1_tail_requires_every_trained_node_in_current_slot(self):
         arrivals = {1: 1_000, 2: 995, 3: 990}
@@ -376,12 +382,6 @@ class RuntimeInputTests(unittest.TestCase):
         self.assertEqual(insufficient["input_status"], "insufficient_input")
         self.assertTrue(insufficient["insufficient_input"])
         self.assertFalse(insufficient["fall_detected"])
-
-    def test_tail_miss_keeps_votes_but_empty_or_stale_window_resets(self):
-        reset = runtime_inputs.should_reset_m1_votes
-        self.assertFalse(reset(True, 10_500, 10_000, 1000))   # 창끝 지터만 놓침
-        self.assertTrue(reset(False, 10_500, 10_000, 1000))   # 필수 노드 창 미충족
-        self.assertTrue(reset(True, 11_001, 10_000, 1000))    # 마지막 성공 추론이 오래됨
 
 
 def _extract_functions(path: Path, names: set, namespace: dict) -> dict:
@@ -488,6 +488,24 @@ class Phase2TranscriptTests(unittest.TestCase):
         self.assertEqual(classify("괜찮아요"), "cancel_alarm")
         self.assertEqual(classify("안 괜찮아"), "call_emergency")
         self.assertEqual(classify("살려주세요"), "call_emergency")
+
+    def test_cannot_move_is_not_classified_as_fine(self):
+        classify = self.ns["_classify_phase2"]
+        for text in ("일어날 수가 없어", "힘이 없어", "아니 못 일어나겠어", "움직일 수 없어요",
+                     "숨이 차", "어지러워"):
+            self.assertEqual(classify(text), "call_emergency", text)
+        for text in ("괜찮아요", "안 아파요", "멀쩡해", "안 다쳤어"):
+            self.assertEqual(classify(text), "cancel_alarm", text)
+
+    def test_alert_message_names_node_and_reason(self):
+        ns = _extract_functions(ROOT / "api" / "notifier.py", {"build_risk_message"}, {"Any": object})
+        title, body = ns["build_risk_message"](0.85, "critical", True, "낙상 확정(M1 3/5)", 2)
+        self.assertEqual(title, "응급 상황 감지")
+        self.assertIn("[노드 2]", body)
+        self.assertIn("낙상 확정", body)
+        title, body = ns["build_risk_message"](0.7, "warning", False)
+        self.assertEqual(title, "이상 징후 감지")
+        self.assertNotIn("노드", body)
 
 
 if __name__ == "__main__":

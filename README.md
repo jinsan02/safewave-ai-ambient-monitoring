@@ -333,7 +333,7 @@ AUDIO_CHANNELS=1
 | `EXPERT_INFER_TIMEOUT_MS` | 전문가 모델 추론 타임아웃 (기본 1000ms, CPU 느린 환경은 5000~10000) |
 | `M1_INFER_INTERVAL_MS` | M1 전역 추론 간격 (기본 200ms = 5Hz; 노드별 추론 아님) |
 | `M1_REQUIRED_NODES` | M1 학습 입력에 필요한 노드 목록 (기본 `1,2,3`) |
-| `M1_TAIL_MAX_AGE_MS` | 필수 노드 창끝 프레임의 호스트 수신 허용 지연 (기본 10ms) |
+| `M1_TAIL_MAX_AGE_MS` | 필수 노드 창끝 프레임의 호스트 수신 허용 지연 (기본 15ms, 0 이하면 게이트 끔) |
 | `RULE_ALERT_ENABLED` | 확정 규칙 1차 경보를 M5 없이 기록 (기본 true) |
 | `RULE_ALERT_COOLDOWN_MS` | 규칙 경보 노드별 재기록 간격 (기본 90000ms, Phase 2 락과 동일) |
 | `VOICE_ENABLED` | API가 FCM 발송 뒤 TTS·STT 음성 확인을 진행할지 (기본 false, voice 프로필과 함께 true) |

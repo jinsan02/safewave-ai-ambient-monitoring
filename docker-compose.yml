@@ -8,7 +8,8 @@ services:
     mem_limit: 768m
     oom_score_adj: -500
     ports:
-      - "6379:6379"
+      # LAN 노출 금지(인증 없음). 호스트 도구는 127.0.0.1로 접속한다.
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -116,7 +117,7 @@ services:
       - M4_MAX_NEW_TOKENS=${M4_MAX_NEW_TOKENS:-48}
       - M1_REQUIRED_NODES=${M1_REQUIRED_NODES:-1,2,3}
       - M1_FRAME_INTERVAL_MS=${M1_FRAME_INTERVAL_MS:-10}
-      - M1_TAIL_MAX_AGE_MS=${M1_TAIL_MAX_AGE_MS:-10}
+      - M1_TAIL_MAX_AGE_MS=${M1_TAIL_MAX_AGE_MS:-15}
       - M1_INFER_INTERVAL_MS=${M1_INFER_INTERVAL_MS:-200}
       - RULE_ALERT_ENABLED=${RULE_ALERT_ENABLED:-true}
       - RULE_ALERT_COOLDOWN_MS=${RULE_ALERT_COOLDOWN_MS:-90000}

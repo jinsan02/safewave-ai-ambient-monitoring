@@ -625,14 +625,18 @@
       // 위험도 카드
       document.getElementById('risk-score').textContent = score;
       const badge = document.getElementById('risk-badge');
-      badge.textContent = level === 'critical' ? '응급' : level === 'warning' ? '경고' : '정상';
+      badge.textContent = (level === 'critical' ? '응급' : level === 'warning' ? '경고' : '정상')
+        + (data.node_id ? ' · 노드 ' + data.node_id : '') + (data.rule_alert ? ' · 규칙경보' : '');
       badge.className = 'badge ' + level;
       document.getElementById('card-risk').className = 'card ' + level;
 
       // 낙상
       if (ex.fall) {
         document.getElementById('fall-val').textContent = ex.fall.fall_detected ? '🚨 감지됨' : '✅ 없음';
-        document.getElementById('fall-sub').textContent = 'score: ' + (ex.fall.fall_score||0).toFixed(2);
+        document.getElementById('fall-sub').textContent = ex.fall.insufficient_input
+          ? '입력 부족 (노드 1·2·3 창 대기)'
+          : 'score: ' + (ex.fall.fall_score||0).toFixed(2)
+            + ' · 투표 ' + (ex.fall.fall_votes ?? '-') + '/' + (ex.fall.fall_vote_samples ?? '-');
         document.getElementById('card-fall').className = 'card ' + (ex.fall.fall_detected ? 'critical' : 'normal');
       }
 

@@ -21,16 +21,12 @@ SETTINGS_KEY = "sys:settings"
 # ── Firebase 초기화 ──────────────────────────────────────────
 _KEY_PATH = os.getenv("FIREBASE_KEY_PATH", "/app/auth/firebase_key.json")
 
-if not firebase_admin._apps:
-    if os.path.exists(_KEY_PATH):
-        cred = credentials.Certificate(_KEY_PATH)
-        firebase_admin.initialize_app(cred)
-    else:
-        # 키 파일 없으면 애플리케이션 기본 자격증명 시도 (개발 환경)
-        try:
-            firebase_admin.initialize_app()
-        except Exception:
-            pass  # FCM 기능은 키 없이는 동작 안 함 — 나머지 API는 정상 제공
+# 키 파일이 없으면 FCM은 비활성이다. 기본 자격증명으로 반쯤 초기화하면 발송 때마다
+# "Project ID is required" 오류만 나므로 초기화하지 않고, API 시작 로그로 알린다.
+FCM_READY = False
+if not firebase_admin._apps and os.path.exists(_KEY_PATH):
+    firebase_admin.initialize_app(credentials.Certificate(_KEY_PATH))
+FCM_READY = bool(firebase_admin._apps)
 
 _RISK_THRESHOLD = float(os.getenv("FCM_RISK_THRESHOLD", "0.6"))
 
@@ -63,27 +59,41 @@ async def load_risk_threshold(redis_client) -> float:
     return _RISK_THRESHOLD
 
 
-def build_risk_message(risk_score: float, risk_level: str, emergency: bool) -> tuple[str, str]:
+def build_risk_message(risk_score: float, risk_level: str, emergency: bool,
+                       summary: str | None = None, node_id: Any = None) -> tuple[str, str]:
+    where = f"[노드 {node_id}] " if node_id not in (None, "", 0) else ""
+    reason = f"{summary} " if summary else ""
     if risk_level == "critical" or emergency or risk_score >= 0.85:
         return (
             "응급 상황 감지",
-            f"위험 점수 {risk_score:.2f} - 즉각 확인이 필요합니다.",
+            f"{where}{reason}(위험 점수 {risk_score:.2f}) - 즉시 연락해 확인하세요.",
         )
 
     return (
         "이상 징후 감지",
-        f"위험 점수 {risk_score:.2f} - 상태를 확인하세요.",
+        f"{where}{reason}(위험 점수 {risk_score:.2f}) - 상태를 확인하세요.",
     )
 
 
 def send_risk_notification(token: str, risk_score: float, risk_level: str,
                            emergency: bool = False, extra: dict[str, Any] | None = None) -> str:
-    title, body = build_risk_message(risk_score, risk_level, emergency)
+    extra = extra or {}
+    title, body = build_risk_message(
+        risk_score, risk_level, emergency, extra.get("summary"), extra.get("node_id")
+    )
     payload = {"risk_score": risk_score, "risk_level": risk_level, "emergency": emergency}
     if extra:
         payload.update(extra)
     is_critical = risk_level == "critical" or emergency or risk_score >= 0.85
     return _send_fcm(token, title, body, payload, critical=is_critical)
+
+
+def send_voice_ok_notification(token: str, node_id: Any, ts_ms: int, transcript: str | None) -> str:
+    """응급 알림 뒤 대상자가 괜찮다고 답한 경우의 후속 알림. 응급 채널을 쓰지 않는다."""
+    said = f" (\"{transcript[:30]}\")" if transcript else ""
+    body = f"[노드 {node_id}] 대상자가 음성으로 괜찮다고 응답했습니다{said}. 가능하면 전화로 한 번 더 확인하세요."
+    payload = {"type": "voice_ok", "node_id": node_id, "ts_ms": ts_ms, "emergency": False}
+    return _send_fcm(token, "대상자 응답 확인", body, payload, critical=False)
 
 
 # ── 공통 전송 함수 ────────────────────────────────────────────
