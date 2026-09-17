@@ -91,13 +91,19 @@ def receive_loop(sock: socket.socket, r: redis.Redis):
                 state = node_loss_state.setdefault(node_id, {"rx": 0, "lost": 0})
                 state["rx"] += 1
                 if seq is not None:
+                    seq = int(seq)
                     prev = node_seq_state.get(node_id)
+                    advance = True
                     if prev is not None and seq != prev:
-                        step = (int(seq) - int(prev)) % 65536  # uint16 (struct H)
-                        # step > 10000: 100초치 초과 → 재부팅 추정, 카운터 오염 방지
-                        if 1 < step <= 10000:
+                        step = (seq - prev) % (1 << 32)  # seq_num uint32 (struct I)
+                        if step >= (1 << 31):
+                            # 역행: 소폭(≤1000)이면 늦게 도착·중복 → 기준 유지, 크게 역행하면 재부팅 → 기준 재설정
+                            advance = (1 << 32) - step > 1000
+                        elif 1 < step <= 10000:
+                            # step > 10000: 100초치 초과 → 재부팅 추정, 카운터 오염 방지
                             state["lost"] += (step - 1)
-                    node_seq_state[node_id] = int(seq)
+                    if advance:
+                        node_seq_state[node_id] = seq
 
                 denom = state["rx"] + state["lost"]
                 loss_rate = (state["lost"] / denom) if denom > 0 else 0.0
