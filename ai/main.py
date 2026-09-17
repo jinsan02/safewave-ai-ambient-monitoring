@@ -14,13 +14,14 @@ from experts import m1_wifi_pose, m2_frenel_vital, m3_ast_base, m4_whisper_small
 from mqtt_helper import make_client, publish_json, topic
 from runtime_inputs import (
     aggregate_m1_result,
-    append_m1_grid_frame,
     build_m1_input,
-    device_time_delta_ms,
+    expired_m1_ticks,
+    grid_slot,
     insufficient_m1_result,
     m1_tail_ready,
     m1_window_ready,
-    should_reset_m1_votes,
+    place_m1_grid_frame,
+    record_skipped_m1_ticks,
 )
 from logic.emergency_score import compute_emergency_score
 from logic.risk_policy import CRITICAL_THRESHOLD, rule_alert_reason
@@ -68,7 +69,8 @@ M1_REQUIRED_NODES    = tuple(
     if value.strip()
 )
 M1_FRAME_INTERVAL_MS = int(os.getenv("M1_FRAME_INTERVAL_MS", "10"))
-M1_TAIL_MAX_AGE_MS   = int(os.getenv("M1_TAIL_MAX_AGE_MS", "10"))
+# 장치 시계 지터(9~11ms)를 흡수하는 15ms. 0 이하면 창끝 게이트를 끈다(시간축 전체를 보는 모델용).
+M1_TAIL_MAX_AGE_MS   = int(os.getenv("M1_TAIL_MAX_AGE_MS", "15"))
 M1_INFER_INTERVAL_MS = int(os.getenv("M1_INFER_INTERVAL_MS", "200"))
 M1_RESULT_MAX_AGE_MS = int(os.getenv("M1_RESULT_MAX_AGE_MS", "1000"))
 M1_AGGREGATION_K     = int(os.getenv("M1_AGGREGATION_K", "3"))
@@ -604,7 +606,7 @@ def _audio_worker_loop(r, ai_engine) -> None:
                 _log(logging.INFO, "audio_result_written",
                      ts_ms=ts_ms,
                      env_label=m3_result.get("env_sound_label", ""),
-                     transcript=str(m4_result.get("transcript_ko", ""))[:30])
+                     transcript_len=len(str(m4_result.get("transcript_ko", ""))))
         except Exception as exc:
             _audio_busy_since = 0.0
             _log(logging.ERROR, "audio_worker_error", error=str(exc))
@@ -859,16 +861,22 @@ if __name__ == "__main__":
     _node_resp_buf:   dict[int, deque] = {}
     _node_heart_buf:  dict[int, deque] = {}
     _node_prev_ts_ms: dict[int, int]   = {}
-    _node_prev_device_ts_ms: dict[int, int] = {}
+    _node_last_slot: dict[int, int] = {}
     _node_last_arrival_ms: dict[int, int] = {}
     # ai:result 조건부 다운샘플 상태 (노드별 마지막 기록 시각/레벨/오디오 ts)
     _node_last_write_ms: dict[int, int] = {}
     _node_last_level:    dict[int, str] = {}
     _node_last_audio_ts: dict[int, int] = {}
-    _node_rule_alert_ms: dict[int, int] = {}
+    _node_rule_alert_ms: dict[int, int] = {}     # 경보 범위(0=전역 낙상, N=노드)별 재시도 시각
+    _rule_alert_written_ms: dict[int, int] = {}  # 경보 범위별 마지막 기록 시각
     _node_vital_latest_ms: dict[int, int] = {}
     _error_last_id = None
     _error_streak = 0
+    # M1 게이트 통계(60초 단위 로그). 기대 추론 수 = 60000 / M1_INFER_INTERVAL_MS
+    _m1_stats = dict.fromkeys(
+        ("inferred", "not_ready", "tail_miss", "zero_filled", "slot_collisions", "skipped_ticks"), 0
+    )
+    _m1_stats_since = time.monotonic()
     while True:
         try:
             settings = _load_cached_settings(r)
@@ -893,7 +901,6 @@ if __name__ == "__main__":
                         device_ts_ms = int(fields.get(b"ts_ms", 0))
                         ts_ms = _normalize_ts_ms(device_ts_ms, msg_id)
                     except Exception:
-                        device_ts_ms = 0
                         ts_ms = _stream_id_ts_ms(msg_id)
 
                     if active_nodes and node_id not in active_nodes and node_id != 0:
@@ -950,35 +957,26 @@ if __name__ == "__main__":
                     # M1 슬라이딩 버퍼: 노드별 block_raw (64ch) × 100frame.
                     # 실제 data_raw가 있는 패킷만 '마지막 슬롯 생존'으로 인정한다.
                     if b"data_raw" in fields:
-                        frame_ts_ms = device_ts_ms if b"ts_ms" in fields else ts_ms
-                        previous_frame_ts_ms = _node_prev_device_ts_ms.get(node_id)
-                        frame_gap_ms = (
-                            device_time_delta_ms(frame_ts_ms, previous_frame_ts_ms)
-                            if previous_frame_ts_ms is not None else 0
+                        # 학습 로더와 같이 수신 시각(stream id)으로 100Hz 전역 격자에 스냅한다.
+                        slot = grid_slot(_stream_id_ts_ms(msg_id), M1_FRAME_INTERVAL_MS)
+                        raw_buffer = _node_raw_buf.setdefault(
+                            node_id, deque(maxlen=M1_CSI_WINDOW_FRAMES)
                         )
-                        # 소폭 역행은 늦게 도착한 과거 패킷이므로 현재 격자에 넣지 않는다.
-                        late_packet = -1000 < frame_gap_ms < 0
-                        if not late_packet:
-                            raw_buffer = _node_raw_buf.setdefault(
-                                node_id, deque(maxlen=M1_CSI_WINDOW_FRAMES)
+                        zero_filled, _replaced = place_m1_grid_frame(
+                            raw_buffer, raw_data, slot, _node_last_slot.get(node_id)
+                        )
+                        _node_last_slot[node_id] = slot
+                        _node_last_arrival_ms[node_id] = ts_ms
+                        _m1_stats["zero_filled"] += zero_filled
+                        _m1_stats["slot_collisions"] += int(_replaced)
+                        # 1~4프레임(≤40ms) 손실은 흔하므로 60초 통계로만 남긴다.
+                        if zero_filled >= 5:
+                            _log(
+                                logging.WARNING,
+                                "m1_grid_gap_filled",
+                                node_id=node_id,
+                                zero_filled_frames=zero_filled,
                             )
-                            zero_filled, clock_reset = append_m1_grid_frame(
-                                raw_buffer,
-                                raw_data,
-                                frame_gap_ms,
-                                frame_interval_ms=M1_FRAME_INTERVAL_MS,
-                            )
-                            _node_prev_device_ts_ms[node_id] = frame_ts_ms
-                            _node_last_arrival_ms[node_id] = ts_ms
-                            if zero_filled or clock_reset:
-                                _log(
-                                    logging.WARNING,
-                                    "m1_grid_gap_filled",
-                                    node_id=node_id,
-                                    gap_ms=frame_gap_ms,
-                                    zero_filled_frames=zero_filled,
-                                    clock_reset=clock_reset,
-                                )
 
                     # M1은 입력창이 준비된 뒤 전역 5Hz로만 실행한다. 패킷마다 (5,64,100)
                     # 텐서를 조립·추론하면 300 pkt/s를 따라가지 못해 오히려 창이 초기화된다.
@@ -993,7 +991,7 @@ if __name__ == "__main__":
                         max_nodes=M1_MAX_NODES,
                         window_frames=M1_CSI_WINDOW_FRAMES,
                     )
-                    m1_tail_ok = m1_tail_ready(
+                    m1_tail_ok = M1_TAIL_MAX_AGE_MS <= 0 or m1_tail_ready(
                         M1_REQUIRED_NODES,
                         _node_last_arrival_ms,
                         ts_ms,
@@ -1004,6 +1002,26 @@ if __name__ == "__main__":
                         and m1_ready
                         and m1_tail_ok
                     )
+                    if m1_tick_due:
+                        _m1_stats["inferred" if m1_due else
+                                  "not_ready" if not m1_ready else "tail_miss"] += 1
+                    if time.monotonic() - _m1_stats_since >= 60:
+                        elapsed_s = time.monotonic() - _m1_stats_since
+                        _log(
+                            logging.INFO, "m1_gate_stats",
+                            window_s=round(elapsed_s, 1),
+                            inferred=_m1_stats["inferred"],
+                            expected=int(elapsed_s * 1000 / M1_INFER_INTERVAL_MS),
+                            not_ready_checks=_m1_stats["not_ready"],
+                            tail_miss_checks=_m1_stats["tail_miss"],
+                            zero_filled_frames=_m1_stats["zero_filled"],
+                            slot_collisions=_m1_stats["slot_collisions"],
+                            skipped_ticks=_m1_stats["skipped_ticks"],
+                            fall_votes=cached_m1_result.get("fall_votes"),
+                            input_status=cached_m1_result.get("input_status"),
+                        )
+                        _m1_stats = dict.fromkeys(_m1_stats, 0)
+                        _m1_stats_since = time.monotonic()
                     m1_input = None
                     if m1_due:
                         # 학습에 쓰인 노드 1/2/3만 각 고정 슬롯에 넣고 나머지는 0으로 둔다.
@@ -1038,28 +1056,35 @@ if __name__ == "__main__":
                                 required_votes=M1_AGGREGATION_K,
                                 window_size=M1_AGGREGATION_N,
                             )
-                            expert_results["fall"] = cached_m1_result
-                            last_m1_result_at_ms = now_ms
-                        elif now_ms - last_m1_result_at_ms <= M1_RESULT_MAX_AGE_MS:
-                            expert_results["fall"] = cached_m1_result
-                            expert_latency_ms["fall"] = 0.0
-                        last_m1_inferred_at_ms = now_ms
-                    elif m1_tick_due:
-                        # 다음 패킷에서 같은 200ms tick을 다시 확인할 수 있도록 타이머는
-                        # 전진시키지 않는다. 창끝 게이트만 놓친 경우(노드 간 수 ms 지터)는
-                        # K/N 투표를 유지하고, 창이 비었거나 결과가 오래됐을 때만 초기화한다.
-                        if should_reset_m1_votes(
-                            m1_ready, now_ms, last_m1_result_at_ms, M1_RESULT_MAX_AGE_MS
-                        ):
-                            m1_votes.clear()
-                            cached_m1_result = insufficient_m1_result(
+                        else:
+                            # 추론 실패·타임아웃도 이 tick은 "발화 아님"으로 센다.
+                            cached_m1_result = record_skipped_m1_ticks(
+                                m1_votes, 1, cached_m1_result,
                                 required_votes=M1_AGGREGATION_K,
                                 window_size=M1_AGGREGATION_N,
                             )
                         expert_results["fall"] = cached_m1_result
+                        last_m1_result_at_ms = now_ms
+                        last_m1_inferred_at_ms = now_ms
+                    elif m1_tick_due:
+                        # 같은 200ms tick 안에서는 타이머를 전진시키지 않고 다음 패킷을 기다린다.
+                        # tick이 추론 없이 끝나면 그 tick을 0표로 K/N 창에 넣는다(학습 측정 전제).
+                        expired = expired_m1_ticks(
+                            now_ms, last_m1_inferred_at_ms, M1_INFER_INTERVAL_MS
+                        )
+                        if expired:
+                            cached_m1_result = record_skipped_m1_ticks(
+                                m1_votes, expired, cached_m1_result,
+                                required_votes=M1_AGGREGATION_K,
+                                window_size=M1_AGGREGATION_N,
+                                insufficient=not m1_ready,
+                            )
+                            last_m1_inferred_at_ms += expired * M1_INFER_INTERVAL_MS
+                            last_m1_result_at_ms = now_ms
+                            _m1_stats["skipped_ticks"] += expired
+                        expert_results["fall"] = cached_m1_result
                         expert_latency_ms["fall"] = 0.0
-                    elif enabled_experts.get("fall", True) \
-                            and now_ms - last_m1_result_at_ms <= M1_RESULT_MAX_AGE_MS:
+                    elif enabled_experts.get("fall", True)                             and now_ms - last_m1_result_at_ms <= M1_RESULT_MAX_AGE_MS:
                         expert_results["fall"] = cached_m1_result
                         expert_latency_ms["fall"] = 0.0
 
@@ -1109,22 +1134,51 @@ if __name__ == "__main__":
                     now_ms = int(time.time() * 1000)
                     if invoke_slm and (now_ms - last_slm_invoked_at_ms) < SLM_MIN_INTERVAL_MS:
                         invoke_slm = False
+                    # 음성 확인·재경보 쿨다운 중인 노드는 ai-qwen이 건너뛰므로 요청하지 않는다.
+                    # 전역 호출 간격을 소모하지 않아 다른 노드 요청이 바로 나갈 수 있다.
+                    phase2_busy = False
+                    if invoke_slm:
+                        try:
+                            phase2_busy = bool(r.exists(f"{PHASE2_LOCK_PREFIX}{node_id}"))
+                        except _redis.exceptions.RedisError:
+                            phase2_busy = False
+                        invoke_slm = not phase2_busy
                     if invoke_slm:
                         last_slm_invoked_at_ms = now_ms
 
                     rule_alert = False
-                    rule_reason = rule_alert_reason(emg_breakdown, expert_results) \
-                        if RULE_ALERT_ENABLED else None
-                    if rule_reason and \
-                            now_ms - _node_rule_alert_ms.get(node_id, 0) >= RULE_ALERT_COOLDOWN_MS:
+                    rule_reason = (rule_alert_reason(emg_breakdown, expert_results)
+                                   if RULE_ALERT_ENABLED else None)
+                    # M1은 노드 1·2·3을 함께 보는 전역 모델이라 낙상 규칙은 노드별이 아니라
+                    # 전역으로 한 번만 경보한다(scope 0). 생체신호 위기는 노드별로 둔다.
+                    fall_scoped = bool(emg_breakdown.get("fall_consensus_bypass")
+                                       or emg_breakdown.get("fall_hazard_bypass"))
+                    alert_scope = 0 if fall_scoped else node_id
+                    retry_at_ms = _node_rule_alert_ms.get(alert_scope, 0) + RULE_ALERT_COOLDOWN_MS
+                    if rule_reason and now_ms >= retry_at_ms:
                         outcome = _write_rule_alert(
                             r, ts_ms, node_id, emg_score, emg_breakdown, rule_reason
                         )
                         rule_alert = outcome == "written"
-                        # 기록 성공은 전체 쿨다운, 락·실패는 1초 뒤 재확인(패킷마다 조회 방지)
-                        _node_rule_alert_ms[node_id] = now_ms if rule_alert                             else now_ms - RULE_ALERT_COOLDOWN_MS + 1000
+                        if rule_alert:
+                            _node_rule_alert_ms[alert_scope] = now_ms
+                            _rule_alert_written_ms[alert_scope] = now_ms
+                        else:
+                            # 락·실패는 1초 뒤 재확인(패킷마다 조회 방지)
+                            _node_rule_alert_ms[alert_scope] = now_ms - RULE_ALERT_COOLDOWN_MS + 1000
+                    # 같은 낙상으로 이미 경보했으면 다른 노드에서 M5를 다시 돌리지 않는다
+                    # (M5 critical이 노드별로 중복 알림을 만드는 것을 막는다).
+                    last_fall_alert_ms = _rule_alert_written_ms.get(0)
+                    rule_suppressed = bool(
+                        fall_scoped and invoke_slm and last_fall_alert_ms is not None
+                        and now_ms - last_fall_alert_ms < RULE_ALERT_COOLDOWN_MS
+                    )
+                    if rule_suppressed:
+                        invoke_slm = False
 
                     skip_reason = None if invoke_slm else (
+                        "rule_alert_active" if rule_suppressed else
+                        "phase2_active" if phase2_busy else
                         "m5_disabled" if not m5_enabled else
                         "below_threshold" if emg_score < threshold else "cooldown"
                     )

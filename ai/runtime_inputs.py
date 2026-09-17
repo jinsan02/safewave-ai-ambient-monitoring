@@ -6,17 +6,38 @@ from collections.abc import Iterable, Mapping, Sequence
 import numpy as np
 
 
-_UINT32_MODULUS = 1 << 32
+def grid_slot(stream_ts_ms: int, frame_interval_ms: int = 10) -> int:
+    """수신 시각(Redis stream id ms)을 100Hz 전역 격자 슬롯으로 스냅한다(±interval/2).
+
+    학습 로더와 같이 장치 시계(ts_ms)가 아니라 RPi5 수신 시각을 쓴다. 장치 시계는 보드마다
+    다르고 간격이 9~11ms로 흔들려 슬롯이 어긋난다(김태연 09-17 답변).
+    """
+    if frame_interval_ms <= 0:
+        raise ValueError("frame_interval_ms must be positive")
+    return (int(stream_ts_ms) + frame_interval_ms // 2) // frame_interval_ms
 
 
-def device_time_delta_ms(current_ms: int, previous_ms: int) -> int:
-    """ESP uint32 millisecond clock의 wrap을 고려한 signed delta를 반환한다."""
-    current = int(current_ms)
-    previous = int(previous_ms)
-    if 0 <= current < _UINT32_MODULUS and 0 <= previous < _UINT32_MODULUS:
-        delta = (current - previous) % _UINT32_MODULUS
-        return delta if delta < (_UINT32_MODULUS // 2) else delta - _UINT32_MODULUS
-    return current - previous
+def place_m1_grid_frame(buffer: deque, frame, slot: int, last_slot: int | None) -> tuple[int, bool]:
+    """전역 격자 슬롯에 프레임을 놓는다. 반환값은 ``(zero_filled_frames, replaced)``.
+
+    빠진 슬롯은 0으로 채우고(deque 길이까지만), 같은 슬롯에 두 번째 프레임이 오면
+    최신 프레임으로 바꾼다. stream id는 단조 증가라 역행·wrap 처리가 필요 없다.
+    """
+    frame_array = np.asarray(frame, dtype=np.float32)
+    if last_slot is None or not buffer:
+        buffer.append(frame_array)
+        return 0, False
+    step = int(slot) - int(last_slot)
+    if step <= 0:
+        buffer[-1] = frame_array
+        return 0, True
+    missing = step - 1
+    if buffer.maxlen is not None:
+        missing = min(missing, buffer.maxlen)
+    for _ in range(missing):
+        buffer.append(np.zeros_like(frame_array))
+    buffer.append(frame_array)
+    return missing, False
 
 
 def m1_window_ready(
@@ -32,38 +53,6 @@ def m1_window_ready(
         and len(node_buffers.get(node_id, ())) == window_frames
         for node_id in nodes
     )
-
-
-def append_m1_grid_frame(
-    buffer: deque,
-    frame,
-    gap_ms: int,
-    *,
-    frame_interval_ms: int = 10,
-) -> tuple[int, bool]:
-    """100Hz 격자를 유지하며 결측 슬롯을 0으로 채운 뒤 실제 프레임을 추가한다.
-
-    반환값은 ``(zero_filled_frames, clock_reset)``이다. 음수 gap은 장치 시계 재시작으로
-    보고 이전 창을 버린다. 양수 gap의 결측 수는 deque 길이까지만 채워 과도한 반복을 막는다.
-    """
-    if frame_interval_ms <= 0:
-        raise ValueError("frame_interval_ms must be positive")
-
-    if gap_ms < 0:
-        buffer.clear()
-        clock_reset = True
-        missing = 0
-    else:
-        clock_reset = False
-        missing = max(0, int((gap_ms + frame_interval_ms // 2) // frame_interval_ms) - 1)
-        if buffer.maxlen is not None:
-            missing = min(missing, buffer.maxlen)
-
-    frame_array = np.asarray(frame, dtype=np.float32)
-    for _ in range(missing):
-        buffer.append(np.zeros_like(frame_array))
-    buffer.append(frame_array)
-    return missing, clock_reset
 
 
 def m1_tail_ready(
@@ -118,18 +107,43 @@ def aggregate_m1_result(
     return aggregated
 
 
-def should_reset_m1_votes(
-    window_ready: bool,
-    now_ms: int,
-    last_result_ms: int,
-    max_age_ms: int,
-) -> bool:
-    """추론하지 못한 tick에서 K/N 투표를 버릴지 판정한다.
+def expired_m1_ticks(now_ms: int, tick_start_ms: int, interval_ms: int) -> int:
+    """추론 없이 끝난 200ms tick 수. 현재 진행 중인 tick은 세지 않는다."""
+    if tick_start_ms <= 0 or interval_ms <= 0:
+        return 0
+    return max(0, (int(now_ms) - int(tick_start_ms)) // int(interval_ms) - 1)
 
-    창끝 게이트만 놓친 tick(노드 간 수 ms 지터)은 투표를 유지한다. 필수 노드 창이
-    비었거나 마지막 성공 추론이 오래됐을 때만 사건 집계를 새로 시작한다.
+
+def record_skipped_m1_ticks(
+    votes: deque,
+    count: int,
+    previous: Mapping,
+    *,
+    required_votes: int = 3,
+    window_size: int = 5,
+    insufficient: bool = False,
+) -> dict:
+    """게이트로 생략된 tick을 "발화 아님"(0)으로 K/N 창에 넣는다.
+
+    측정 전제(김태연 09-17 답변 (a))와 같이 창 N개가 항상 최근 N×200ms를 뜻하게 한다.
     """
-    return (not window_ready) or (int(now_ms) - int(last_result_ms) > int(max_age_ms))
+    for _ in range(min(int(count), window_size)):
+        votes.append(False)
+    while len(votes) > window_size:
+        votes.popleft()
+    vote_count = sum(bool(value) for value in votes)
+    if insufficient:
+        result = insufficient_m1_result(required_votes=required_votes, window_size=window_size)
+    else:
+        result = dict(previous)
+    result.update({
+        "window_fall_detected": False,
+        "fall_detected": len(votes) >= window_size and vote_count >= required_votes,
+        "fall_votes": vote_count,
+        "fall_vote_samples": len(votes),
+        "skipped_ticks": int(previous.get("skipped_ticks", 0)) + int(count),
+    })
+    return result
 
 
 def insufficient_m1_result(*, required_votes: int = 3, window_size: int = 5) -> dict:
