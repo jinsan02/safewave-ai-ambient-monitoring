@@ -51,6 +51,15 @@
     .res-fill { height:100%; width:0; background:#69f0ae; transition: width 0.4s; }
     .res-cores { display:flex; gap:3px; margin-top:6px; height:22px; align-items:flex-end; }
     .res-core { flex:1; background:#4fc3f7; border-radius:2px 2px 0 0; min-height:2px; transition: height 0.4s; }
+    .node-row { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; }
+    .node-box { background:#252838; border-radius:8px; padding:10px 12px; border-top:3px solid #5a3030; }
+    .node-box.online { border-top-color:#69f0ae; }
+    .node-box.warn { border-top-color:#ffb300; }
+    .node-box.offline { opacity:0.45; }
+    .node-head { display:flex; justify-content:space-between; font-size:12px; color:#9aa3b2; margin-bottom:4px; }
+    .node-rate { font-size:20px; font-weight:bold; }
+    .node-kv { font-size:11px; color:#9aa3b2; line-height:1.5; }
+    .node-kv b { color:#e0e0e0; font-weight:600; }
     .chart-panel { background: #1e2130; border-radius: 12px; padding: 14px; margin-bottom: 14px; overflow: hidden; flex-shrink: 0; }
     .chart-title { color:#9aa3b2; font-size:12px; margin-bottom:8px; }
     .chart-wrap { position: relative; height: 220px; }
@@ -133,6 +142,12 @@
         <div class="res-sub" id="res-disk-sub">—</div>
       </div>
     </div>
+  </div>
+
+  <div class="res-panel" id="node-panel">
+    <div class="chart-title">ESP32 노드 통신 (2초 갱신) — <span id="node-summary">—</span> <span id="node-state"></span></div>
+    <div class="node-row" id="node-row"></div>
+    <div class="mic-hint">수신 pkt/s·구간 손실은 직전 조회와의 차이(약 2초 구간), 누적 손실은 sensing 기동 이후 합계. 정상 기준 100 pkt/s.</div>
   </div>
 
   <div class="chart-panel" id="chart-panel">
@@ -774,6 +789,51 @@
         document.getElementById('res-state').textContent = '— 조회 실패 (API 확인)';
       }
     }
+    // ── ESP32 노드 통신 (GET /nodes/health) ─────────────────────────
+    let nodePrev = null;  // {t, nodes} — 구간 수신률·손실 계산용 (페이지 메모리에만 보관)
+    async function refreshNodes() {
+      try {
+        const d = await (await fetch(API + '/nodes/health')).json();
+        const t = performance.now() / 1000;
+        const ids = Object.keys(d).sort((a, b) => parseInt(a.split('_')[1]) - parseInt(b.split('_')[1]));
+        let online = 0, totalRate = 0;
+        const html = ids.map(k => {
+          const n = d[k], p = nodePrev && nodePrev.nodes[k];
+          const dt = nodePrev ? t - nodePrev.t : 0;
+          let rate = null, winLoss = null;
+          if (p && dt > 0.5 && n.rx >= p.rx) {           // rx가 줄면 sensing 재시작 → 이번 구간은 건너뜀
+            const dRx = n.rx - p.rx, dLost = Math.max(0, n.lost - p.lost);
+            rate = dRx / dt;
+            winLoss = (dRx + dLost) > 0 ? dLost / (dRx + dLost) * 100 : 0;
+          }
+          const on = n.status === 'online';
+          if (on) { online++; totalRate += rate || 0; }
+          const cumLoss = (n.rx + n.lost) > 0 ? n.lost / (n.rx + n.lost) * 100 : 0;
+          const bad = on && ((rate !== null && rate < 90) || (winLoss !== null && winLoss >= 5)
+                              || (n.rssi !== null && n.rssi !== undefined && n.rssi <= -75));
+          const cls = !on ? 'offline' : bad ? 'warn' : 'online';
+          const rssi = (n.rssi === null || n.rssi === undefined) ? '—' : n.rssi + ' dBm';
+          return `<div class="node-box ${cls}">
+            <div class="node-head"><span>노드 ${k.split('_')[1]}</span><span>${on ? '온라인' : '오프라인'}</span></div>
+            <div class="node-rate">${on && rate !== null ? rate.toFixed(0) : '—'} <span style="font-size:11px;color:#9aa3b2">pkt/s</span></div>
+            <div class="node-kv">구간 손실 <b>${winLoss !== null && on ? winLoss.toFixed(1) + '%' : '—'}</b>
+              · 누적 <b>${cumLoss.toFixed(2)}%</b><br>RSSI <b>${rssi}</b>
+              · 마지막 수신 <b>${n.age_s !== null ? n.age_s.toFixed(2) + 's' : '—'}</b><br>
+              수신 <b>${n.rx.toLocaleString()}</b> · 손실 <b>${n.lost.toLocaleString()}</b></div>
+          </div>`;
+        }).join('');
+        document.getElementById('node-row').innerHTML = html;
+        document.getElementById('node-summary').textContent =
+          `온라인 ${online}/${ids.length} · 합계 ${nodePrev ? totalRate.toFixed(0) : '—'} pkt/s`;
+        document.getElementById('node-state').textContent = '';
+        nodePrev = {t, nodes: d};
+      } catch (e) {
+        document.getElementById('node-state').textContent = '— 조회 실패 (API 확인)';
+      }
+    }
+    refreshNodes();
+    setInterval(refreshNodes, 2000);
+
     document.getElementById('res-host').textContent = new URL(API).host;  // 어느 기기 자원인지 명시
     refreshResources();
     setInterval(refreshResources, 3000);

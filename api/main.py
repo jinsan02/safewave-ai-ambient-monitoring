@@ -631,6 +631,7 @@ async def get_node_health():
             loss_rate = float(bucket.get("loss_rate", 0.0) or 0.0)
             rx = int(bucket.get("rx", 0) or 0)
             lost = int(bucket.get("lost", 0) or 0)
+            rssi = int(float(bucket["rssi"])) if bucket.get("rssi") not in (None, "") else None
             if last_seen and (now - last_seen) < 5:
                 health[f"node_{i}"] = {
                     "status": "online",
@@ -638,6 +639,7 @@ async def get_node_health():
                     "loss_rate": round(loss_rate, 4),
                     "rx": rx,
                     "lost": lost,
+                    "rssi": rssi,
                 }
             else:
                 health[f"node_{i}"] = {
@@ -646,6 +648,7 @@ async def get_node_health():
                     "loss_rate": round(loss_rate, 4),
                     "rx": rx,
                     "lost": lost,
+                    "rssi": rssi,
                 }
             continue
 
