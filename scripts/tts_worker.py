@@ -4,7 +4,7 @@
 1. MQTT safewave/ai/result 구독 → warning/critical 이벤트 시 자동 안내음 (쿨다운 120s)
 2. Redis tts:speak:queue BLPOP → _alert_worker가 직접 요청한 응급 TTS (노드별 쿨다운 10s)
 
-생성된 MP3는 volumes/logs/tts 에 저장하고 mpg123으로 즉시 재생한다.
+생성된 MP3는 임시 파일로 만들고 mpg123으로 재생한 뒤 삭제한다.
 재생 완료 후 user:voice_response:{node_id} 키를 설정해 _alert_worker가 응답 감지할 수 있게 한다.
 """
 
@@ -69,7 +69,8 @@ def should_speak(payload: dict) -> bool:
 
 async def synthesize(text: str) -> Path:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # MQTT와 Redis 경로가 같은 초에 합성해도 파일 이름이 충돌하지 않게 한다.
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     out_path = OUT_DIR / f"tts_{ts}.mp3"
     # 일시적 DNS/네트워크 실패 대비 3회 재시도 (응급 안내가 단발 실패로 누락되지 않도록)
     last_exc = None
@@ -124,30 +125,44 @@ async def speak_and_signal(
 ):
     """TTS 합성 → 재생 → 응답 대기 신호 설정."""
     out_path = await synthesize(text)
-    await play_audio(out_path)
+    try:
+        await play_audio(out_path)
 
-    resp_key = f"{VOICE_RESP_PREFIX}{node_id}"
-    await r.lpush(resp_key, "1")
-    await r.expire(resp_key, VOICE_RESP_TTL_SEC)
+        resp_key = f"{VOICE_RESP_PREFIX}{node_id}"
+        await r.lpush(resp_key, "1")
+        await r.expire(resp_key, VOICE_RESP_TTL_SEC)
 
-    _publish_json(
-        client,
-        TTS_STATUS_TOPIC,
-        {
-            "node_id": node_id,
-            "text": text,
-            "file": str(out_path),
-            "risk_level": (payload or {}).get("risk_level"),
-            "risk_score": (payload or {}).get("risk_score"),
-        },
-    )
+        _publish_json(
+            client,
+            TTS_STATUS_TOPIC,
+            {
+                "node_id": node_id,
+                "text": text,
+                "risk_level": (payload or {}).get("risk_level"),
+                "risk_score": (payload or {}).get("risk_score"),
+            },
+        )
+    finally:
+        # 합성 MP3는 재생용 임시 산출물이며 운영 기록으로 보존하지 않는다.
+        try:
+            out_path.unlink(missing_ok=True)
+        except OSError as exc:
+            print(f"[tts] temp cleanup error: {exc}")
 
 
 async def _mqtt_loop(client: mqtt.Client, r: aioredis.Redis):
     """MQTT safewave/ai/result → 쿨다운 적용 자동 TTS."""
     loop = asyncio.get_running_loop()
-    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=32)
     last_spoke_at: dict[int, float] = {}
+
+    def _enqueue_latest(item: dict):
+        if queue.full():
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+        queue.put_nowait(item)
 
     def on_connect(_c, _u, _f, rc):
         print(f"[tts] MQTT connected rc={rc}")
@@ -159,7 +174,9 @@ async def _mqtt_loop(client: mqtt.Client, r: aioredis.Redis):
             payload = json.loads(msg.payload.decode("utf-8", errors="ignore"))
         except Exception:
             return
-        loop.call_soon_threadsafe(queue.put_nowait, {"topic": msg.topic, "payload": payload})
+        loop.call_soon_threadsafe(
+            _enqueue_latest, {"topic": msg.topic, "payload": payload}
+        )
 
     client.on_connect = on_connect
     client.on_message = on_message
@@ -170,24 +187,27 @@ async def _mqtt_loop(client: mqtt.Client, r: aioredis.Redis):
         return
     client.loop_start()
 
-    while True:
-        item = await queue.get()
-        if item["topic"] == FEEDBACK_TOPIC:
-            continue
-        payload = item["payload"]
-        if not should_speak(payload):
-            continue
-        node_id = int(payload.get("node_id", 0) or 0)
-        now = loop.time()
-        if now - last_spoke_at.get(node_id, 0.0) < COOLDOWN_SEC:
-            continue
-        last_spoke_at[node_id] = now
-        text = NEUTRAL_PROMPT_TEXT
-        try:
-            await speak_and_signal(r, client, text, node_id, payload)
-        except Exception as exc:
-            _publish_json(client, TTS_STATUS_TOPIC, {"error": str(exc), "node_id": node_id})
-            print(f"[tts] mqtt synth failed: {exc}")
+    try:
+        while True:
+            item = await queue.get()
+            if item["topic"] == FEEDBACK_TOPIC:
+                continue
+            payload = item["payload"]
+            if not should_speak(payload):
+                continue
+            node_id = int(payload.get("node_id", 0) or 0)
+            now = loop.time()
+            if now - last_spoke_at.get(node_id, 0.0) < COOLDOWN_SEC:
+                continue
+            last_spoke_at[node_id] = now
+            try:
+                await speak_and_signal(r, client, NEUTRAL_PROMPT_TEXT, node_id, payload)
+            except Exception as exc:
+                _publish_json(client, TTS_STATUS_TOPIC, {"error": str(exc), "node_id": node_id})
+                print(f"[tts] mqtt synth failed: {exc}")
+    finally:
+        client.loop_stop()
+        client.disconnect()
 
 
 async def _redis_speak_loop(client: mqtt.Client, r: aioredis.Redis):
@@ -235,10 +255,13 @@ async def _connect_redis() -> aioredis.Redis:
 async def main():
     r = await _connect_redis()
     client = _make_client(MQTT_CLIENT_ID)
-    await asyncio.gather(
-        _mqtt_loop(client, r),
-        _redis_speak_loop(client, r),
-    )
+    try:
+        await asyncio.gather(
+            _mqtt_loop(client, r),
+            _redis_speak_loop(client, r),
+        )
+    finally:
+        await r.aclose()
 
 
 if __name__ == "__main__":

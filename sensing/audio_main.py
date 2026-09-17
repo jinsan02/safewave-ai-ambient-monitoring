@@ -10,6 +10,7 @@ import time
 
 import numpy as np
 import redis
+from redis_client import connect_redis
 
 try:
     import sounddevice as sd
@@ -20,7 +21,8 @@ except Exception as exc:  # pragma: no cover
 REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 AUDIO_STREAM = os.getenv("AUDIO_STREAM", "audio:events")
-AUDIO_STREAM_MAXLEN = int(os.getenv("AUDIO_STREAM_MAXLEN", "3600"))
+# 최대 6초 float32 이벤트 기준 raw waveform 약 44MB 이내로 제한한다.
+AUDIO_STREAM_MAXLEN = int(os.getenv("AUDIO_STREAM_MAXLEN", "120"))
 
 AUDIO_NODE_ID = int(os.getenv("AUDIO_NODE_ID", "1"))
 AUDIO_SAMPLE_RATE = int(os.getenv("AUDIO_SAMPLE_RATE", "16000"))
@@ -32,18 +34,6 @@ VAD_THRESHOLD_DB = float(os.getenv("VAD_THRESHOLD_DB", "-45.0"))
 VAD_MIN_ACTIVE_MS = int(os.getenv("VAD_MIN_ACTIVE_MS", "300"))
 VAD_HANGOVER_MS = int(os.getenv("VAD_HANGOVER_MS", "250"))
 AUDIO_MAX_EVENT_SECONDS = float(os.getenv("AUDIO_MAX_EVENT_SECONDS", "6.0"))
-
-
-def connect_redis() -> redis.Redis:
-    while True:
-        try:
-            client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, socket_connect_timeout=3)
-            client.ping()
-            print(f"[audio] Redis connected: {REDIS_HOST}:{REDIS_PORT}", flush=True)
-            return client
-        except redis.exceptions.ConnectionError as exc:
-            print(f"[audio] Redis not ready ({exc}), retry in 2s...", flush=True)
-            time.sleep(2)
 
 
 def rms_dbfs(samples: np.ndarray) -> float:
@@ -79,6 +69,7 @@ def xadd_audio_event(r: redis.Redis, waveform: np.ndarray, peak_db: float):
 
 def run_audio_loop(r: redis.Redis):
     audio_q: queue.Queue[np.ndarray] = queue.Queue(maxsize=128)
+    last_redis_write_error_log = 0.0
 
     def _on_audio(indata, frames, _time_info, status):
         if status:
@@ -155,7 +146,13 @@ def run_audio_loop(r: redis.Redis):
                         )
                     except redis.exceptions.ConnectionError as exc:
                         print(f"[audio] Redis error: {exc}, reconnecting...", flush=True)
-                        r = connect_redis()
+                        r = connect_redis(REDIS_HOST, REDIS_PORT, "audio")
+                    except redis.exceptions.ResponseError as exc:
+                        # noeviction 상한 도달 시 PortAudio 스트림을 재시작하지 않고 해당 이벤트만 폐기한다.
+                        now = time.time()
+                        if now - last_redis_write_error_log >= 5:
+                            print(f"[audio] Redis write rejected: {exc}", flush=True)
+                            last_redis_write_error_log = now
 
                 active = False
                 active_samples = 0
@@ -165,7 +162,7 @@ def run_audio_loop(r: redis.Redis):
 
 
 def main():
-    r = connect_redis()
+    r = connect_redis(REDIS_HOST, REDIS_PORT, "audio")
     while True:
         try:
             run_audio_loop(r)

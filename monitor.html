@@ -300,7 +300,7 @@
         stateEl.textContent = '저장 중...';
         const res = await fetch(API + '/settings');
         const s = await res.json();
-        s.models = { m1: true, m2: true, m3: true, m4: true, m5: true, ...(s.models || {}) };
+        s.models = { m1: true, m2: false, m3: true, m4: true, m5: true, ...(s.models || {}) };
         s.models[mkey] = on;
         const post = await fetch(API + '/settings', {
           method: 'POST',

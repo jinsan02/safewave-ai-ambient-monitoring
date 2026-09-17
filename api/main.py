@@ -36,11 +36,17 @@ from notifier import load_risk_threshold, router as notify_router, send_risk_not
 
 class SystemSettings(BaseModel):
     risk_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
-    active_nodes: list[int] = Field(default=[1, 2, 3, 4, 5, 6])
+    active_nodes: list[int] = Field(default_factory=lambda: [1, 2, 3, 4, 5, 6])
     ai_enabled: bool = True
     # 모델별 on/off — m1(낙상)/m2(바이탈)/m3(환경음)/m4(STT)/m5(Qwen)
     models: dict[str, bool] = Field(
-        default={"m1": True, "m2": True, "m3": True, "m4": True, "m5": True}
+        default_factory=lambda: {
+            "m1": True,
+            "m2": False,
+            "m3": True,
+            "m4": True,
+            "m5": True,
+        }
     )
 
 
@@ -168,15 +174,16 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 RESULT_STREAM = "ai:result"
 EMERGENCY_STREAM = "ai:emergency"
 AUDIO_STREAM = "audio:events"
-CSI_STREAM = "csi:raw"
 SETTINGS_KEY = "sys:settings"
 TOKEN_KEY_PREFIX = "fcm:token:"
 MINUTE_AGG_PREFIX = "agg:minute:"
 TOKEN_TTL_SECONDS = int(os.getenv("TOKEN_TTL_SECONDS", "3600"))
 SETTINGS_TTL_SECONDS = int(os.getenv("SETTINGS_TTL_SECONDS", "3600"))
 ALERT_DEDUP_TTL_SECONDS = int(os.getenv("ALERT_DEDUP_TTL_SECONDS", "3600"))
-AUDIO_STREAM_MAXLEN = int(os.getenv("AUDIO_STREAM_MAXLEN", "3600"))
+AUDIO_STREAM_MAXLEN = int(os.getenv("AUDIO_STREAM_MAXLEN", "120"))
 TTS_SPEAK_QUEUE     = "tts:speak:queue"
+TTS_QUEUE_MAXLEN    = int(os.getenv("TTS_QUEUE_MAXLEN", "32"))
+TTS_QUEUE_TTL_SECONDS = int(os.getenv("TTS_QUEUE_TTL_SECONDS", "3600"))
 VOICE_RESP_PREFIX   = "user:voice_response:"
 PHASE2_TIMEOUT_SEC  = int(os.getenv("VOICE_RESPONSE_TIMEOUT_SEC", "15"))
 PHASE2_LOCK_SEC     = int(os.getenv("PHASE2_LOCK_SEC", "90"))
@@ -184,8 +191,8 @@ TTS_WAIT_SEC        = int(os.getenv("TTS_WAIT_SEC", "15"))
 AUDIO_CLIP_KEY_PREFIX = "ai:clip:"
 AUDIO_CLIP_TTL_SECONDS = int(os.getenv("AUDIO_CLIP_TTL_SECONDS", "3600"))
 AUDIO_CLIP_POST_WAIT_MS = int(os.getenv("AUDIO_CLIP_POST_WAIT_MS", "15000"))
-CSI_STREAM_MAXLEN = int(os.getenv("CSI_STREAM_MAXLEN", "36000"))
-REDIS_MEMORY_WARN_BYTES = int(os.getenv("REDIS_MEMORY_WARN_BYTES", str(512 * 1024 * 1024)))
+REDIS_MEMORY_WARN_BYTES = int(os.getenv("REDIS_MEMORY_WARN_BYTES", str(256 * 1024 * 1024)))
+REDIS_MEMORY_CRITICAL_BYTES = int(os.getenv("REDIS_MEMORY_CRITICAL_BYTES", str(384 * 1024 * 1024)))
 
 LOGGER = logging.getLogger("rp5.api")
 if not LOGGER.handlers:
@@ -206,6 +213,30 @@ def _log(level: int, event: str, **fields):
     LOGGER.log(level, json.dumps(payload, ensure_ascii=False))
 
 app = FastAPI(title="rp5 API")
+_phase2_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_phase2_task(coro, *, node_id: int, msg_id: str) -> asyncio.Task:
+    """Phase 2 작업을 추적하고 백그라운드 예외를 구조화 로그로 회수한다."""
+    task = asyncio.create_task(coro, name=f"phase2:{node_id}:{msg_id}")
+    _phase2_tasks.add(task)
+
+    def _on_done(completed: asyncio.Task):
+        _phase2_tasks.discard(completed)
+        if completed.cancelled():
+            return
+        exc = completed.exception()
+        if exc is not None:
+            _log(
+                logging.ERROR,
+                "phase2_task_failed",
+                node_id=node_id,
+                msg_id=msg_id,
+                error=str(exc),
+            )
+
+    task.add_done_callback(_on_done)
+    return task
 
 
 async def _reconnect_redis():
@@ -373,8 +404,10 @@ async def _capture_audio_clip(redis_client, ts_ms: int, node_id: int):
 EMERGENCY_TTS_TEXT = "이상이 감지되었습니다. 상태를 말씀해 주세요."
 
 
-async def _get_phase2_transcript(redis_client, after_id: str, timeout: int) -> str | None:
-    """ai:result 스트림에서 speech_ko가 있는 첫 항목의 transcript를 반환. timeout초 내 없으면 None."""
+async def _get_phase2_transcript(
+    redis_client, after_id: str, timeout: int, node_id: int
+) -> str | None:
+    """같은 노드의 ai:result에서 첫 STT transcript를 반환한다."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     last_id = after_id
@@ -393,6 +426,12 @@ async def _get_phase2_transcript(redis_client, after_id: str, timeout: int) -> s
                 for msg_id, fields in msgs:
                     last_id = msg_id
                     data = _parse_result_payload(fields.get("data", ""))
+                    try:
+                        result_node_id = int(data.get("node_id", 0) or 0)
+                    except (TypeError, ValueError):
+                        result_node_id = 0
+                    if node_id and result_node_id != node_id:
+                        continue
                     speech = (data.get("experts") or {}).get("speech_ko") or {}
                     if speech.get("speech_detected"):
                         transcript = str(speech.get("transcript_ko", "")).strip()
@@ -429,7 +468,7 @@ async def _handle_single_emergency(redis_client, msg_id: str, payload: dict):
     # 새 엔트리가 쌓여 핸들러가 중첩 스폰되는 것을 차단한다.
     # 락은 삭제하지 않고 EX 자연 만료 — 재알림 쿨다운을 겸한다.
     lock_key = f"phase2:active:{node_id}"
-    acquired = await redis_client.set(lock_key, "1", ex=PHASE2_LOCK_SEC, nx=True)
+    acquired = await redis_client.set(lock_key, "active", ex=PHASE2_LOCK_SEC, nx=True)
     if not acquired:
         _log(logging.INFO, "phase2_skipped_active", node_id=node_id)
         return
@@ -441,11 +480,15 @@ async def _handle_single_emergency(redis_client, msg_id: str, payload: dict):
     tts_text = EMERGENCY_TTS_TEXT
     resp_key = f"{VOICE_RESP_PREFIX}{node_id}"
     await redis_client.delete(resp_key)
-    await redis_client.lpush(
-        TTS_SPEAK_QUEUE,
-        json.dumps({"text": tts_text, "node_id": node_id,
-                    "ts_ms": payload["ts_ms"]}, ensure_ascii=False),
+    tts_payload = json.dumps(
+        {"text": tts_text, "node_id": node_id, "ts_ms": payload["ts_ms"]},
+        ensure_ascii=False,
     )
+    pipe = redis_client.pipeline()
+    pipe.lpush(TTS_SPEAK_QUEUE, tts_payload)
+    pipe.ltrim(TTS_SPEAK_QUEUE, 0, max(0, TTS_QUEUE_MAXLEN - 1))
+    pipe.expire(TTS_SPEAK_QUEUE, TTS_QUEUE_TTL_SECONDS)
+    await pipe.execute()
     _log(logging.INFO, "tts_queued", node_id=node_id, text=tts_text)
 
     tts_signal = await redis_client.blpop(resp_key, timeout=TTS_WAIT_SEC)
@@ -455,7 +498,9 @@ async def _handle_single_emergency(redis_client, msg_id: str, payload: dict):
     # Phase 2: TTS 재생 후 ai:result 스트림에서 STT transcript 추출 → 의도 분류
     after_entries = await redis_client.xrevrange(RESULT_STREAM, count=1)
     after_id = after_entries[0][0] if after_entries else "$"
-    transcript = await _get_phase2_transcript(redis_client, after_id, timeout=PHASE2_TIMEOUT_SEC)
+    transcript = await _get_phase2_transcript(
+        redis_client, after_id, timeout=PHASE2_TIMEOUT_SEC, node_id=node_id
+    )
     intent = _classify_phase2(transcript)
     _log(logging.INFO, "phase2_result", node_id=node_id, transcript=transcript, intent=intent)
 
@@ -480,6 +525,9 @@ async def _handle_single_emergency(redis_client, msg_id: str, payload: dict):
         except Exception as exc:
             _log(logging.ERROR, "fcm_send_failed", device_id=device_id, error=str(exc))
 
+    # 키는 재알림 쿨다운을 위해 TTL까지 유지하되, 추론 억제는 실제 Phase 2 동안만 적용한다.
+    await redis_client.set(lock_key, "cooldown", xx=True, keepttl=True)
+
 
 async def _alert_worker():
     last_id = "$"
@@ -498,7 +546,11 @@ async def _alert_worker():
                     if payload["risk_level"] != "critical":
                         continue
 
-                    asyncio.create_task(_handle_single_emergency(redis_client, msg_id, payload))
+                    _spawn_phase2_task(
+                        _handle_single_emergency(redis_client, msg_id, payload),
+                        node_id=payload["node_id"],
+                        msg_id=msg_id,
+                    )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -538,7 +590,14 @@ async def shutdown():
         worker.cancel()
         with suppress(asyncio.CancelledError):
             await worker
-    await app.state.redis.aclose()
+    pending_phase2 = list(_phase2_tasks)
+    for task in pending_phase2:
+        task.cancel()
+    if pending_phase2:
+        await asyncio.gather(*pending_phase2, return_exceptions=True)
+    redis_client = getattr(app.state, "redis", None)
+    if redis_client is not None:
+        await redis_client.aclose()
     _log(logging.INFO, "shutdown_completed")
 
 
@@ -736,31 +795,36 @@ async def get_notify_threshold():
     return {"risk_threshold": threshold}
 
 
-@app.get("/system/redis-memory")
-async def get_redis_memory():
-    redis_client = await _ensure_redis()
-    info = await redis_client.info("memory")
+def _redis_memory_summary(info: dict) -> dict:
     used = int(info.get("used_memory", 0) or 0)
     used_peak = int(info.get("used_memory_peak", 0) or 0)
     maxmemory = int(info.get("maxmemory", 0) or 0)
-
-    limit = maxmemory if maxmemory > 0 else REDIS_MEMORY_WARN_BYTES
-    ratio = (used / limit) if limit > 0 else 0.0
-    warning = ratio >= 0.85
-
-    if warning:
-        _log(logging.WARNING, "redis_memory_warning", used=used, limit=limit, ratio=round(ratio, 4))
-
+    ratio = (used / maxmemory) if maxmemory > 0 else 0.0
     return {
         "used_memory": used,
         "used_memory_human": info.get("used_memory_human", str(used)),
         "used_memory_peak": used_peak,
         "used_memory_peak_human": info.get("used_memory_peak_human", str(used_peak)),
         "maxmemory": maxmemory,
-        "warn_limit": limit,
+        "warn_limit": REDIS_MEMORY_WARN_BYTES,
+        "critical_limit": REDIS_MEMORY_CRITICAL_BYTES,
         "usage_ratio": round(ratio, 4),
-        "warning": warning,
+        "warning": used >= REDIS_MEMORY_WARN_BYTES,
+        "critical": used >= REDIS_MEMORY_CRITICAL_BYTES,
     }
+
+
+@app.get("/system/redis-memory")
+async def get_redis_memory():
+    redis_client = await _ensure_redis()
+    info = await redis_client.info("memory")
+    summary = _redis_memory_summary(info)
+    if summary["warning"]:
+        _log(logging.WARNING, "redis_memory_warning",
+             used=summary["used_memory"],
+             warn_limit=summary["warn_limit"],
+             critical=summary["critical"])
+    return summary
 
 
 @app.get("/system/health")
@@ -778,21 +842,13 @@ async def get_system_health():
             status_code=503,
         )
 
-    used = int(info.get("used_memory", 0) or 0)
-    maxmemory = int(info.get("maxmemory", 0) or 0)
-    limit = maxmemory if maxmemory > 0 else REDIS_MEMORY_WARN_BYTES
-    usage_ratio = (used / limit) if limit > 0 else 0.0
+    memory = _redis_memory_summary(info)
 
     return {
-        "status": "ok" if pong else "degraded",
+        "status": "ok" if pong and not memory["critical"] else "degraded",
         "redis": {
             "connected": bool(pong),
-            "used_memory": used,
-            "used_memory_human": info.get("used_memory_human", str(used)),
-            "maxmemory": maxmemory,
-            "warn_limit": limit,
-            "usage_ratio": round(usage_ratio, 4),
-            "warning": usage_ratio >= 0.85,
+            **memory,
         },
         "ts_ms": int(time.time() * 1000),
     }
@@ -888,24 +944,15 @@ async def ingest_audio_event(body: AudioEventIn):
         approximate=True,
     )
 
+    # 오디오 워커는 audio:events를 독립 구독한다. 빈 CSI를 추가하면 실제 노드의
+    # 100프레임 창과 packet-gap 판정을 오염하므로 trigger_ai는 하위 호환 입력으로만 받는다.
     csi_id = None
-    if body.trigger_ai:
-        # AI 루프를 깨우기 위한 최소 CSI 트리거 이벤트
-        csi_id = await redis_client.xadd(
-            CSI_STREAM,
-            {
-                "node": body.node_id,
-                "ts_ms": ts_ms,
-                "data": "",
-            },
-            maxlen=CSI_STREAM_MAXLEN,
-            approximate=True,
-        )
 
     return {
         "status": "ok",
         "audio_event_id": audio_id,
         "csi_event_id": csi_id,
+        "trigger_ai_ignored": bool(body.trigger_ai),
         "node_id": body.node_id,
         "sample_rate": body.sample_rate,
         "text_len": len(text_ko),

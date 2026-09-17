@@ -11,6 +11,7 @@ import time
 
 import numpy as np
 import redis
+from redis_client import connect_redis
 
 # ── 환경 변수 ────────────────────────────────────────────────
 UDP_IP       = "0.0.0.0"
@@ -18,21 +19,10 @@ UDP_PORT     = int(os.getenv("UDP_PORT", 5005))
 REDIS_HOST   = os.getenv("REDIS_HOST", "127.0.0.1")
 REDIS_PORT   = int(os.getenv("REDIS_PORT", 6379))
 STREAM_NAME  = "csi:raw"
-STREAM_MAXLEN = int(os.getenv("CSI_STREAM_MAXLEN", "1_800_000"))  # 5노드 × 100Hz × 1hr
+# RPi5 8GB 운영 기본값: 5노드 100Hz에서 약 72초, 3노드에서 약 120초.
+# 장기 추세는 agg:minute:*로 보존하므로 raw CSI를 1시간 유지하지 않는다.
+STREAM_MAXLEN = int(os.getenv("CSI_STREAM_MAXLEN", "36_000"))
 FS           = float(os.getenv("CSI_FS", 100.0))   # 샘플링 주파수
-
-
-# ── Redis 연결 (재시도) ──────────────────────────────────────
-def connect_redis() -> redis.Redis:
-    while True:
-        try:
-            r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, socket_connect_timeout=3)
-            r.ping()
-            print(f"[sensing] Redis connected: {REDIS_HOST}:{REDIS_PORT}", flush=True)
-            return r
-        except redis.exceptions.ConnectionError as exc:
-            print(f"[sensing] Redis not ready ({exc}), retry in 2s…", flush=True)
-            time.sleep(2)
 
 
 # ── 패킷 파싱 (788B 고정 — 방식B 확정) ─────────────────────────
@@ -58,6 +48,7 @@ def parse_packet(raw_bytes: bytes):
 def receive_loop(sock: socket.socket, r: redis.Redis):
     stats = {"rx": 0, "err": 0}
     last_log = time.time()
+    last_redis_write_error_log = 0.0
     node_seq_state: dict[int, int] = {}
     node_loss_state: dict[int, dict] = {}
 
@@ -122,7 +113,15 @@ def receive_loop(sock: socket.socket, r: redis.Redis):
 
         except redis.exceptions.ConnectionError as exc:
             print(f"[sensing] Redis error: {exc}, reconnecting…", flush=True)
-            r = connect_redis()
+            r = connect_redis(REDIS_HOST, REDIS_PORT, "sensing")
+
+        except redis.exceptions.ResponseError as exc:
+            # maxmemory/noeviction 등 데이터 경계 위반 시 300 pkt/s 로그 폭주를 막는다.
+            stats["err"] += 1
+            now = time.time()
+            if now - last_redis_write_error_log >= 5:
+                print(f"[sensing] Redis write rejected: {exc}", flush=True)
+                last_redis_write_error_log = now
 
         except Exception as exc:
             stats["err"] += 1
@@ -138,7 +137,7 @@ def receive_loop(sock: socket.socket, r: redis.Redis):
 
 
 def main():
-    r = connect_redis()
+    r = connect_redis(REDIS_HOST, REDIS_PORT, "sensing")
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
