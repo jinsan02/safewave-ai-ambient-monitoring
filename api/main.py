@@ -8,6 +8,7 @@ api/main.py
 - POST /settings            : 시스템 설정 변경 (민감도, 노드 ON/OFF, AI 활성화)
 - GET  /nodes/health        : 노드별 생존 상태
 - GET  /charts/minute       : 분 단위 평균 차트 데이터
+- GET  /system/resources    : 호스트 CPU·온도·메모리·디스크 (조회 시 계산, 저장 없음)
 - POST /auth/register-token : FCM 토큰 등록
 - WS   /ws/monitor          : 실시간 ai:result 스트리밍
 """
@@ -19,6 +20,7 @@ import json
 import logging
 import math
 import os
+import shutil
 import time
 from typing import Any
 
@@ -789,6 +791,50 @@ async def get_system_health():
             "usage_ratio": round(usage_ratio, 4),
             "warning": usage_ratio >= 0.85,
         },
+        "ts_ms": int(time.time() * 1000),
+    }
+
+
+def _read_cpu_times() -> list[tuple[int, int]]:
+    """/proc/stat → [(idle, total)] (전체, cpu0, cpu1, ...). 컨테이너에서도 호스트 전체 값."""
+    rows = []
+    with open("/proc/stat") as f:
+        for line in f:
+            if not line.startswith("cpu"):
+                break
+            vals = [int(v) for v in line.split()[1:]]
+            rows.append((vals[3] + vals[4], sum(vals)))  # idle + iowait
+    return rows
+
+
+@app.get("/system/resources")
+async def get_system_resources():
+    """RPi5 호스트 CPU·온도·메모리·디스크. 조회 시점 계산만 하고 어디에도 저장하지 않는다."""
+    t0 = _read_cpu_times()
+    await asyncio.sleep(0.5)
+    t1 = _read_cpu_times()
+    usage = [
+        round(100.0 * (1 - (i1 - i0) / (s1 - s0)), 1) if s1 > s0 else 0.0
+        for (i0, s0), (i1, s1) in zip(t0, t1)
+    ]
+
+    mem = {}
+    with open("/proc/meminfo") as f:
+        for line in f:
+            key, val = line.split(":", 1)
+            mem[key] = int(val.split()[0]) * 1024
+
+    temp_c = None
+    with suppress(OSError, ValueError):
+        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+            temp_c = round(int(f.read().strip()) / 1000.0, 1)
+
+    disk = shutil.disk_usage("/")
+    return {
+        "cpu": {"percent": usage[0], "per_core": usage[1:], "load_avg": [round(v, 2) for v in os.getloadavg()]},
+        "temp_c": temp_c,
+        "memory": {"total": mem.get("MemTotal", 0), "available": mem.get("MemAvailable", 0)},
+        "disk": {"total": disk.total, "used": disk.used, "free": disk.free},
         "ts_ms": int(time.time() * 1000),
     }
 

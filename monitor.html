@@ -42,6 +42,15 @@
     .model-toggle input { accent-color:#69f0ae; cursor:pointer; }
     .model-toggle.off { opacity:0.5; border-color:#5a3030; }
     .model-dim { opacity:0.35; }
+    .res-panel { background:#1e2130; border-radius:12px; padding:14px; margin-bottom:14px; }
+    .res-row { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; }
+    .res-box { background:#252838; border-radius:8px; padding:10px 12px; }
+    .res-val { font-size:20px; font-weight:bold; }
+    .res-sub { font-size:11px; color:#9aa3b2; margin-top:2px; }
+    .res-bar { height:5px; background:#2a2d3a; border-radius:3px; margin-top:6px; overflow:hidden; }
+    .res-fill { height:100%; width:0; background:#69f0ae; transition: width 0.4s; }
+    .res-cores { display:flex; gap:3px; margin-top:6px; height:22px; align-items:flex-end; }
+    .res-core { flex:1; background:#4fc3f7; border-radius:2px 2px 0 0; min-height:2px; transition: height 0.4s; }
     .chart-panel { background: #1e2130; border-radius: 12px; padding: 14px; margin-bottom: 14px; overflow: hidden; flex-shrink: 0; }
     .chart-title { color:#9aa3b2; font-size:12px; margin-bottom:8px; }
     .chart-wrap { position: relative; height: 220px; }
@@ -94,6 +103,36 @@
       <span id="model-toggle-state" style="font-size:12px;color:#9aa3b2;"></span>
     </div>
     <div class="mic-hint">모델별 on/off — 끄면 해당 전문가 추론을 건너뛰고 빈 결과로 대체합니다. (M5 off = Qwen 호출 차단)</div>
+  </div>
+
+  <div class="res-panel" id="res-panel">
+    <div class="chart-title">시스템 자원 — <b id="res-host">—</b> (3초 갱신) <span id="res-state"></span></div>
+    <div class="res-row">
+      <div class="res-box">
+        <div class="exp-label">CPU 전체</div>
+        <div class="res-val" id="res-cpu">—</div>
+        <div class="res-cores" id="res-cores"></div>
+        <div class="res-sub" id="res-load">load: —</div>
+      </div>
+      <div class="res-box">
+        <div class="exp-label">CPU 온도</div>
+        <div class="res-val" id="res-temp">—</div>
+        <div class="res-bar"><div class="res-fill" id="res-temp-bar"></div></div>
+        <div class="res-sub">85°C부터 스로틀링</div>
+      </div>
+      <div class="res-box">
+        <div class="exp-label">메모리</div>
+        <div class="res-val" id="res-mem">—</div>
+        <div class="res-bar"><div class="res-fill" id="res-mem-bar"></div></div>
+        <div class="res-sub" id="res-mem-sub">—</div>
+      </div>
+      <div class="res-box">
+        <div class="exp-label">저장소 (/)</div>
+        <div class="res-val" id="res-disk">—</div>
+        <div class="res-bar"><div class="res-fill" id="res-disk-bar"></div></div>
+        <div class="res-sub" id="res-disk-sub">—</div>
+      </div>
+    </div>
   </div>
 
   <div class="chart-panel" id="chart-panel">
@@ -699,6 +738,45 @@
     refreshHourChart();
     setInterval(refreshMinuteChart, 30000);
     setInterval(refreshHourChart, 30000);
+
+    // ── 시스템 자원 (GET /system/resources) ─────────────────────────
+    const GB = 1024 ** 3;
+    function setBar(id, pct) {
+      const el = document.getElementById(id);
+      el.style.width = Math.min(100, pct) + '%';
+      el.style.background = pct >= 85 ? '#ff5252' : pct >= 70 ? '#ffb300' : '#69f0ae';
+    }
+    async function refreshResources() {
+      try {
+        const d = await (await fetch(API + '/system/resources')).json();
+        document.getElementById('res-cpu').textContent = d.cpu.percent.toFixed(1) + '%';
+        document.getElementById('res-cores').innerHTML = d.cpu.per_core
+          .map(p => `<div class="res-core" title="${p}%" style="height:${Math.max(2, p)}%"></div>`).join('');
+        document.getElementById('res-load').textContent = 'load: ' + d.cpu.load_avg.join(' / ')
+          + ` (${d.cpu.per_core.length}코어)`;
+        if (d.temp_c != null) {
+          document.getElementById('res-temp').textContent = d.temp_c.toFixed(1) + '°C';
+          setBar('res-temp-bar', d.temp_c / 85 * 100);
+        }
+        const used = d.memory.total - d.memory.available;
+        const memPct = used / d.memory.total * 100;
+        document.getElementById('res-mem').textContent = memPct.toFixed(0) + '%';
+        document.getElementById('res-mem-sub').textContent =
+          `${(used / GB).toFixed(1)} / ${(d.memory.total / GB).toFixed(1)} GB`;
+        setBar('res-mem-bar', memPct);
+        const diskPct = d.disk.used / d.disk.total * 100;
+        document.getElementById('res-disk').textContent = diskPct.toFixed(0) + '%';
+        document.getElementById('res-disk-sub').textContent =
+          `여유 ${(d.disk.free / GB).toFixed(0)} GB / 전체 ${(d.disk.total / GB).toFixed(0)} GB`;
+        setBar('res-disk-bar', diskPct);
+        document.getElementById('res-state').textContent = '';
+      } catch (e) {
+        document.getElementById('res-state').textContent = '— 조회 실패 (API 확인)';
+      }
+    }
+    document.getElementById('res-host').textContent = new URL(API).host;  // 어느 기기 자원인지 명시
+    refreshResources();
+    setInterval(refreshResources, 3000);
 
     connect();
   </script>
