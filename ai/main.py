@@ -12,6 +12,15 @@ import redis as _redis
 
 from experts import m1_wifi_pose, m2_frenel_vital, m3_ast_base, m4_whisper_small
 from mqtt_helper import make_client, publish_json, topic
+from runtime_inputs import (
+    aggregate_m1_result,
+    append_m1_grid_frame,
+    build_m1_input,
+    device_time_delta_ms,
+    insufficient_m1_result,
+    m1_tail_ready,
+    m1_window_ready,
+)
 from logic.emergency_score import compute_emergency_score
 from utils import (
     stream_id_ts_ms as _stream_id_ts_ms,
@@ -41,15 +50,27 @@ MINUTE_AGG_TTL_SECONDS = int(os.getenv("MINUTE_AGG_TTL_SECONDS", "3600"))
 EXPERT_LATEST_TTL_SECONDS = int(os.getenv("EXPERT_LATEST_TTL_SECONDS", "3600"))
 M3_AUDIO_WINDOW_MS = int(os.getenv("M3_AUDIO_WINDOW_MS", "3000"))
 M4_AUDIO_WINDOW_MS = int(os.getenv("M4_AUDIO_WINDOW_MS", "5000"))
+AUDIO_RESULT_MAX_AGE_MS = int(os.getenv("AUDIO_RESULT_MAX_AGE_MS", "30000"))
 SLM_MIN_INTERVAL_MS = int(os.getenv("SLM_MIN_INTERVAL_MS", "5000"))
 STREAM_START_ID = os.getenv("CSI_STREAM_START_ID", "0-0")
 M1_CSI_WINDOW_FRAMES = int(os.getenv("M1_CSI_WINDOW_FRAMES", "100"))
 M1_MAX_NODES         = int(os.getenv("M1_MAX_NODES", "5"))   # M1 입력 (1, M1_MAX_NODES, 64, 100) — 노드=채널축
+M1_REQUIRED_NODES    = tuple(
+    int(value.strip())
+    for value in os.getenv("M1_REQUIRED_NODES", "1,2,3").split(",")
+    if value.strip()
+)
+M1_FRAME_INTERVAL_MS = int(os.getenv("M1_FRAME_INTERVAL_MS", "10"))
+M1_TAIL_MAX_AGE_MS   = int(os.getenv("M1_TAIL_MAX_AGE_MS", "10"))
+M1_INFER_INTERVAL_MS = int(os.getenv("M1_INFER_INTERVAL_MS", "200"))
+M1_RESULT_MAX_AGE_MS = int(os.getenv("M1_RESULT_MAX_AGE_MS", "1000"))
+M1_AGGREGATION_K     = int(os.getenv("M1_AGGREGATION_K", "3"))
+M1_AGGREGATION_N     = int(os.getenv("M1_AGGREGATION_N", "5"))
 M2_CSI_WINDOW_FRAMES = int(os.getenv("M2_CSI_WINDOW_FRAMES", "1000"))
 # 1000프레임 = 10초 @ 100Hz; FFT bin 폭 0.1 Hz → 호흡 대역(0.1-0.6 Hz) 5 bin
 CSI_BACKLOG_SKIP_STREAK = int(os.getenv("CSI_BACKLOG_SKIP_STREAK", "5"))
 EXPERT_INFER_TIMEOUT_MS = int(os.getenv("EXPERT_INFER_TIMEOUT_MS", "1000"))
-MQTT_ENABLED = os.getenv("MQTT_ENABLED", "1").lower() not in {"0", "false", "no"}
+MQTT_ENABLED = os.getenv("MQTT_ENABLED", "0").lower() not in {"0", "false", "no"}
 MQTT_HOST = os.getenv("MQTT_HOST", "mqtt")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_CLIENT_ID = os.getenv("MQTT_CLIENT_ID", "rp5-ai")
@@ -163,11 +184,13 @@ class AIEngine:
             "speech_ko": speech_model,
         }
         self._executor = ThreadPoolExecutor(max_workers=4)
-        # CUDA JIT 첫 추론 워밍업 (수 초 소요, 이후 infer는 <1ms)
+        # 첫 추론 워밍업. M1은 운영과 같은 (1, node, 64, frame) 형상을 사용한다.
         _log(logging.INFO, "engine_init_step", step="gpu_warmup")
         _warmup = np.sin(np.linspace(0.0, 8.0 * np.pi, 512)).astype(np.float32)
         _warmup_per_expert = {
-            "fall":      _warmup,
+            "fall":      np.zeros(
+                (1, M1_MAX_NODES, 64, M1_CSI_WINDOW_FRAMES), dtype=np.float32
+            ),
             "vital":     {"resp": _warmup, "heart": _warmup},  # M2 런타임 포맷과 일치
             "env_sound": _warmup,
             "speech_ko": _warmup,
@@ -289,7 +312,7 @@ def _load_settings(r) -> dict:
     except Exception:
         pass
     return {"risk_threshold": 0.6, "active_nodes": [1, 2, 3, 4, 5, 6], "ai_enabled": True,
-            "models": {"m1": True, "m2": True, "m3": True, "m4": True, "m5": True}}
+            "models": {"m1": True, "m2": False, "m3": True, "m4": True, "m5": True}}
 
 
 # settings["models"] 키(mN) ↔ expert 이름 매핑
@@ -297,9 +320,12 @@ _MODEL_EXPERT_KEYS = {"m1": "fall", "m2": "vital", "m3": "env_sound", "m4": "spe
 
 
 def _enabled_experts(settings: dict) -> dict:
-    """settings.models → {expert_name: bool} (미지정 모델은 on)."""
+    """settings.models → {expert_name: bool}; 미지정 모델은 M2만 off, 나머지는 on."""
     models = settings.get("models") or {}
-    return {expert: bool(models.get(mkey, True)) for mkey, expert in _MODEL_EXPERT_KEYS.items()}
+    return {
+        expert: bool(models.get(mkey, mkey != "m2"))
+        for mkey, expert in _MODEL_EXPERT_KEYS.items()
+    }
 
 
 _settings_cache: dict = {}
@@ -441,16 +467,26 @@ def _load_recent_audio_events(r, node_id: int, ts_ms: int, window_ms: int) -> li
     return matched
 
 
-def _load_latest_audio_result(r) -> dict | None:
-    """audio:result 스트림에서 최신 M3/M4 처리 결과 1건 조회."""
-    try:
-        entries = r.xrevrange(AUDIO_RESULT_STREAM, count=1)
-        if not entries:
-            return None
-        _, fields = entries[0]
-        return _json_loads(fields.get(b"data", b""))
-    except Exception:
+_audio_result_cache: dict[int, dict] = {}
+_audio_result_cache_lock = threading.Lock()
+
+
+def _cache_audio_result(node_id: int, payload: dict) -> None:
+    with _audio_result_cache_lock:
+        _audio_result_cache[node_id] = payload
+
+
+def _load_latest_audio_result(node_id: int, now_ms: int) -> dict | None:
+    """현재 프로세스가 처리한 같은 노드의 최근 오디오 결과만 반환한다."""
+    with _audio_result_cache_lock:
+        payload = _audio_result_cache.get(node_id)
+    if not payload:
         return None
+    try:
+        age_ms = max(0, now_ms - int(payload.get("ts_ms", 0)))
+    except (TypeError, ValueError):
+        return None
+    return payload if age_ms <= AUDIO_RESULT_MAX_AGE_MS else None
 
 
 def _audio_worker_loop(r, ai_engine) -> None:
@@ -468,57 +504,78 @@ def _audio_worker_loop(r, ai_engine) -> None:
             if not entries:
                 continue
             for _, messages in entries:
-                for msg_id, fields in messages:
-                    last_id = msg_id
-                    ts_ms = _stream_id_ts_ms(msg_id)
+                # 추론보다 입력이 빠르면 오래된 음성을 순서대로 재생하지 않고 최신 1건으로 병합한다.
+                msg_id, fields = messages[-1]
+                tail = r.xrevrange(AUDIO_STREAM, count=1)
+                if tail and tail[0][0] != msg_id \
+                        and _stream_id_ts_ms(tail[0][0]) >= _stream_id_ts_ms(msg_id):
+                    msg_id, fields = tail[0]
+                    _log(logging.INFO, "audio_backlog_coalesced", selected_id=str(msg_id))
 
-                    meta = _json_loads(fields.get(b"data", b"")) or {}
-                    raw_wav = fields.get(b"waveform", b"")
-                    audio_in = dict(meta)
-                    if raw_wav:
-                        audio_in["waveform"] = np.frombuffer(raw_wav, dtype=np.float32)
-                    audio_in["ts_ms"] = ts_ms
+                last_id = msg_id
+                ts_ms = _stream_id_ts_ms(msg_id)
 
-                    # 모델별 토글: off인 모델은 빈 출력으로 대체하되 XADD는 계속
-                    # (스트림에 안 쓰면 CSI 루프가 과거 결과를 계속 병합하는 잔류 문제 방지)
-                    _enabled = _enabled_experts(_load_cached_settings(r))
-                    m3_result, m4_result = {}, {}
-                    if m3 and _enabled.get("env_sound", True):
-                        try:
-                            # M3._preprocess는 numpy array를 기대함 — dict에서 waveform 직접 추출
-                            wav = audio_in.get("waveform")
-                            m3_wav = np.asarray(wav, dtype=np.float32).reshape(-1) if wav is not None else np.zeros(1, dtype=np.float32)
-                            m3_result = m3.infer(m3_wav) or {}
-                        except Exception as exc:
-                            _log(logging.WARNING, "audio_m3_failed", error=str(exc))
-                    elif m3:
-                        m3_result = ai_engine._empty_output("env_sound")
-                    if m4 and _enabled.get("speech_ko", True):
-                        try:
-                            m4_result = m4.infer(audio_in) or {}
-                        except Exception as exc:
-                            _log(logging.WARNING, "audio_m4_failed", error=str(exc))
-                    elif m4:
-                        m4_result = ai_engine._empty_output("speech_ko")
+                meta = _json_loads(fields.get(b"data", b"")) or {}
+                try:
+                    node_id = int(fields.get(b"node", meta.get("node_id", 0)) or 0)
+                except (TypeError, ValueError):
+                    node_id = 0
+                raw_wav = fields.get(b"waveform", b"")
+                audio_in = dict(meta)
+                if raw_wav:
+                    audio_in["waveform"] = np.frombuffer(raw_wav, dtype=np.float32)
+                audio_in["ts_ms"] = ts_ms
 
-                    payload = {
-                        "ts_ms":       ts_ms,
-                        "sample_rate": meta.get("sample_rate"),
-                        "duration_ms": meta.get("duration_ms"),
-                        "peak_db":     meta.get("peak_db"),
-                        "env_sound":   m3_result,
-                        "speech_ko":   m4_result,
-                    }
-                    r.xadd(
-                        AUDIO_RESULT_STREAM,
-                        {"data": json.dumps(payload, ensure_ascii=False, default=str)},
-                        maxlen=600,
-                        approximate=True,
-                    )
-                    _log(logging.INFO, "audio_result_written",
-                         ts_ms=ts_ms,
-                         env_label=m3_result.get("env_sound_label", ""),
-                         transcript=str(m4_result.get("transcript_ko", ""))[:30])
+                # 모델별 토글: off인 모델은 빈 출력으로 대체하되 XADD는 계속
+                # (스트림에 안 쓰면 CSI 루프가 과거 결과를 계속 병합하는 잔류 문제 방지)
+                _enabled = _enabled_experts(_load_cached_settings(r))
+                m3_result, m4_result = {}, {}
+                phase2_state = r.get(f"phase2:active:{node_id}")
+                phase2_active = phase2_state in {b"1", b"active", "1", "active"}
+
+                # Phase 2 응답 지연을 줄이기 위해 STT를 환경음보다 먼저 실행한다.
+                if m4 and _enabled.get("speech_ko", True):
+                    try:
+                        m4_result = m4.infer(audio_in) or {}
+                    except Exception as exc:
+                        _log(logging.WARNING, "audio_m4_failed", error=str(exc))
+                elif m4:
+                    m4_result = ai_engine._empty_output("speech_ko")
+
+                # Phase 2 중에는 M3를 생략해 M4·API·오디오 장치에 CPU 여유를 남긴다.
+                if m3 and _enabled.get("env_sound", True) and not phase2_active:
+                    try:
+                        # M3._preprocess는 numpy array를 기대함 — dict에서 waveform 직접 추출
+                        wav = audio_in.get("waveform")
+                        m3_wav = np.asarray(wav, dtype=np.float32).reshape(-1) \
+                            if wav is not None else np.zeros(1, dtype=np.float32)
+                        m3_result = m3.infer(m3_wav) or {}
+                    except Exception as exc:
+                        _log(logging.WARNING, "audio_m3_failed", error=str(exc))
+                elif m3:
+                    m3_result = ai_engine._empty_output("env_sound")
+                    if phase2_active:
+                        _log(logging.INFO, "audio_m3_skipped_phase2", node_id=node_id)
+
+                payload = {
+                    "ts_ms":       ts_ms,
+                    "sample_rate": meta.get("sample_rate"),
+                    "duration_ms": meta.get("duration_ms"),
+                    "peak_db":     meta.get("peak_db"),
+                    "env_sound":   m3_result,
+                    "speech_ko":   m4_result,
+                }
+                r.xadd(
+                    AUDIO_RESULT_STREAM,
+                    {"data": json.dumps(payload, ensure_ascii=False, default=str)},
+                    maxlen=600,
+                    approximate=True,
+                )
+                _cache_audio_result(node_id, payload)
+                _log(logging.INFO, "audio_result_written",
+                     ts_ms=ts_ms,
+                     env_label=m3_result.get("env_sound_label", ""),
+                     transcript=str(m4_result.get("transcript_ko", ""))[:30])
         except Exception as exc:
             _log(logging.ERROR, "audio_worker_error", error=str(exc))
             time.sleep(1)
@@ -715,11 +772,20 @@ if __name__ == "__main__":
 
     last_id = STREAM_START_ID
     last_slm_invoked_at_ms = 0
+    last_m1_inferred_at_ms = 0
+    last_m1_result_at_ms = 0
+    cached_m1_result = insufficient_m1_result(
+        required_votes=M1_AGGREGATION_K,
+        window_size=M1_AGGREGATION_N,
+    )
+    m1_votes = deque(maxlen=M1_AGGREGATION_N)
     _backlog_streak = 0
     _node_raw_buf:    dict[int, deque] = {}
     _node_resp_buf:   dict[int, deque] = {}
     _node_heart_buf:  dict[int, deque] = {}
     _node_prev_ts_ms: dict[int, int]   = {}
+    _node_prev_device_ts_ms: dict[int, int] = {}
+    _node_last_arrival_ms: dict[int, int] = {}
     # ai:result 조건부 다운샘플 상태 (노드별 마지막 기록 시각/레벨/오디오 ts)
     _node_last_write_ms: dict[int, int] = {}
     _node_last_level:    dict[int, str] = {}
@@ -745,8 +811,10 @@ if __name__ == "__main__":
                     except Exception:
                         node_id = 0
                     try:
-                        ts_ms = _normalize_ts_ms(int(fields.get(b"ts_ms", 0)), msg_id)
+                        device_ts_ms = int(fields.get(b"ts_ms", 0))
+                        ts_ms = _normalize_ts_ms(device_ts_ms, msg_id)
                     except Exception:
+                        device_ts_ms = 0
                         ts_ms = _stream_id_ts_ms(msg_id)
 
                     if active_nodes and node_id not in active_nodes and node_id != 0:
@@ -781,16 +849,16 @@ if __name__ == "__main__":
                              node_id=node_id, msg_id=str(msg_id),
                              present=list(k.decode() for k in fields if k != b""))
 
-                    # 패킷 간격 검사: 100Hz 기준 정상 10ms, 150ms(15패킷) 초과 시 연속성 깨짐 → deque 리셋
+                    # M2는 긴 공백에서 시간축을 다시 시작한다. M1은 학습 로더와 같이
+                    # 100Hz 격자를 유지하고 빠진 슬롯만 0으로 채운다.
                     _prev_ts = _node_prev_ts_ms.get(node_id, 0)
                     _gap_ms = ts_ms - _prev_ts if _prev_ts else 0
-                    if _gap_ms > 150:
-                        _node_raw_buf.pop(node_id, None)
+                    if _gap_ms > 150 or _gap_ms < 0:
                         _node_resp_buf.pop(node_id, None)
                         _node_heart_buf.pop(node_id, None)
                         if _prev_ts:
                             _log(logging.WARNING, "packet_gap_detected",
-                                 node_id=node_id, gap_ms=_gap_ms, action="deque_reset")
+                                 node_id=node_id, gap_ms=_gap_ms, action="m2_deque_reset")
                     _node_prev_ts_ms[node_id] = ts_ms
 
                     # M2 시간축 누적: per-node deque에 프레임별 64채널 평균(스칼라)을 저장 → (N,) 시간 시리즈.
@@ -800,32 +868,121 @@ if __name__ == "__main__":
                     resp_series  = np.asarray(_node_resp_buf[node_id],  dtype=np.float32)
                     heart_series = np.asarray(_node_heart_buf[node_id], dtype=np.float32)
 
-                    # M1 슬라이딩 버퍼: 노드별 block_raw (64ch) × 100frame
-                    _node_raw_buf.setdefault(node_id, deque(maxlen=M1_CSI_WINDOW_FRAMES)).append(raw_data)
+                    # M1 슬라이딩 버퍼: 노드별 block_raw (64ch) × 100frame.
+                    # 실제 data_raw가 있는 패킷만 '마지막 슬롯 생존'으로 인정한다.
+                    if b"data_raw" in fields:
+                        frame_ts_ms = device_ts_ms if b"ts_ms" in fields else ts_ms
+                        previous_frame_ts_ms = _node_prev_device_ts_ms.get(node_id)
+                        frame_gap_ms = (
+                            device_time_delta_ms(frame_ts_ms, previous_frame_ts_ms)
+                            if previous_frame_ts_ms is not None else 0
+                        )
+                        # 소폭 역행은 늦게 도착한 과거 패킷이므로 현재 격자에 넣지 않는다.
+                        late_packet = -1000 < frame_gap_ms < 0
+                        if not late_packet:
+                            raw_buffer = _node_raw_buf.setdefault(
+                                node_id, deque(maxlen=M1_CSI_WINDOW_FRAMES)
+                            )
+                            zero_filled, clock_reset = append_m1_grid_frame(
+                                raw_buffer,
+                                raw_data,
+                                frame_gap_ms,
+                                frame_interval_ms=M1_FRAME_INTERVAL_MS,
+                            )
+                            _node_prev_device_ts_ms[node_id] = frame_ts_ms
+                            _node_last_arrival_ms[node_id] = ts_ms
+                            if zero_filled or clock_reset:
+                                _log(
+                                    logging.WARNING,
+                                    "m1_grid_gap_filled",
+                                    node_id=node_id,
+                                    gap_ms=frame_gap_ms,
+                                    zero_filled_frames=zero_filled,
+                                    clock_reset=clock_reset,
+                                )
 
-                    # M1 입력 텐서 (1, M1_MAX_NODES, 64, 100) — 노드=채널축.
-                    # node_id N → 채널 슬롯 N-1 고정 매핑: 노드가 죽고 살아나도 채널 의미가
-                    # shift되지 않는다. 미연결/버퍼미충족 노드와 범위 밖(node_id > M1_MAX_NODES)은 제로패딩/제외.
-                    _slots = [np.zeros((64, M1_CSI_WINDOW_FRAMES), dtype=np.float32)
-                              for _ in range(M1_MAX_NODES)]
-                    for _n in active_nodes:
-                        if 1 <= _n <= M1_MAX_NODES and _n in _node_raw_buf \
-                                and len(_node_raw_buf[_n]) == M1_CSI_WINDOW_FRAMES:
-                            _slots[_n - 1] = np.stack(list(_node_raw_buf[_n]), axis=0).T.astype(np.float32)  # (64,100)
-                    m1_input = np.stack(_slots, axis=0)[None, ...]  # (1, M1_MAX_NODES, 64, 100) — 4D라 _preprocess 통과
+                    # M1은 입력창이 준비된 뒤 전역 5Hz로만 실행한다. 패킷마다 (5,64,100)
+                    # 텐서를 조립·추론하면 300 pkt/s를 따라가지 못해 오히려 창이 초기화된다.
+                    now_ms = int(time.time() * 1000)
+                    m1_tick_due = (
+                        enabled_experts.get("fall", True)
+                        and now_ms - last_m1_inferred_at_ms >= M1_INFER_INTERVAL_MS
+                    )
+                    m1_ready = m1_window_ready(
+                        M1_REQUIRED_NODES,
+                        _node_raw_buf,
+                        max_nodes=M1_MAX_NODES,
+                        window_frames=M1_CSI_WINDOW_FRAMES,
+                    )
+                    m1_tail_ok = m1_tail_ready(
+                        M1_REQUIRED_NODES,
+                        _node_last_arrival_ms,
+                        ts_ms,
+                        max_age_ms=M1_TAIL_MAX_AGE_MS,
+                    )
+                    m1_due = (
+                        m1_tick_due
+                        and m1_ready
+                        and m1_tail_ok
+                    )
+                    m1_input = None
+                    if m1_due:
+                        # 학습에 쓰인 노드 1/2/3만 각 고정 슬롯에 넣고 나머지는 0으로 둔다.
+                        m1_input = build_m1_input(
+                            M1_REQUIRED_NODES,
+                            _node_raw_buf,
+                            max_nodes=M1_MAX_NODES,
+                            window_frames=M1_CSI_WINDOW_FRAMES,
+                        )
 
                     context_window = _load_cached_context_window(r, ts_ms)
 
-                    # M1/M2만 CSI 루프에서 실행. M3/M4는 _audio_worker_loop 데몬 스레드가 처리.
+                    # M1/M2만 CSI executor에 제출. M3/M4는 오디오 워커 전용이다.
                     expert_inputs, _ = _build_expert_inputs(m1_input, resp_series, heart_series, [])
+                    csi_enabled = {
+                        "fall": m1_due,
+                        "vital": enabled_experts.get("vital", True),
+                        "env_sound": False,
+                        "speech_ko": False,
+                    }
                     expert_results, expert_latency_ms = ai_engine.process_experts(
                         raw_data,
                         expert_inputs=expert_inputs,
-                        enabled=enabled_experts,
+                        enabled=csi_enabled,
                     )
+                    if m1_due:
+                        new_m1_result = expert_results.get("fall")
+                        if new_m1_result:
+                            cached_m1_result = aggregate_m1_result(
+                                new_m1_result,
+                                m1_votes,
+                                required_votes=M1_AGGREGATION_K,
+                                window_size=M1_AGGREGATION_N,
+                            )
+                            expert_results["fall"] = cached_m1_result
+                            last_m1_result_at_ms = now_ms
+                        elif now_ms - last_m1_result_at_ms <= M1_RESULT_MAX_AGE_MS:
+                            expert_results["fall"] = cached_m1_result
+                            expert_latency_ms["fall"] = 0.0
+                        last_m1_inferred_at_ms = now_ms
+                    elif m1_tick_due:
+                        # 입력 부족은 정상 음성(False)과 구분한다. 다음 패킷에서 같은
+                        # 200ms tick을 다시 확인할 수 있도록 타이머는 전진시키지 않는다.
+                        # 그래야 tick 직후 도착하는 필수 노드의 마지막 프레임을 기다릴 수 있다.
+                        m1_votes.clear()
+                        cached_m1_result = insufficient_m1_result(
+                            required_votes=M1_AGGREGATION_K,
+                            window_size=M1_AGGREGATION_N,
+                        )
+                        expert_results["fall"] = cached_m1_result
+                        expert_latency_ms["fall"] = 0.0
+                    elif enabled_experts.get("fall", True) \
+                            and now_ms - last_m1_result_at_ms <= M1_RESULT_MAX_AGE_MS:
+                        expert_results["fall"] = cached_m1_result
+                        expert_latency_ms["fall"] = 0.0
 
                     # audio:result 최신 1건 읽어 expert_results에 병합
-                    audio_from_stream = _load_latest_audio_result(r)
+                    audio_from_stream = _load_latest_audio_result(node_id, ts_ms)
                     if audio_from_stream:
                         expert_results["env_sound"] = audio_from_stream.get("env_sound") or expert_results.get("env_sound", {})
                         expert_results["speech_ko"] = audio_from_stream.get("speech_ko") or expert_results.get("speech_ko", {})

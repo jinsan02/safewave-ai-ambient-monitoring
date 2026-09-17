@@ -42,6 +42,8 @@ _COMPOSITE_MIN_PEAK_2DOM = 0.90
 
 # M2 생체신호 극한값 단일 에스컬레이션: vital_component==1.0이면 score 최솟값
 _VITAL_CRIT_BYPASS = 0.65
+# M1의 K=3/N=5 사건 판정은 단독으로도 M5 평가를 시작할 수 있어야 한다.
+_FALL_CONSENSUS_BYPASS = 0.65
 
 # D2: 확정 낙상 + 경보/충격음 동시 → infer_confidence 감쇠와 무관하게 에스컬레이션
 #     (낙상센서·음향이 저신뢰로 깎여 보강된 복합응급이 0.6 직하로 미탐되던 결함 해소)
@@ -228,6 +230,12 @@ def compute_emergency_score(expert_results: dict, time_series=None) -> tuple[flo
     if _raw_vital_comp >= 1.0:
         score = max(score, _VITAL_CRIT_BYPASS)
         breakdown["vital_bypass"] = True
+
+    # M1의 단일 창 점수는 그대로 보조 문맥에 남기되, 전역 K/N 집계가 성립한 경우에만
+    # M5 호출 임계 이상으로 올린다. 한 창의 우연한 발화는 이 경로를 타지 않는다.
+    if fall_out.get("fall_detected", False):
+        score = max(score, _FALL_CONSENSUS_BYPASS)
+        breakdown["fall_consensus_bypass"] = True
 
     # ── D2: 확정 낙상 + 경보/충격음 동시 에스컬레이션 (raw 기반, conf 감쇠 무관) ──
     _snd_conf_raw = float(sound_out.get("env_sound_confidence") or sound_out.get("confidence") or 0.0)

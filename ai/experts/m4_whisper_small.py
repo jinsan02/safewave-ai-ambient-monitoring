@@ -138,7 +138,8 @@ class WhisperSmallModel:
             result = self.asr_pipe(
                 {"array": waveform.astype(np.float32), "sampling_rate": 16000},
                 generate_kwargs={"language": "ko", "task": "transcribe",
-                                 "num_beams": 1, "max_new_tokens": 128},
+                                 "num_beams": 1,
+                                 "max_new_tokens": int(os.getenv("M4_MAX_NEW_TOKENS", "48"))},
             )
             if isinstance(result, dict):
                 text = str(result.get("text", "")).strip()
