@@ -33,6 +33,7 @@ import time
 import unicodedata
 import wave
 from array import array
+from collections import Counter
 from pathlib import Path
 
 
@@ -127,7 +128,10 @@ def aggregate(items):
         "wer": round((t["word_s"] + t["word_d"] + t["word_i"]) / t["ref_words"], 4) if t["ref_words"] else None,
         "keyword_hit_rate": round(sum(x["keyword_hit"] for x in items) / len(items), 4),
         "empty_outputs": sum(1 for x in items if not norm_chars(x["hyp"])),
-        "non_whisper_source": sum(1 for x in items if x["source"] != "whisper-stt"),
+        # 폴백 = 운영 Whisper 경로도, 인계 wrapper 경로도 아닌 결과 (대체 문구·빈 폴백)
+        "non_whisper_source": sum(1 for x in items
+                                  if x["source"] != "whisper-stt" and not str(x["source"]).startswith("handoff-")),
+        "sources": dict(sorted(Counter(str(x["source"]) for x in items).items())),
         "latency_s": {"mean": round(statistics.fmean(lat), 3), "p50": round(pct(lat, 50), 3),
                       "p95": round(pct(lat, 95), 3), "max": round(max(lat), 3)},
         "rtf": {"mean": round(statistics.fmean(rtf), 3), "p95": round(pct(rtf, 95), 3)} if rtf else None,
@@ -146,6 +150,9 @@ def main():
     ap.add_argument("--ids-file", help="이 audio_id 목록만 같은 순서로 평가")
     ap.add_argument("--out", default="/reports/m4eval")
     ap.add_argument("--app", default="/app", help="ai 서비스 코드 위치 (experts/, utils/)")
+    ap.add_argument("--backend", choices=("service", "handoff"), default="service",
+                    help="service: 운영 WhisperSmallModel / handoff: 이대경 인계 m4_whisper.onnx_runtime (Python 3.10 환경)")
+    ap.add_argument("--repo", default="/repo", help="handoff 백엔드용 저장소 루트 (m4_whisper/ 위치)")
     args = ap.parse_args()
 
     manifest = Path(args.manifest)
@@ -163,15 +170,32 @@ def main():
                 rec = json.loads(line)
                 done[rec["audio_id"]] = rec
 
-    sys.path.insert(0, args.app)
-    from experts.m4_whisper_small import WhisperSmallModel  # noqa: E402  (이미지 안의 운영 코드)
     import numpy as np  # noqa: E402
+    threads = int(os.getenv("M4_ORT_THREADS", "2"))
 
     t_load = time.perf_counter()
-    model = WhisperSmallModel(args.model)
+    if args.backend == "service":
+        sys.path.insert(0, args.app)
+        from experts.m4_whisper_small import WhisperSmallModel  # noqa: E402  (이미지 안의 운영 코드)
+        model = WhisperSmallModel(args.model)
+        if model.asr_pipe is None:
+            raise SystemExit(f"ASR 파이프라인 초기화 실패: {args.model}")
+    else:
+        sys.path.insert(0, args.repo)
+        import torch  # noqa: E402
+        from m4_whisper.onnx_runtime import OnnxSpeechRecognizer  # noqa: E402
+
+        torch.set_num_threads(threads)  # 인계 CLI(main)와 같은 설정
+        torch.manual_seed(42)
+        recognizer = OnnxSpeechRecognizer(args.model, threads)
+
+        class _Handoff:  # 운영 infer()와 같은 반환 키로 맞춘다
+            def infer(self, data):
+                res = recognizer.transcribe(data["waveform"], 16000)
+                return {"transcript_ko": res["transcript_ko"], "stt_source": f"handoff-{res['status']}"}
+
+        model = _Handoff()
     load_s = time.perf_counter() - t_load
-    if model.asr_pipe is None:
-        raise SystemExit(f"ASR 파이프라인 초기화 실패: {args.model}")
 
     first = rows[0]
     wav0 = np.frombuffer(read_wav(manifest.parent / first["wav_path"]), dtype=np.int16).astype(np.float32) / 32768.0
@@ -180,7 +204,8 @@ def main():
     warmup_s = time.perf_counter() - t
 
     meta = {
-        "label": args.label, "model_dir": args.model, "manifest": str(manifest), "files": len(rows),
+        "label": args.label, "backend": args.backend, "model_dir": args.model, "manifest": str(manifest),
+        "files": len(rows),
         "limit": args.limit, "ids_file": args.ids_file,
         "m4_ort_threads": os.getenv("M4_ORT_THREADS", "2(default)"),
         "ort_intra_op_threads": os.getenv("ORT_INTRA_OP_THREADS"),
@@ -213,6 +238,11 @@ def main():
                       flush=True)
 
     items = [done[r["audio_id"]] for r in rows if r["audio_id"] in done]
+    try:
+        import resource  # Linux: ru_maxrss 단위 KB (이 프로세스의 최대 상주 메모리)
+        meta["peak_rss_mb"] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)
+    except ImportError:
+        meta["peak_rss_mb"] = None
     summary = {
         "meta": meta,
         "all": aggregate(items),
@@ -229,10 +259,11 @@ def main():
                 f"{a['latency_s']['p50']:.2f} / {a['latency_s']['p95']:.2f} | {a['rtf']['mean']:.2f} |")
 
     md = [f"# M4 STT 평가 — {args.label}", "",
-          f"- 모델: `{args.model}`  /  M4_ORT_THREADS={meta['m4_ort_threads']}",
+          f"- 모델: `{args.model}`  /  백엔드 {args.backend}  /  M4_ORT_THREADS={meta['m4_ort_threads']}",
           f"- 표본: {len(items)}개 (limit={args.limit or '전체'}{', ids=' + args.ids_file if args.ids_file else ''})",
-          f"- 로드 {meta['model_load_s']}s, 워밍업 {meta['warmup_s']}s",
-          f"- 빈 출력 {summary['all']['empty_outputs']}개, whisper 외 경로 {summary['all']['non_whisper_source']}개", "",
+          f"- 로드 {meta['model_load_s']}s, 워밍업 {meta['warmup_s']}s, 최대 메모리(RSS) {meta['peak_rss_mb']} MB",
+          f"- 빈 출력 {summary['all']['empty_outputs']}개, 폴백 {summary['all']['non_whisper_source']}개, "
+          f"경로별 {summary['all']['sources']}", "",
           "| 구분 | 파일 | CER | WER | 키워드 | 지연 p50 / p95 (s) | RTF 평균 |",
           "|---|---:|---:|---:|---:|---:|---:|",
           line("전체", summary["all"])]

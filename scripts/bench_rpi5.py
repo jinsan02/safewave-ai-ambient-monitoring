@@ -68,6 +68,25 @@ def http(api, path, body=None, timeout=15):
         return json.loads(resp.read())
 
 
+def swap_used_mb():
+    try:
+        m = {}
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            k, v = line.split(":", 1)
+            m[k] = int(v.split()[0])
+        return (m["SwapTotal"] - m["SwapFree"]) // 1024
+    except (OSError, KeyError, ValueError):
+        return None
+
+
+def restart_counts():
+    out = {}
+    for name in CONTAINERS:
+        v = sh(["docker", "inspect", "--format", "{{.RestartCount}}", name]).strip()
+        out[name] = int(v) if v.isdigit() else None
+    return out
+
+
 def pct(values, q):
     if not values:
         return None
@@ -121,9 +140,9 @@ class Collector:
     def sample(self):
         t = time.time()
         try:
-            self.resources.append({"t": t, **http(self.api, "/system/resources")})
+            self.resources.append({"t": t, **http(self.api, "/system/resources"), "swap_used_mb": swap_used_mb()})
         except Exception as exc:
-            self.resources.append({"t": t, "error": str(exc)})
+            self.resources.append({"t": t, "error": str(exc), "swap_used_mb": swap_used_mb()})
         stats = {}
         for line in sh(["docker", "stats", "--no-stream", "--format", "{{json .}}"]).splitlines():
             try:
@@ -178,6 +197,7 @@ def summarize(c, qwen_ms, log_counts, start, end, injections):
         name: dist([s["cpu"][name] for s in c.docker_stats if name in s["cpu"]]) for name in CONTAINERS
     }
     out["throttled"] = sorted({x["raw"] for x in c.throttled})
+    out["swap_used_mb"] = dist([x["swap_used_mb"] for x in c.resources if x.get("swap_used_mb") is not None])
 
     ai = [p for _, p in c.ai_result]
     lat = lambda k: [p["expert_latency_ms"][k] for p in ai if p.get("expert_latency_ms", {}).get(k)]
@@ -241,12 +261,15 @@ def write_markdown(path, meta, s):
          f"- 기기: {meta['host']['model']}  /  kernel {meta['host']['kernel']}",
          f"- 옵션: {json.dumps(meta['options'], ensure_ascii=False)}",
          f"- 모델 토글: {s['ai_result']['models']}",
-         f"- 스로틀링: {', '.join(s['throttled'])}", "",
+         f"- 스로틀링: {', '.join(s['throttled'])}",
+         f"- **유효성: {'유효' if s['valid'] else '무효 — ' + s.get('invalid_reason', 'API 조회 실패')}**"
+         f"  (측정 중 재시작 {s['restarts']})", "",
          "## 자원", "",
          "| 항목 | 값 |", "|---|---|",
          f"| 호스트 CPU % | {fmt(s['host_cpu_percent'])} |",
          f"| CPU 온도 °C | {fmt(s['host_temp_c'])} |",
          f"| 메모리 사용 GB | {fmt(s['host_mem_used_gb'])} |",
+         f"| 스왑 사용 MB | {fmt(s['swap_used_mb'])} |",
          f"| 디스크 사용 % | {s.get('disk_used_percent', '—')} |"]
     for name, d in s["container_cpu_percent"].items():
         L.append(f"| {name} CPU % | {fmt(d)} |")
@@ -318,6 +341,7 @@ def main():
         },
         "settings_before": original,
         "settings_during": changed,
+        "restarts_before": restart_counts(),
         "container_env": {},
         "container_images": {},
         "models": {},
@@ -396,6 +420,14 @@ def main():
     log_counts = {ev: expert_log.count(f'"{ev}"') for ev in EXPERT_LOG_EVENTS}
 
     summary = summarize(c, qwen_ms, log_counts, start, end, injections)
+    restarts_after = restart_counts()
+    summary["restarts"] = {k: (restarts_after[k] - meta["restarts_before"][k])
+                           for k in restarts_after
+                           if restarts_after[k] is not None and meta["restarts_before"].get(k) is not None}
+    oom_suspect = any(v > 0 for v in summary["restarts"].values())
+    summary["valid"] = not oom_suspect and not any(x.get("error") for x in c.resources)
+    if oom_suspect:
+        summary["invalid_reason"] = "측정 중 컨테이너 재시작 (OOM 의심)"
     raw = {
         "meta": meta, "summary": summary, "injections": injections,
         "resources": c.resources, "docker_stats": c.docker_stats, "throttled": c.throttled, "nodes": c.nodes,
