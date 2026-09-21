@@ -53,13 +53,19 @@ ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶
 |---|---|---|---|
 | M1 | `experts/m1_wifi_pose.py` | CSI (1×1×192×100) | 낙상 위험 점수 (0–1) |
 | M2 | `experts/m2_frenel_vital.py` | CSI | 생체신호 점수 (0–1) |
-| M3 | `experts/m3_ast_base.py` | 오디오 PCM (최근 N초, 기본 4s) | 환경음 6종 분류 |
+| M3 | `experts/m3_ast_base.py` | 오디오 PCM 16kHz mono 3초 | 환경음 6종 분류 + `impact_prob`/`impact_alert` |
 | M4 | `experts/m4_whisper_small.py` | 오디오 PCM (최근 5s) | 한국어 STT |
 | M5 | `logic/qwen_05b.py` | 컨텍스트 JSON | 통합 위험도 판단 |
 
-### M3 환경음 (AST)
+### M3 환경음 (AST 6-class 파인튜닝 ONNX)
 
-M3는 [MIT/ast-finetuned-audioset-10-10-0.4593](https://huggingface.co/MIT/ast-finetuned-audioset-10-10-0.4593)을 Hugging Face Transformers로 직접 로드해 추론합니다. ONNX 변환 없이 `volumes/models/ast_hf/` 또는 Hub에서 가중치를 읽습니다.
+M3는 [MIT/ast-finetuned-audioset-10-10-0.4593](https://huggingface.co/MIT/ast-finetuned-audioset-10-10-0.4593)을
+SafeWave 데이터로 **6-class 파인튜닝한 모델**을 ONNX로 추론합니다 (`volumes/models/ast_onnx/*.onnx`).
+전처리(게인 정규화 + Kaldi log-mel)가 그래프 안에 포함되어 있어 런타임은 파형을 16kHz mono 3초로
+맞춰 넣기만 하고, torch/transformers 없이 동작합니다.
+
+> 베이스 모델과 무엇이 달라졌는지, 가중치를 어디서 받는지, 입출력이 어떻게 되는지는
+> **[`docs/m3-env-sound-onnx.md`](docs/m3-env-sound-onnx.md)** 에 정리되어 있습니다.
 
 **분류 라벨 (6종):**
 
@@ -67,13 +73,18 @@ M3는 [MIT/ast-finetuned-audioset-10-10-0.4593](https://huggingface.co/MIT/ast-f
 |---|---|---|
 | `silence` | 무음 | 조용함, 충격 후 침묵 |
 | `speech` | 사람 음성 | 대화, 비명, 신음, "도와줘" |
-| `impact` | 충격음 | 낙상, 물건 낙하, 문 slam |
-| `noise` | 잡음 | TV, 가전, 배경 소음 |
+| `impact` | **충격음 (낙상 감지 대상)** | 낙상, 물건 낙하, 문 slam |
+| `noise` | 잡음 | 학습 데이터는 `unknown`에 통합 — 출력 빈도 낮음 |
 | `alarm` | 경보음 | 화재경보, 비프, 사이렌 |
-| `unknown` | 알 수 없음 | 위 5종에 해당하지 않는 소리 |
+| `unknown` | 그 외 생활음 | TV, 가전, 배경 소음 |
 
-출력 키: `env_sound_label`, `env_sound_confidence`, `env_sound_source` (`hf-ast` / `heuristic` / `no-audio`).  
-AudioSet 527클래스 상위 결과는 `ast_top_class`, `ast_top_confidence`로 함께 반환됩니다.
+라벨 순서는 모델 출력 인덱스와 1:1로 고정입니다 (impact = 2).
+
+출력 키: `env_sound_label`, `env_sound_confidence`, `env_sound_source` (`onnx` / `heuristic` / `no-audio`),
+`impact_prob`, `impact_alert`, `raw_peak`, `silence_gated`, `env_sound_probs`(6종 전체), `env_sound_model`.
+
+**판정 규칙:** `raw_peak < M3_SILENCE_GATE`(0.005)면 무조건 `silence`,
+`impact` 확률이 `M3_IMPACT_THRESHOLD`(0.6) 이상이면 `impact_alert=true`.
 
 **시간 필드 (백엔드 연동):**
 
@@ -83,18 +94,19 @@ AudioSet 527클래스 상위 결과는 `ast_top_class`, `ast_top_confidence`로 
 | `audio_ts_ms` | `experts.env_sound` | **M3 분석 오디오 구간 끝 시각** |
 | `audio_ts_start_ms` | `experts.env_sound` | 분석 구간 시작 추정 (`audio_ts_ms - duration`) |
 | `audio_duration_ms` | `experts.env_sound` | 병합 waveform 길이 |
-| `audio_window_ms` | `experts.env_sound` | M3 윈도우 설정 (`M3_AUDIO_WINDOW_MS`) |
+| `audio_window_ms` | `experts.env_sound` | 모델이 분석한 창 (`M3_AUDIO_WINDOW_MS`, 3000) |
+| `audio_merge_ms` | `experts.env_sound` | M3에 넘긴 병합 구간 (`M3_AUDIO_MERGE_MS`, 6000) |
 
 > UI에서 “몇 시에 소리 났는지”는 `experts.env_sound.audio_ts_ms`(또는 `audio_ts_start_ms`)를 사용하세요. 최상위 `ts_ms`는 CSI 기준이라 수백 ms~수 초 차이날 수 있습니다.  
-> 상세: [`docs/backend-handoff.md`](docs/backend-handoff.md) § M3 출력 · 시간 필드
+> 상세: [`docs/m3-env-sound-onnx.md`](docs/m3-env-sound-onnx.md) § 3. 구동 코드 — 입력과 출력
 
 **오디오 파이프라인 요약:**
 
 ```
 마이크/VAD 또는 monitor.html
   → Redis audio:events
-  → CSI 트리거 시 최근 이벤트 병합 (M3_AUDIO_WINDOW_MS)
-  → AST mel-spectrogram 전처리 → 6종 라벨
+  → CSI 트리거 시 최근 이벤트 병합 (M3_AUDIO_MERGE_MS, 기본 6s)
+  → M3가 충격음을 품는 3초 창 선택 → ONNX 추론(전처리 내장) → 6종 라벨 + impact 확률
   → ai:result / ai:m3:latest / monitor.html
 ```
 
@@ -104,7 +116,7 @@ CSI(`csi:raw`)가 들어와야 AI 루프가 돌지만, `POST /audio/events`에 `
 
 | 문서 | 대상 | 내용 |
 |------|------|------|
-| [`docs/backend-handoff.md`](docs/backend-handoff.md) | **백엔드/앱 개발** | 마이크→M3 I/O, Redis, API, WS, MQTT 전체 명세 |
+| [`docs/m3-env-sound-onnx.md`](docs/m3-env-sound-onnx.md) | **백엔드/앱 개발** | M3 모델 변경점·가중치·입출력 규격 |
 | [`docs/api-db-spec.html`](docs/api-db-spec.html) | 공유용 HTML | REST/WebSocket/MQTT/Redis 인터랙티브 명세 |
 
 ---
@@ -219,7 +231,7 @@ cd rp5
 REDIS_HOST=db
 REDIS_PORT=6379
 MODEL_PATH=/app/models
-M3_ENV_SOUND_MODEL=ast_hf
+M3_ENV_SOUND_MODEL=ast_onnx
 MQTT_BASE_TOPIC=safewave
 EXPERT_INFER_TIMEOUT_MS=10000
 
@@ -227,7 +239,11 @@ EXPERT_INFER_TIMEOUT_MS=10000
 M3_GAIN_NORMALIZE=1
 M3_NORMALIZE_BELOW_PEAK=0.15
 M3_TARGET_PEAK=0.9
-M3_AUDIO_WINDOW_MS=4000
+M3_AUDIO_WINDOW_MS=3000
+M3_AUDIO_MERGE_MS=6000
+M3_SILENCE_GATE=0.005
+M3_IMPACT_THRESHOLD=0.6
+M3_WINDOW_MODE=peak
 
 # audio-sensing VAD (값을 낮출수록 작은 소리도 이벤트로 잡음)
 VAD_THRESHOLD_DB=-55
@@ -241,8 +257,12 @@ AUDIO_TARGET_PEAK=0.85
 
 | 변수 | 설명 |
 |---|---|
-| `M3_ENV_SOUND_MODEL` | M3 모델 디렉터리명 (`ast_hf`) |
-| `M3_AUDIO_WINDOW_MS` | M3 입력 윈도우(ms). 병합된 waveform **뒤에서** N초만 사용 |
+| `M3_ENV_SOUND_MODEL` | M3 모델 디렉터리명 (`ast_onnx`) |
+| `M3_AUDIO_WINDOW_MS` | 모델 창(ms). 3000 고정 (ONNX 입력 형상) |
+| `M3_AUDIO_MERGE_MS` | M3에 넘길 병합 길이(ms). 이 안에서 M3가 분석할 3초를 고름 |
+| `M3_SILENCE_GATE` | 무음 게이트 (raw_peak 하한) |
+| `M3_IMPACT_THRESHOLD` | 낙상 알림 임계값 (impact 확률) |
+| `M3_WINDOW_MODE` | 3초 초과 입력의 창 선택: `peak`(충격 중심) / `latest`(마지막 3초) |
 | `EXPERT_INFER_TIMEOUT_MS` | CPU AST 추론용 타임아웃 (기본 10000 권장) |
 | `VAD_THRESHOLD_DB` | VAD 임계값(dBFS). `-55` ~ `-60`이면 원거리 소리에 민감 |
 
@@ -255,12 +275,15 @@ mkdir api\auth -ErrorAction SilentlyContinue
 # api/auth/firebase_key.json
 ```
 
-**M3 AST 모델 다운로드 (필수):**
+**M3 환경음 모델 설치 (필수):**
+
+파인튜닝 ONNX는 이 저장소에서 export하지 않습니다. 모델 담당(ast-base)이 배포한 파일을
+받아 설치·검증합니다.
 
 ```powershell
-pip install huggingface-hub
-python scripts/download_m3_ast_hf.py
-# → volumes/models/ast_hf/
+hf sync hf://buckets/sobh6498/ast-finetuned-audioset-10-10-0.4593-bucket/ast-base/exports/ast_onnx ./ast_onnx
+python scripts/setup_m3_ast_onnx.py --src ./ast_onnx
+# → volumes/models/ast_onnx/  (입출력 계약·sha256 검증까지 수행)
 ```
 
 **기타 ONNX 모델 (M1/M2/M4/M5, 선택):**
@@ -348,7 +371,7 @@ curl http://localhost:8000/status
 ```powershell
 $env:PYTHONPATH="ai"
 python scripts/test_m3_m4_experts.py
-# [m3] result: ... env_sound_source: "hf-ast"
+# [m3] result: ... env_sound_source: "onnx"
 ```
 
 ---
@@ -399,8 +422,7 @@ rp5/
 ├── db/
 │   └── redis.conf
 ├── scripts/
-│   ├── download_m3_ast_hf.py   # M3 AST HF 가중치 다운로드
-│   ├── export_m3_ast_onnx.py   # (선택) AST ONNX 변환
+│   ├── setup_m3_ast_onnx.py   # M3 환경음 ONNX 설치 + 계약 검증
 │   ├── export_m1~m5_*.py       # M1/M2/M4/M5 ONNX export
 │   └── test_m3_m4_experts.py   # M1~M4 smoke test
 ├── docs/
@@ -409,7 +431,7 @@ rp5/
 ├── monitor.html                # 웹 대시보드 (마이크 M3/M4 테스트)
 └── volumes/
     └── models/                 # 모델 파일 (Git 제외)
-        └── ast_hf/             # M3 Hugging Face AST
+        └── ast_onnx/           # M3 환경음 AST 6-class ONNX
 ```
 
 ---
@@ -424,7 +446,7 @@ rp5/
 | GPU 첫 추론 ~6s 지연 | CUDA JIT 컴파일 | 정상 (이후 <2ms, 워밍업 자동 실행) |
 | `localhost` 간헐적 실패 | Windows IPv6 우선 | `127.0.0.1` 사용 |
 | MQTT 연결 안 됨 | mosquitto 미실행 | `docker compose ps` 확인 후 재시작 |
-| M3 `heuristic`만 출력 | `ast_hf` 미다운로드 | `python scripts/download_m3_ast_hf.py` |
+| M3 `heuristic`만 출력 | `ast_onnx` 미설치 | `python scripts/setup_m3_ast_onnx.py --verify-only` 로 확인 후 설치 |
 | M3 `expert_timeout` | CPU AST > 1s | `.env`에 `EXPERT_INFER_TIMEOUT_MS=10000` |
 | 원거리 소리 미검출 | VAD/게인 부족 | `VAD_THRESHOLD_DB=-58`, `M3_NORMALIZE_BELOW_PEAK` 조정 |
 | 마이크 권한 오류 | HTTPS/file:// 접근 | `http://127.0.0.1:8081/monitor.html` 사용 |
@@ -435,19 +457,26 @@ rp5/
 
 ### feature/ast-base (M3 AST 연동)
 
-**M3 환경음:**
+**M3 환경음 — 파인튜닝 ONNX 교체 (2026-09-21, 최신):**
+- 베이스 AudioSet 모델 + 키워드 매핑 → **SafeWave 데이터로 6-class 파인튜닝한 모델이 직접 분류**
+- 실행: transformers/torch 직접 추론 → **ONNX 런타임** (전처리를 그래프에 내장)
+- 모델: `volumes/models/ast_onnx/*.onnx` (330MB, opset 17). `scripts/setup_m3_ast_onnx.py`로 설치·검증
+- 출력 추가: `impact_prob`, `impact_alert`, `raw_peak`, `silence_gated`, `env_sound_probs`, `env_sound_model`
+- 판정 규칙 추가: 무음 게이트(`M3_SILENCE_GATE` 0.005), 낙상 임계값(`M3_IMPACT_THRESHOLD` 0.6)
+- 긴 입력에서 **충격음을 품는 3초**를 고르도록 변경(`M3_WINDOW_MODE=peak`) + 병합 구간 6초(`M3_AUDIO_MERGE_MS`)
+  → 실측 낙상 감지 13/50 → **46/50**
+- `experts.env_sound`에 `audio_merge_ms` 추가
+- 제거: `scripts/download_m3_ast_hf.py`, `scripts/export_m3_ast_onnx.py`, `ast_top_class`/`ast_top_confidence`
+- 테스트 추가: `tests/test_m3_onnx.py` (14건)
+- 명세: [`docs/m3-env-sound-onnx.md`](docs/m3-env-sound-onnx.md)
+
+**이전 (베이스 AST 연동):**
 - Hugging Face AST 직접 추론 (`AutoFeatureExtractor` + `ASTForAudioClassification`)
 - 모델: `MIT/ast-finetuned-audioset-10-10-0.4593` → `volumes/models/ast_hf/`
-- 환경음 라벨 6종: `silence`, `speech`, `impact`, `noise`, `alarm`, `unknown`
-- AudioSet 527클래스 → SafeWave 6종 매핑 (`music`/TV → `noise`)
+- AudioSet 527클래스 → SafeWave 6종 키워드 매핑 (`music`/TV → `noise`)
 - quiet gain 보정: `audio_main.py`, `monitor.html`, `m3_ast_base.py`
 - **`experts.env_sound`에 오디오 시각 필드 추가:** `audio_ts_ms`, `audio_ts_start_ms`, `audio_duration_ms`, `audio_window_ms` (상위 `ts_ms`는 CSI 기준)
-- `scripts/download_m3_ast_hf.py` 추가
-- `ai/requirements.txt`에 `torch` 추가
 - `docker-compose.yml`: `VAD_THRESHOLD_DB`, `EXPERT_INFER_TIMEOUT_MS`를 `.env`에서 읽도록 변경
-- 백엔드 연동 명세: [`docs/backend-handoff.md`](docs/backend-handoff.md)
-
-**향후:** 실내/시니어 데이터셋으로 AST 파인튜닝 시 6종 정확도 향상 및 라벨 세분화·추가 가능
 
 ### ver.0.0.2
 

@@ -75,6 +75,14 @@ services:
       - MQTT_BASE_TOPIC=safewave
       - MQTT_ENABLED=1
       - EXPERT_INFER_TIMEOUT_MS=${EXPERT_INFER_TIMEOUT_MS:-10000}
+      # M3 환경음 모델 (AST 6-class end-to-end ONNX)
+      - M3_ENV_SOUND_MODEL=${M3_ENV_SOUND_MODEL:-ast_onnx}
+      - M3_ENV_SOUND_ONNX=${M3_ENV_SOUND_ONNX:-}
+      - M3_SILENCE_GATE=${M3_SILENCE_GATE:-0.005}
+      - M3_IMPACT_THRESHOLD=${M3_IMPACT_THRESHOLD:-0.6}
+      # 3초보다 긴 입력에서 분석할 3초 선택: peak(충격 중심) / latest(마지막 3초)
+      - M3_WINDOW_MODE=${M3_WINDOW_MODE:-peak}
+      - M3_AUDIO_MERGE_MS=${M3_AUDIO_MERGE_MS:-6000}
     volumes:
       - ./volumes/models:/app/models
     networks:

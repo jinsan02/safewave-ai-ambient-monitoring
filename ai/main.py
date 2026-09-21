@@ -30,6 +30,10 @@ CONTEXT_WINDOW_MINUTES = int(os.getenv("CONTEXT_WINDOW_MINUTES", "10"))
 MINUTE_AGG_TTL_SECONDS = int(os.getenv("MINUTE_AGG_TTL_SECONDS", "3600"))
 EXPERT_LATEST_TTL_SECONDS = int(os.getenv("EXPERT_LATEST_TTL_SECONDS", "3600"))
 M3_AUDIO_WINDOW_MS = int(os.getenv("M3_AUDIO_WINDOW_MS", "3000"))
+# M3에 넘길 병합 길이. 모델 창(3초)보다 길게 주고 '어느 3초를 볼지'는 M3가 고른다
+# (낙상은 충격 뒤 신음·뒤척임이 이어져, 마지막 3초만 자르면 충격이 창 밖으로 밀린다).
+# 기본 6초 = audio-sensing VAD 최대 이벤트 길이(AUDIO_MAX_EVENT_SECONDS).
+M3_AUDIO_MERGE_MS = int(os.getenv("M3_AUDIO_MERGE_MS", "6000"))
 M4_AUDIO_WINDOW_MS = int(os.getenv("M4_AUDIO_WINDOW_MS", "5000"))
 SLM_MIN_INTERVAL_MS = int(os.getenv("SLM_MIN_INTERVAL_MS", "3000"))
 STREAM_START_ID = os.getenv("CSI_STREAM_START_ID", "0-0")
@@ -130,7 +134,7 @@ class AIEngine:
         env_sound_model = m3_ast_base.EnvSoundAnalysisModel(
             os.path.join(
                 model_dir,
-                os.getenv("M3_ENV_SOUND_MODEL", os.getenv("ACTIVITY_MODEL", "ast_hf")),
+                os.getenv("M3_ENV_SOUND_MODEL", os.getenv("ACTIVITY_MODEL", "ast_onnx")),
             )
         )
         _log(logging.INFO, "engine_init_step", step="m4_speech_ko")
@@ -427,9 +431,11 @@ def _attach_env_sound_timing(output: dict, audio_input: dict | None) -> dict:
 
     audio_ts_ms = audio_input.get("ts_ms")
     duration_ms = audio_input.get("duration_ms")
-    window_ms = audio_input.get("window_ms", M3_AUDIO_WINDOW_MS)
+    # audio_window_ms = 모델이 실제로 분석한 창(3초). merge 구간은 그보다 길 수 있다.
+    merge_ms = audio_input.get("window_ms", M3_AUDIO_MERGE_MS)
 
-    enriched["audio_window_ms"] = int(window_ms)
+    enriched["audio_window_ms"] = int(M3_AUDIO_WINDOW_MS)
+    enriched["audio_merge_ms"] = int(merge_ms)
     if audio_ts_ms is not None:
         enriched["audio_ts_ms"] = int(audio_ts_ms)
     else:
@@ -448,7 +454,7 @@ def _attach_env_sound_timing(output: dict, audio_input: dict | None) -> dict:
 def _build_expert_inputs(default_data, audio_events: list[dict]) -> tuple[dict, dict | None]:
     latest_audio = audio_events[-1] if audio_events else None
     expert_inputs = {
-        "env_sound": _merge_audio_window(audio_events, M3_AUDIO_WINDOW_MS),
+        "env_sound": _merge_audio_window(audio_events, max(M3_AUDIO_WINDOW_MS, M3_AUDIO_MERGE_MS)),
         "speech_ko": _merge_audio_window(audio_events, M4_AUDIO_WINDOW_MS) or latest_audio,
     }
     return expert_inputs, latest_audio
