@@ -235,10 +235,8 @@ M3_ENV_SOUND_MODEL=ast_onnx
 MQTT_BASE_TOPIC=safewave
 EXPERT_INFER_TIMEOUT_MS=10000
 
-# M3: 멀리서/작게 들리는 소리 보정
-M3_GAIN_NORMALIZE=1
-M3_NORMALIZE_BELOW_PEAK=0.15
-M3_TARGET_PEAK=0.9
+# M3 게인 보정은 ONNX 그래프 안에서 수행된다 (M3_GAIN_* 설정은 더 이상 읽지 않음).
+# 마이크 측 보정은 audio-sensing 쪽 AUDIO_* 변수로 조정한다.
 M3_AUDIO_WINDOW_MS=3000
 M3_AUDIO_MERGE_MS=6000
 M3_SILENCE_GATE=0.005
@@ -448,7 +446,7 @@ rp5/
 | MQTT 연결 안 됨 | mosquitto 미실행 | `docker compose ps` 확인 후 재시작 |
 | M3 `heuristic`만 출력 | `ast_onnx` 미설치 | `python scripts/setup_m3_ast_onnx.py --verify-only` 로 확인 후 설치 |
 | M3 `expert_timeout` | CPU AST > 1s | `.env`에 `EXPERT_INFER_TIMEOUT_MS=10000` |
-| 원거리 소리 미검출 | VAD/게인 부족 | `VAD_THRESHOLD_DB=-58`, `M3_NORMALIZE_BELOW_PEAK` 조정 |
+| 원거리 소리 미검출 | VAD 문턱 높음 | `VAD_THRESHOLD_DB=-58`, `AUDIO_NORMALIZE_BELOW_PEAK` 조정 |
 | 마이크 권한 오류 | HTTPS/file:// 접근 | `http://127.0.0.1:8081/monitor.html` 사용 |
 
 ---

@@ -151,6 +151,13 @@ model.infer({"waveform": waveform, "sample_rate": 16000})      # 권장 — 리�
 | 없음 / 빈 배열 | 추론하지 않고 `env_sound_source="no-audio"` 반환 |
 | 샘플레이트 ≠ 16 kHz | 선형 보간 리샘플 (안전 경로. `audio-sensing` 기본값은 16 kHz) |
 
+dict로 넘길 때 읽는 메타는 두 개다.
+
+| 키 | 쓰임 |
+|---|---|
+| `sample_rate` | 16 kHz가 아니면 리샘플 |
+| `raw_peak` | **게인 보정 전** 원본 최대 진폭. 무음 게이트 판정에 쓴다 (§3.5) |
+
 > **창 선택이 감지율을 좌우한다.** VAD 이벤트는 최대 6초인데(`AUDIO_MAX_EVENT_SECONDS`),
 > 낙상은 '쿵' 이후 신음·뒤척임이 이어져 이벤트가 길어진다. 이때 마지막 3초만 자르면
 > 정작 충격음이 창 밖으로 밀린다. 낙상 50개 실측:
@@ -195,7 +202,7 @@ model.infer({"waveform": waveform, "sample_rate": 16000})      # 권장 — 리�
 | `activity`, `activity_confidence` | | 기존 코드 호환용 별칭 |
 | `impact_prob` | float | **충격음 확률.** 알림 임계값 튜닝은 이 값으로 한다 |
 | `impact_alert` | bool | `impact_prob >= M3_IMPACT_THRESHOLD` 이고 게이트에 안 걸렸을 때 true |
-| `raw_peak` | float | 증폭 전 원본 최대 진폭 |
+| `raw_peak` | float | 게이트 판정에 쓴 peak (메타가 있으면 sensing의 보정 전 값) |
 | `silence_gated` | bool | 게이트 규칙으로 silence 확정됐는지 |
 | `env_sound_probs` | dict | 6종 전체 확률 (임계값 재계산·디버깅용) |
 | `env_sound_model` | str | 실제로 로드된 모델 파일명 |
@@ -223,6 +230,13 @@ model.infer({"waveform": waveform, "sample_rate": 16000})      # 권장 — 리�
 - **게이트(0.005)** — 학습 데이터에 silence 클래스가 없어 모델이 "조용함"을 직접 예측하지
   않는다. 그래서 증폭 전 원본 peak으로 규칙 판정한다. 스윕 실측으로 정한 값이다.
 - **임계값(0.6)** — 올리면 알림이 줄고 내리면 늘어난다. 환경 변수라 재배포 없이 조정된다.
+
+> **게이트는 반드시 '보정 전' peak으로 판정해야 한다.** `audio-sensing`은 VAD를 통과한
+> 조용한 이벤트를 전송 전에 peak 0.85까지 증폭한다(`AUDIO_NORMALIZE_BELOW_PEAK` 0.12,
+> `AUDIO_TARGET_PEAK` 0.85). 받은 파형으로 peak을 재면 조용한 생활음도 0.85로 올라와
+> **게이트가 사실상 발동하지 않는다.** 그래서 `audio-sensing`이 보정 전에 잰 원본 peak을
+> 이벤트 메타 `raw_peak`으로 함께 실어 보내고, M3는 그 값으로 판정한다.
+> 메타가 없으면(브라우저 업로드 등) ONNX가 돌려준 `raw_peak`으로 대신한다.
 
 ### 3.6 환경 변수
 

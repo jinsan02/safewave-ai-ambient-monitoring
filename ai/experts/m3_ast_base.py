@@ -108,14 +108,26 @@ class EnvSoundAnalysisModel:
     # ------------------------------------------------------------------ 전처리
 
     def _extract(self, input_data):
-        """(waveform, sample_rate) 추출. dict / ndarray 양쪽을 받는다."""
+        """(waveform, sample_rate, gate_peak) 추출. dict / ndarray 양쪽을 받는다.
+
+        gate_peak 는 sensing 이 **게인 보정 전에** 잰 원본 peak 이다. audio-sensing 은
+        조용한 이벤트를 전송 전에 0.85까지 증폭하므로, 받은 파형으로 peak 를 재면
+        무음 게이트가 무력화된다. 메타에 raw_peak 가 있으면 그것으로 판정한다.
+        """
         if input_data is None:
-            return None, self.sample_rate
+            return None, self.sample_rate, None
 
         sample_rate = self.sample_rate
+        gate_peak = None
         data = input_data
         if isinstance(input_data, dict):
             sample_rate = int(input_data.get("sample_rate") or self.sample_rate)
+            meta_peak = input_data.get("raw_peak")
+            if meta_peak is not None:
+                try:
+                    gate_peak = float(meta_peak)
+                except (TypeError, ValueError):
+                    gate_peak = None
             data = None
             for key in ("waveform", "samples", "audio", "pcm"):
                 value = input_data.get(key)
@@ -123,10 +135,10 @@ class EnvSoundAnalysisModel:
                     data = value
                     break
             if data is None:
-                return None, sample_rate
+                return None, sample_rate, gate_peak
 
         array = np.asarray(data, dtype=np.float32).reshape(-1)
-        return (array if array.size else None), sample_rate
+        return (array if array.size else None), sample_rate, gate_peak
 
     def _resample(self, waveform, sample_rate):
         """캡처가 16kHz가 아닐 때의 안전 경로 (audio-sensing 기본값은 16kHz)."""
@@ -169,12 +181,13 @@ class EnvSoundAnalysisModel:
         return waveform[start:start + need]
 
     def _preprocess(self, input_data):
-        waveform, sample_rate = self._extract(input_data)
+        """(모델 입력 [1, N], 게이트용 peak 또는 None) 반환."""
+        waveform, sample_rate, gate_peak = self._extract(input_data)
         if waveform is None:
-            return None
+            return None, gate_peak
         waveform = self._resample(waveform, sample_rate)
         waveform = self._fit_window(waveform)
-        return np.clip(waveform, -1.0, 1.0).reshape(1, -1).astype(np.float32)
+        return np.clip(waveform, -1.0, 1.0).reshape(1, -1).astype(np.float32), gate_peak
 
     # ------------------------------------------------------------------ 추론
 
@@ -247,7 +260,7 @@ class EnvSoundAnalysisModel:
         return result
 
     def infer(self, input_data):
-        data = self._preprocess(input_data)
+        data, gate_peak = self._preprocess(input_data)
         if data is None:
             return {
                 "env_sound_label": "silence",
@@ -271,17 +284,19 @@ class EnvSoundAnalysisModel:
 
         if onnx is None:
             label, confidence = self._heuristic_label(data)
-            return self._result(label, confidence, "heuristic",
-                                raw_peak=float(np.max(np.abs(data))))
+            peak = float(np.max(np.abs(data))) if gate_peak is None else gate_peak
+            return self._result(label, confidence, "heuristic", raw_peak=peak)
 
         # silence 게이트: 학습 데이터에 silence가 없어 모델이 '조용함'을 예측하지 않는다.
-        # 증폭 전 원본 peak으로 규칙 판정한다.
-        if self.silence_gate > 0 and onnx["raw_peak"] < self.silence_gate:
+        # 증폭 전 원본 peak으로 규칙 판정한다. sensing 이 보정 전 peak(raw_peak)을
+        # 실어 보냈으면 그 값을 쓰고, 없으면 그래프가 돌려준 값으로 판정한다.
+        peak = onnx["raw_peak"] if gate_peak is None else gate_peak
+        if self.silence_gate > 0 and peak < self.silence_gate:
             return self._result("silence", 1.0, "onnx",
-                                probs=onnx["probs"], raw_peak=onnx["raw_peak"], gated=True)
+                                probs=onnx["probs"], raw_peak=peak, gated=True)
 
         return self._result(onnx["label"], onnx["confidence"], "onnx",
-                            probs=onnx["probs"], raw_peak=onnx["raw_peak"])
+                            probs=onnx["probs"], raw_peak=peak)
 
 
 class ActivityClassificationModel(EnvSoundAnalysisModel):

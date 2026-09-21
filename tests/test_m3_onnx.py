@@ -51,7 +51,7 @@ class TestPreprocessing(unittest.TestCase):
         )
 
     def test_short_audio_is_front_padded_to_window(self):
-        data = self.model._preprocess(np.ones(1000, dtype=np.float32))
+        data, _ = self.model._preprocess(np.ones(1000, dtype=np.float32))
         self.assertEqual(data.shape, (1, WINDOW_SAMPLES))
         # 앞쪽이 0으로 채워지고 최근 소리가 끝에 남는다
         self.assertEqual(float(data[0, 0]), 0.0)
@@ -67,7 +67,7 @@ class TestPreprocessing(unittest.TestCase):
             """충격을 넣은 6초 버퍼 → 선택된 창에서 '창 끝까지 남은 시간'(초)."""
             six_seconds = np.zeros(SAMPLE_RATE * 6, dtype=np.float32)
             six_seconds[int(SAMPLE_RATE * impact_at_s)] = 1.0
-            data = self.model._preprocess(six_seconds)[0]
+            data = self.model._preprocess(six_seconds)[0][0]
             self.assertEqual(data.size, WINDOW_SAMPLES)
             self.assertEqual(float(np.max(np.abs(data))), 1.0, "충격음이 창 밖으로 잘렸다")
             return (WINDOW_SAMPLES - int(np.argmax(np.abs(data)))) / SAMPLE_RATE
@@ -83,7 +83,7 @@ class TestPreprocessing(unittest.TestCase):
         self.model.window_mode = "latest"
         try:
             signal = np.arange(WINDOW_SAMPLES * 2, dtype=np.float32) / (WINDOW_SAMPLES * 2)
-            data = self.model._preprocess(signal)
+            data, _ = self.model._preprocess(signal)
             np.testing.assert_allclose(data[0], signal[-WINDOW_SAMPLES:], atol=1e-6)
         finally:
             self.model.window_mode = "peak"
@@ -91,7 +91,7 @@ class TestPreprocessing(unittest.TestCase):
     def test_dict_input_with_sample_rate_is_resampled(self):
         # 8kHz 1.5초 = 12000 샘플 → 16kHz 3초 윈도우로 정규화
         payload = {"waveform": np.zeros(12000, dtype=np.float32), "sample_rate": 8000}
-        data = self.model._preprocess(payload)
+        data, _ = self.model._preprocess(payload)
         self.assertEqual(data.shape, (1, WINDOW_SAMPLES))
 
     def test_no_audio_returns_no_audio_source(self):
@@ -108,6 +108,20 @@ class TestPreprocessing(unittest.TestCase):
         self.assertEqual(result["env_sound_source"], "heuristic")
         self.assertIn(result["env_sound_label"], EnvSoundAnalysisModel.ENV_LABELS)
         self.assertFalse(result["impact_alert"])
+
+    def test_gate_uses_pre_gain_peak_from_metadata(self):
+        """sensing 이 조용한 이벤트를 0.85까지 증폭해 보내므로, 게이트는 받은 파형이
+        아니라 메타의 raw_peak(보정 전)로 판정해야 한다."""
+        loud_after_gain = (np.ones(WINDOW_SAMPLES, dtype=np.float32) * 0.85)
+        _, gate_peak = self.model._preprocess(
+            {"waveform": loud_after_gain, "sample_rate": SAMPLE_RATE, "raw_peak": 0.0031}
+        )
+        self.assertAlmostEqual(gate_peak, 0.0031, places=6)
+        self.assertLess(gate_peak, self.model.silence_gate)
+
+    def test_gate_peak_is_none_without_metadata(self):
+        _, gate_peak = self.model._preprocess(np.ones(WINDOW_SAMPLES, dtype=np.float32) * 0.5)
+        self.assertIsNone(gate_peak)
 
     def test_alias_class_still_available(self):
         self.assertTrue(issubclass(ActivityClassificationModel, EnvSoundAnalysisModel))
@@ -167,6 +181,17 @@ class TestOnnxInference(unittest.TestCase):
                     "raw_peak", "impact_prob", "impact_alert", "silence_gated"):
             self.assertIn(key, result)
         self.assertEqual(result["activity"], result["env_sound_label"])
+
+    def test_metadata_raw_peak_triggers_gate_even_for_loud_waveform(self):
+        rng = np.random.default_rng(5)
+        loud = (rng.normal(size=WINDOW_SAMPLES) * 0.4).astype(np.float32)
+        result = self.model.infer(
+            {"waveform": loud, "sample_rate": SAMPLE_RATE, "raw_peak": 0.002}
+        )
+        self.assertTrue(result["silence_gated"])
+        self.assertEqual(result["env_sound_label"], "silence")
+        self.assertFalse(result["impact_alert"])
+        self.assertAlmostEqual(result["raw_peak"], 0.002, places=6)
 
     def test_dict_and_array_inputs_agree(self):
         rng = np.random.default_rng(3)
