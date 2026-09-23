@@ -212,6 +212,15 @@ class Collector:
 
 # ── 오디오 주입 ─────────────────────────────────────────────────
 def load_waveform(path):
+    if str(path).lower().endswith(".wav"):
+        # 16 kHz mono 16-bit WAV(평가 세트 형식)는 ffmpeg 없이 읽는다(노트북 Windows 호스트).
+        import wave
+        with wave.open(str(path), "rb") as w:
+            if (w.getnchannels(), w.getsampwidth(), w.getframerate()) == (1, 2, 16000):
+                import array
+                pcm = array.array("h")
+                pcm.frombytes(w.readframes(w.getnframes()))
+                return [round(v / 32768.0, 5) for v in pcm]
     raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-f", "f32le", "-ac", "1", "-ar", "16000", "-"],
                          capture_output=True, check=True).stdout
     import array
