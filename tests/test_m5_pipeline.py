@@ -224,6 +224,31 @@ class M5ResultConsistencyTests(unittest.TestCase):
         self.assertEqual(context["warning_count"], 1)
         self.assertEqual(context["sampled_result_points"], 0)
 
+    def test_extract_risk_score_ignores_digits_inside_other_numbers(self):
+        # JSON 해석 실패 시 예비 경로: 'hr=118'의 1을 점수 1.0으로 읽으면 critical 오판이 된다.
+        logic = qwen_15b.QwenLogic.__new__(qwen_15b.QwenLogic)
+        self.assertEqual(logic._extract_risk_score('{"risk_score": 0.3, "reason": "심박이상(hr=118'), 0.3)
+        self.assertEqual(logic._extract_risk_score("심박이상(hr=118) 119 호출"), 0.5)
+        self.assertEqual(logic._extract_risk_score("score 0.72 경고"), 0.72)
+        self.assertEqual(logic._extract_risk_score("risk_score: 1.0"), 1.0)
+
+    def test_warmup_logs_error_when_model_unavailable(self):
+        class FallbackQwen:
+            session = None
+            tokenizer = None
+
+            def evaluate(self, _results):
+                return {"slm_mode": "fallback"}
+
+        events = []
+        original = qwen_service._log
+        qwen_service._log = lambda level, event, **fields: events.append(event)
+        try:
+            qwen_service._warmup_qwen(FallbackQwen())
+        finally:
+            qwen_service._log = original
+        self.assertIn("qwen_unavailable_fallback_only", events)
+
     def test_state_line_marks_missing_vitals_instead_of_zero(self):
         # M2 off → vital {}: '심박:0'이면 모델이 심정지로 읽는다(노트북 실측 critical 오판).
         logic = qwen_15b.QwenLogic.__new__(qwen_15b.QwenLogic)

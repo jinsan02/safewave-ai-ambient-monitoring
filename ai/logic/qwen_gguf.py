@@ -104,7 +104,7 @@ class QwenLogic(_QwenLogic15B):
             from transformers import AutoTokenizer
             self.tokenizer = AutoTokenizer.from_pretrained(self._model_dir, trust_remote_code=True)
         except Exception as e:
-            _LOGGER.warning("qwen_gguf_tokenizer_failed error=%s", e)
+            _LOGGER.error("qwen_gguf_tokenizer_failed error=%s", e)
             self.tokenizer = None
 
     def _evaluate_with_qwen(self, messages):

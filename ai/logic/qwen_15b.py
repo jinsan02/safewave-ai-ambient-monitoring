@@ -403,13 +403,15 @@ class QwenLogic:
 
     def _extract_risk_score(self, response_text):
         """응답에서 위험도 점수 추출"""
-        # 첫 번째: 0~1 사이의 소수 찾기
-        match = re.search(r'0\.\d+|1\.0|1', response_text.strip())
+        # 첫 번째: "risk_score" 값, 없으면 독립된 0.x/1.0 소수.
+        # 다른 숫자(hr=118, 119)의 일부를 점수로 읽지 않도록 앞뒤가 숫자·점이 아닌 것만 받는다.
+        match = re.search(r'"?risk_score"?\s*[:=]\s*([01](?:\.\d+)?)', response_text) \
+            or re.search(r'(?<![\d.])(0\.\d+|1\.0+)(?![\d.])', response_text)
         if match:
             try:
-                score = float(match.group())
+                score = float(match.group(1))
                 return float(np.clip(score, 0.0, 1.0))
-            except:
+            except ValueError:
                 pass
 
         # 두 번째: 텍스트 기반 휴리스틱

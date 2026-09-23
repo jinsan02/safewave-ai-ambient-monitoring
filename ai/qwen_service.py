@@ -85,8 +85,13 @@ def _warmup_qwen(qwen: QwenLogic):
         "speech_ko": {"keywords": [], "stt_confidence": 0.0, "speech_detected": False, "infer_confidence": 0.0},
     }
     try:
-        qwen.evaluate(dummy)
+        warm = qwen.evaluate(dummy)
         _log(logging.INFO, "qwen_warmup_completed")
+        if warm.get("slm_mode") != "qwen":
+            # 모델·토크나이저 로드 실패 시 서비스는 계속 돌지만 모든 판단이 규칙 대체가 된다.
+            _log(logging.ERROR, "qwen_unavailable_fallback_only",
+                 session_loaded=bool(getattr(qwen, "session", None)),
+                 tokenizer_loaded=bool(getattr(qwen, "tokenizer", None)))
     except Exception as exc:
         _log(logging.WARNING, "qwen_warmup_failed", error=str(exc))
 
@@ -228,7 +233,8 @@ def run():
                      gate_risk_score=snapshot.get("risk_score", 0.0),
                      risk_score=fused.get("risk_score", snapshot.get("risk_score", 0.0)),
                      risk_level=fused.get("risk_level", "?"),
-                     qwen_infer_ms=fused.get("qwen_infer_ms"))
+                     qwen_infer_ms=fused.get("qwen_infer_ms"),
+                     slm_mode=fused.get("slm_mode"))
             except Exception as exc:
                 _log(logging.ERROR, "qwen_failed", error=str(exc))
             finally:
