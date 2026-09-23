@@ -509,7 +509,7 @@ class Phase2TranscriptTests(unittest.TestCase):
 
 
 class GuardianAppContractTests(unittest.TestCase):
-    """보호자 앱이 기대하는 푸시·요약 계약 (docs/app/guardian_app_kit/docs/02_API_SPEC.md)."""
+    """보호자 앱이 기대하는 푸시·요약 계약 (handoff/guardian_app_kit/docs/02_API_SPEC.md)."""
 
     def _notifier(self):
         sent = []

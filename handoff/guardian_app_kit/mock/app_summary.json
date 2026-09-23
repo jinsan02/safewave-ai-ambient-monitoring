@@ -1,0 +1,21 @@
+{
+  "risk_level": "normal",
+  "risk_score": 0.12,
+  "data_age_s": 0.4,
+  "nodes_online": 3,
+  "nodes_expected": 3,
+  "server": "ok",
+  "fcm_ready": true,
+  "last_alert": {
+    "ts_ms": 1789650175827,
+    "node_id": 3,
+    "summary": "낙상 확정(M1 3/5)",
+    "slm_mode": "rule",
+    "msg_id": "1789650175827-0"
+  },
+  "monitoring": {
+    "ai_enabled": true,
+    "m1": true
+  },
+  "ts_ms": 1789650400000
+}

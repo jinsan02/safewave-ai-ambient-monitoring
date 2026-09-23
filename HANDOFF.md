@@ -102,7 +102,7 @@ docker logs -f rp5-ai-experts | grep m1_gate_stats     # 60초마다
 | 자원 | 기본 Core 5개 서비스(audio/voice/integration/home은 profile). 스레드 M3 1·M4 2·M5 2, BLAS 1, M5 캐시 64MB. ai-experts는 CPU 전용 torch | `docker-compose.yml` |
 | 관측 | 60초 `m1_gate_stats`, 대시보드에 노드·규칙 경보·M1 투표 표시, 웹소켓은 노드별 최신·위험 변화 즉시 전송, 대화 내용은 로그에 남기지 않음 | — |
 
-테스트: `python -m unittest tests.test_m5_pipeline` (27개, 무거운 서비스 모듈은 AST로 함수만 추출).
+테스트: `python -m unittest tests.test_m5_pipeline` (28개, 무거운 서비스 모듈은 AST로 함수만 추출).
 
 ## 4. 도구
 
@@ -117,6 +117,24 @@ docker logs -f rp5-ai-experts | grep m1_gate_stats     # 60초마다
 | `reports/laptop/compose.laptop.yml` (Git 제외) | 노트북 RPi5 유사 CPU 한도 override. 기록 `reports/laptop/LAPTOP_TEST_LOG.md` |
 | 대시보드 | 노트북 `python -m http.server 8081` → `http://localhost:8081/monitor.html?api=http://192.168.1.2:8000` (노트북 스택은 `api=http://localhost:8000`). 자원 패널 제목의 주소로 어느 장비 값인지 확인 |
 
+## 4-1. 보호자 앱 연동 (09-23)
+
+개발 키트: `handoff/guardian_app_kit/` (README, 명세 7종, 프롬프트, 목 데이터). Git 추적(`handoff/`), 바탕화면 zip으로도 전달.
+
+| 서버 변경 | 내용 | 설정 |
+|---|---|---|
+| 푸시 형식 | `FCM_DATA_ONLY=true`면 data 전용 high priority(제목·본문도 data). false(기본)면 기존 시스템 알림. **앱 배포와 같은 날 true로 전환** — 시스템 알림 형식은 앱이 꺼져 있으면 앱 코드가 실행되지 않아 전체 화면 경보가 불가 | `FCM_DATA_ONLY` |
+| 푸시 필드 | 응급 `type=emergency`, `msg_id`(= `ai:emergency` 스트림 ID), `slm_mode` / 응답 확인 `voice_ok` + `msg_id` / `heartbeat` | — |
+| `GET /app/summary` | 홈 요약(위험도, 데이터 지연, 설치 센서 온라인 수, 서버 상태, FCM 준비, 최근 경보). 전사·생체신호 없음 | `APP_EXPECTED_NODES=1,2,3` |
+| `POST /alerts/{msg_id}/feedback` | 오탐·미탐 신고 → 기존 `mqtt:feedback:last`(TTL 3600) → **1시간 동안 M5 점수 ±0.08**. 규칙 경보는 영향 없음 | — |
+| `DELETE /auth/register-token/{id}` | 토큰 삭제 | — |
+| `GET /history?before=` | 페이지 나누기, 200건씩 필요한 만큼만 읽음 | — |
+| 정상 동작 신호 | `HEARTBEAT_INTERVAL_SEC`마다 heartbeat 푸시(기본 0=끔, 권장 86400) | `HEARTBEAT_INTERVAL_SEC` |
+
+확인: 노트북 Docker에서 API 재빌드 후 새 엔드포인트 실제 호출, 단위 테스트 3개 추가. FCM 실제 발송은 Firebase 키가 없어 미확인.
+iOS용 APNs 설정은 발송 코드에서 뺐다(대상 기기 Android).
+결정 대기: S2 확인 기능(새 키 `alert:ack:{msg_id}`), S6 인증, 원격 접속 방식(키트 `docs/05_OPEN_DECISIONS.md`).
+
 ## 5. 팀 연계
 
 | 담당 | 상태 | 문서 |
@@ -124,6 +142,7 @@ docker logs -f rp5-ai-experts | grep m1_gate_stats     # 60초마다
 | 김태연 M1·M2 | 2차 답변 반영 완료. 회신 초안(슬롯 충돌 처리·격자 원점 질문) **미발송**. 5노드 2차 수집 예정(`M1_REQUIRED_NODES`만 변경), 다음 모델은 창끝 게이트 불필요 가능. CSI2 792B 진단 포맷은 펌웨어 공유 후, 10/05 종료 | `handoff/rpi5-20260917/TO_KIMTAEYEON_M1_M2.md`, `REPLY_TO_KIMTAEYEON_M1.md`, `REPLY2_TO_KIMTAEYEON_M1.md` |
 | 이대경 M4 | INT8 기본값. `lang_to_id` 포함 설정·짧은 발화 설정·오인식 개선 요청 중 | `handoff/rpi5-20260917/TO_LEEDAEGYEONG_M4.md` |
 | 소민섭 M3 | v3.4 인계 대기(log-Mel 전처리, 라벨 이름 매핑, 임계 0.6) | — |
+| 소민섭 보호자 앱 | 개발 키트 전달(Android, Kotlin + Compose 권장). 서버 쪽 S0·S1·S3·S4·S5·S7·S9 구현 완료, S2(확인, 새 Redis 키) 결정 대기 | `handoff/guardian_app_kit/` |
 
 팀원 브랜치(`feature/*` 등)에는 커밋하지 않는다. 병합은 한 번에 하나씩, 병합 후 같은 방법으로 측정한다.
 

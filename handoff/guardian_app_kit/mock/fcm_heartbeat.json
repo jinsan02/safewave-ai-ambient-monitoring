@@ -1,0 +1,13 @@
+{
+  "android": {
+    "priority": "high",
+    "ttl": "600s"
+  },
+  "data": {
+    "type": "heartbeat",
+    "nodes_online": "3",
+    "nodes_expected": "3",
+    "title": "SafeWave 정상 동작",
+    "body": "SafeWave가 정상 동작 중입니다 (센서 3/3)."
+  }
+}

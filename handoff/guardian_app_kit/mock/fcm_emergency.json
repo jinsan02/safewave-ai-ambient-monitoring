@@ -1,0 +1,20 @@
+{
+  "_note": "FCM_DATA_ONLY=true (앱 배포 후) — 서버 실제 구성",
+  "android": {
+    "priority": "high",
+    "ttl": "600s"
+  },
+  "data": {
+    "type": "emergency",
+    "risk_score": "0.85",
+    "risk_level": "critical",
+    "emergency": "True",
+    "summary": "낙상 확정(M1 3/5)",
+    "ts_ms": "1789650175827",
+    "node_id": "3",
+    "msg_id": "1789650175827-0",
+    "slm_mode": "rule",
+    "title": "응급 상황 감지",
+    "body": "[노드 3] 낙상 확정(M1 3/5) (위험 점수 0.85) - 즉시 연락해 확인하세요."
+  }
+}

@@ -1,0 +1,38 @@
+[
+  {
+    "ts_ms": 1789650368220,
+    "node_id": 1,
+    "risk_score": 1.0,
+    "risk_level": "critical",
+    "emergency": true,
+    "summary": "넘어졌다는 음성과 충격음이 함께 감지됨",
+    "slm_mode": "qwen",
+    "qwen_reason": "넘어졌다는 음성과 충격음이 함께 감지됨",
+    "_id": "1789650368220-0",
+    "_ts": 1789650368.22
+  },
+  {
+    "ts_ms": 1789650175827,
+    "node_id": 3,
+    "risk_score": 0.85,
+    "risk_level": "critical",
+    "emergency": true,
+    "summary": "낙상 확정(M1 3/5)",
+    "slm_mode": "rule",
+    "qwen_reason": "낙상 확정(M1 3/5)",
+    "_id": "1789650175827-0",
+    "_ts": 1789650175.827
+  },
+  {
+    "ts_ms": 1789649990000,
+    "node_id": 2,
+    "risk_score": 0.68,
+    "risk_level": "warning",
+    "emergency": true,
+    "summary": "",
+    "slm_mode": "fallback",
+    "qwen_reason": null,
+    "_id": "1789649990000-0",
+    "_ts": 1789649990.0
+  }
+]

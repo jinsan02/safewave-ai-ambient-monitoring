@@ -1,0 +1,15 @@
+{
+  "risk_level": null,
+  "risk_score": null,
+  "data_age_s": null,
+  "nodes_online": 0,
+  "nodes_expected": 3,
+  "server": "ok",
+  "fcm_ready": false,
+  "last_alert": null,
+  "monitoring": {
+    "ai_enabled": true,
+    "m1": true
+  },
+  "ts_ms": 1790144821499
+}

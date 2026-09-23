@@ -1,0 +1,47 @@
+{
+  "node_1": {
+    "status": "online",
+    "age_s": 0.01,
+    "loss_rate": 0.0107,
+    "rx": 41835,
+    "lost": 451,
+    "rssi": -30
+  },
+  "node_2": {
+    "status": "online",
+    "age_s": 0.0,
+    "loss_rate": 0.0101,
+    "rx": 41858,
+    "lost": 428,
+    "rssi": -34
+  },
+  "node_3": {
+    "status": "online",
+    "age_s": 0.01,
+    "loss_rate": 0.0108,
+    "rx": 41828,
+    "lost": 458,
+    "rssi": -38
+  },
+  "node_4": {
+    "status": "offline",
+    "age_s": null,
+    "loss_rate": 0.0,
+    "rx": 0,
+    "lost": 0
+  },
+  "node_5": {
+    "status": "offline",
+    "age_s": null,
+    "loss_rate": 0.0,
+    "rx": 0,
+    "lost": 0
+  },
+  "node_6": {
+    "status": "offline",
+    "age_s": null,
+    "loss_rate": 0.0,
+    "rx": 0,
+    "lost": 0
+  }
+}

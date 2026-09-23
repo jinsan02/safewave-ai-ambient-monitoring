@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "redis": {
+    "connected": true,
+    "used_memory": 46137344,
+    "used_memory_human": "44.00M",
+    "maxmemory": 536870912,
+    "usage_ratio": 0.0859,
+    "warning": false,
+    "critical": false
+  },
+  "ts_ms": 1789650180000
+}

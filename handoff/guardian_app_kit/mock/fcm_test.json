@@ -1,0 +1,11 @@
+{
+  "android": {
+    "priority": "high",
+    "ttl": "600s"
+  },
+  "data": {
+    "type": "test",
+    "title": "✅ RP5 알림 테스트",
+    "body": "갤럭시 플립 4와 RP5 서버가 정상 연결됐습니다."
+  }
+}

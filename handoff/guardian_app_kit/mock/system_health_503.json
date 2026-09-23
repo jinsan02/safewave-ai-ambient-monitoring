@@ -1,0 +1,7 @@
+{
+  "status": "degraded",
+  "redis": {
+    "connected": false,
+    "error": "Connection refused"
+  }
+}

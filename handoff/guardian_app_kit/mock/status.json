@@ -1,0 +1,87 @@
+{
+  "ts_ms": 1789650175827,
+  "node_id": 3,
+  "experts": {
+    "fall": {
+      "fall_score": 0.91,
+      "fall_detected": true,
+      "window_fall_detected": true,
+      "fall_votes": 3,
+      "fall_vote_samples": 5,
+      "fall_vote_required": 3,
+      "fall_vote_window": 5,
+      "input_status": "ready",
+      "insufficient_input": false,
+      "infer_confidence": 0.9
+    },
+    "vital": {
+      "heart_rate": 118.0,
+      "breathing_rate": 16.0,
+      "infer_confidence": 0.0
+    },
+    "env_sound": {
+      "label": "impact",
+      "env_sound_label": "impact",
+      "confidence": 0.72,
+      "env_sound_confidence": 0.72,
+      "audio_ts_ms": 1789650174100,
+      "audio_duration_ms": 1800
+    },
+    "speech_ko": {
+      "speech_detected": true,
+      "keywords": [
+        "살려"
+      ],
+      "transcript_ko": "(표시 금지 — 개인정보)",
+      "stt_confidence": 0.8
+    }
+  },
+  "audio": {
+    "ts_ms": 1789650174100,
+    "sample_rate": 16000,
+    "duration_ms": 1800,
+    "peak_db": -12.4
+  },
+  "risk": {
+    "score": 0.65,
+    "level": "warning",
+    "emergency": false
+  },
+  "risk_score": 0.65,
+  "risk_level": "warning",
+  "emergency": false,
+  "ai_enabled": true,
+  "models": {
+    "m1": true,
+    "m2": false,
+    "m3": true,
+    "m4": true,
+    "m5": true
+  },
+  "context_window": {
+    "recent_warning_count": 1
+  },
+  "slm_invoked": false,
+  "slm_needed": false,
+  "rule_alert": true,
+  "is_outlier": false,
+  "correlated_with_history": false,
+  "qwen_reason": null,
+  "slm_mode": null,
+  "emergency_breakdown": {
+    "fall": 1.0,
+    "vital": 0.0,
+    "sound": 0.62,
+    "speech": 0.0,
+    "fall_consensus_bypass": true
+  },
+  "expert_latency_ms": {
+    "fall": 4.7,
+    "vital": 0.1
+  },
+  "model_latency_ms": {
+    "qwen": null
+  },
+  "_id": "1789650175827-0",
+  "_ts": 1789650175.827
+}

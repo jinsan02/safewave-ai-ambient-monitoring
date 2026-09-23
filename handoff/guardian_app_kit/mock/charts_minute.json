@@ -1,0 +1,18 @@
+[
+  {
+    "ts": 1789650060,
+    "risk_score_avg": 0.21,
+    "heart_rate_avg": null,
+    "breathing_rate_avg": null,
+    "slm_invoked_count": 0,
+    "samples": 1800
+  },
+  {
+    "ts": 1789650120,
+    "risk_score_avg": 0.48,
+    "heart_rate_avg": null,
+    "breathing_rate_avg": null,
+    "slm_invoked_count": 1,
+    "samples": 1795
+  }
+]

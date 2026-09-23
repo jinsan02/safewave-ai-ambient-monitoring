@@ -1,0 +1,27 @@
+{
+  "_note": "FCM_DATA_ONLY=false (현재 기본). 앱 백그라운드면 시스템 트레이가 표시, onMessageReceived 미호출",
+  "notification": {
+    "title": "응급 상황 감지",
+    "body": "[노드 3] 낙상 확정(M1 3/5) (위험 점수 0.85) - 즉시 연락해 확인하세요."
+  },
+  "android": {
+    "priority": "high",
+    "ttl": "600s",
+    "notification": {
+      "channel_id": "emergency_alarm",
+      "priority": "max",
+      "visibility": "public"
+    }
+  },
+  "data": {
+    "type": "emergency",
+    "risk_score": "0.85",
+    "risk_level": "critical",
+    "emergency": "True",
+    "summary": "낙상 확정(M1 3/5)",
+    "ts_ms": "1789650175827",
+    "node_id": "3",
+    "msg_id": "1789650175827-0",
+    "slm_mode": "rule"
+  }
+}
