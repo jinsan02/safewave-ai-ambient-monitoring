@@ -11,11 +11,13 @@ def get_ort_providers():
 	# ORT_USE_GPU=1: DML(Windows/DX12) → CUDA → CPU 순서로 시도.
 	# 사용 불가 EP는 ORT가 자동으로 건너뜀. RPi5(둘 다 없음)는 CPU fallback.
 	if os.getenv("ORT_USE_GPU", "0") == "1":
-		return [
+		# 설치된 EP만 남긴다. M4(optimum)는 첫 항목을 provider 이름으로 쓰므로 없는 EP가 앞에 오면 로드에 실패한다.
+		available = set(ort.get_available_providers())
+		return [p for p in (
 			"DmlExecutionProvider",
 			("CUDAExecutionProvider", {"do_copy_in_default_stream": True}),
 			"CPUExecutionProvider",
-		]
+		) if (p[0] if isinstance(p, tuple) else p) in available]
 	return ["CPUExecutionProvider"]
 
 

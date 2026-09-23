@@ -62,8 +62,9 @@ class WhisperSmallModel:
                 kwargs["use_cache"] = False
                 kwargs["use_io_binding"] = False
 
-            if providers[0] != "CPUExecutionProvider":
-                kwargs["provider"] = providers[0]
+            first = providers[0][0] if isinstance(providers[0], tuple) else providers[0]
+            if first != "CPUExecutionProvider":
+                kwargs["provider"] = first
 
             # encoder/decoder/decoder_with_past 3세션 전부에 스레드·스핀 설정 적용
             # 세션별 스핀을 제한하기 위한 설계. RPi5의 post-change 절감량은 별도 측정 필요.
@@ -75,6 +76,8 @@ class WhisperSmallModel:
                 model=model,
                 tokenizer=processor.tokenizer,
                 feature_extractor=processor.feature_extractor,
+                # 지정하지 않으면 pipeline이 모델을 CPU로 옮겨 CUDA EP가 꺼진다. CPU 모드에서는 cpu 그대로.
+                device=model.device,
             )
             # asr_pipe가 encoder+decoder를 모두 보유 → 단독 encoder 세션 해제 (337MB 절감)
             self.session = None

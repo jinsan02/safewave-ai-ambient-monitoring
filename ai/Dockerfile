@@ -38,23 +38,53 @@ ENV SLM_BACKEND=gguf \
 CMD ["python", "qwen_service.py"]
 
 
-FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 AS gpu-runtime
+# ── GPU 런타임 — 노트북 비교 실험용(RPi5 미사용) ──────────────────────────────
+# RTX 50 시리즈(Blackwell, 연산 능력 12.0)는 CUDA 12.8 이상이 필요하다.
+# onnxruntime-gpu 1.22+ PyPI 휠은 CUDA 12 + cuDNN 9 빌드다. torch도 CUDA(cu128) 휠: M4(optimum)가
+# 디코더 출력을 torch 텐서로 모델 장치에 올리므로 CPU 전용 torch로는 GPU 추론이 되지 않는다.
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04 AS gpu-runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y \
 	python3 \
 	python3-pip \
-	python3-venv \
-	build-essential \
 	libgomp1 \
 	&& rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir --timeout 300 -r requirements.txt
+RUN pip3 install --no-cache-dir --timeout 900 torch --index-url https://download.pytorch.org/whl/cu128
+RUN sed 's/^onnxruntime-gpu==.*/onnxruntime-gpu==1.22.0/' requirements.txt > requirements.gpu.txt \
+	&& pip3 install --no-cache-dir --timeout 300 -r requirements.gpu.txt
 
 COPY . .
 
 CMD ["python3", "main.py"]
+
+
+# ── GGUF(llama.cpp) CUDA 런타임 — 노트북 GPU 실험용 ai-qwen(M5) ─────────────────
+# 빌드에는 nvcc가 필요해 devel 이미지에서 휠만 만들고 gpu-runtime에 설치한다.
+FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04 AS gguf-cuda-build
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y python3 python3-pip cmake ninja-build git \
+	&& rm -rf /var/lib/apt/lists/* \
+	&& pip3 install --no-cache-dir -U pip
+# 빌드 컨테이너에는 GPU 드라이버가 없으므로 libcuda는 CUDA 스텁으로 링크한다.
+RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1 \
+	&& LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:$LD_LIBRARY_PATH \
+	CMAKE_ARGS="-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=120" \
+	pip3 wheel --no-deps --wheel-dir /wheels "llama-cpp-python>=0.3.0"
+
+FROM gpu-runtime AS gguf-gpu-runtime
+
+COPY --from=gguf-cuda-build /wheels /wheels
+RUN pip3 install --no-cache-dir /wheels/*.whl diskcache jinja2 typing-extensions && rm -rf /wheels
+
+ENV SLM_BACKEND=gguf \
+	SLM_MODEL=qwen_15b_gguf_q5 \
+	SLM_TOKENIZER=qwen_15b
+
+CMD ["python3", "qwen_service.py"]

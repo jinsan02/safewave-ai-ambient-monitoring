@@ -77,6 +77,8 @@ class QwenLogic(_QwenLogic15B):
                 model_path=self._gguf_file,
                 n_ctx=self.n_ctx,
                 n_threads=self.n_threads,
+                # 노트북 GPU 실험용(gguf-gpu-runtime). CPU 빌드에서는 0 외 값이 무시된다.
+                n_gpu_layers=int(os.getenv("QWEN_GGUF_GPU_LAYERS", "0")),
                 logits_all=False,
                 verbose=False,
             )
