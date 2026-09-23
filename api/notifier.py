@@ -29,6 +29,10 @@ if not firebase_admin._apps and os.path.exists(_KEY_PATH):
 FCM_READY = bool(firebase_admin._apps)
 
 _RISK_THRESHOLD = float(os.getenv("FCM_RISK_THRESHOLD", "0.6"))
+# true: data 전용 고우선순위 메시지. 앱이 꺼져 있어도 onMessageReceived가 호출돼
+# 전체 화면 경보·반복 사이렌을 앱이 직접 만든다. 보호자 앱 배포 전에는 false(시스템 알림 표시).
+FCM_DATA_ONLY = os.getenv("FCM_DATA_ONLY", "false").lower() in ("1", "true", "yes")
+FCM_TTL_SECONDS = int(os.getenv("FCM_TTL_SECONDS", "600"))
 
 
 # ── 스키마 ───────────────────────────────────────────────────
@@ -81,52 +85,84 @@ def send_risk_notification(token: str, risk_score: float, risk_level: str,
     title, body = build_risk_message(
         risk_score, risk_level, emergency, extra.get("summary"), extra.get("node_id")
     )
-    payload = {"risk_score": risk_score, "risk_level": risk_level, "emergency": emergency}
-    if extra:
-        payload.update(extra)
     is_critical = risk_level == "critical" or emergency or risk_score >= 0.85
+    payload = {"type": "emergency" if is_critical else "warning",
+               "risk_score": risk_score, "risk_level": risk_level, "emergency": emergency}
+    payload.update({k: v for k, v in extra.items() if v is not None})
     return _send_fcm(token, title, body, payload, critical=is_critical)
 
 
-def send_voice_ok_notification(token: str, node_id: Any, ts_ms: int, transcript: str | None) -> str:
+def send_voice_ok_notification(token: str, node_id: Any, ts_ms: int, transcript: str | None,
+                               msg_id: str | None = None) -> str:
     """응급 알림 뒤 대상자가 괜찮다고 답한 경우의 후속 알림. 응급 채널을 쓰지 않는다."""
     said = f" (\"{transcript[:30]}\")" if transcript else ""
     body = f"[노드 {node_id}] 대상자가 음성으로 괜찮다고 응답했습니다{said}. 가능하면 전화로 한 번 더 확인하세요."
     payload = {"type": "voice_ok", "node_id": node_id, "ts_ms": ts_ms, "emergency": False}
+    if msg_id:
+        payload["msg_id"] = msg_id
     return _send_fcm(token, "대상자 응답 확인", body, payload, critical=False)
+
+
+def send_heartbeat_notification(token: str, nodes_online: int, nodes_expected: int) -> str:
+    """정기 정상 동작 신호. 앱은 이 신호가 끊기면 시스템 정지를 의심한다."""
+    body = f"SafeWave가 정상 동작 중입니다 (센서 {nodes_online}/{nodes_expected})."
+    payload = {"type": "heartbeat", "nodes_online": nodes_online, "nodes_expected": nodes_expected}
+    return _send_fcm(token, "SafeWave 정상 동작", body, payload, critical=False)
+
+
+def build_fcm_fields(title: str, body: str, extra: dict[str, Any] | None, critical: bool,
+                     data_only: bool, ttl_seconds: int = 600) -> dict[str, Any]:
+    """FCM 메시지 구성 값을 만든다(Firebase 객체 생성과 분리한 순수 함수).
+
+    data 값은 FCM 규격상 모두 문자열이다. data 전용이면 제목·본문도 data에 넣어 앱이 알림을 만든다.
+    """
+    data = {k: str(v) for k, v in (extra or {}).items() if v is not None}
+    fields: dict[str, Any] = {
+        "data": data,
+        "ttl_seconds": ttl_seconds,
+        "channel_id": "emergency_alarm" if critical else "safety_alert",
+    }
+    if data_only:
+        data["title"] = title
+        data["body"] = body
+        fields["notification"] = None
+    else:
+        fields["notification"] = (title, body)
+    return fields
 
 
 # ── 공통 전송 함수 ────────────────────────────────────────────
 def _send_fcm(token: str, title: str, body: str, extra: dict[str, Any] | None = None,
               critical: bool = False) -> str:
-    if extra is None:
-        extra = {}
     if not firebase_admin._apps:
         raise RuntimeError("Firebase not initialized — key file missing")
 
-    # Android: emergency_alarm 채널 + 잠금화면 노출 + 최고 우선순위
+    fields = build_fcm_fields(title, body, extra, critical, FCM_DATA_ONLY, FCM_TTL_SECONDS)
+    if fields["notification"] is None:
+        # data 전용: 알림 표시는 보호자 앱이 채널·전체 화면 경보로 직접 한다.
+        msg = messaging.Message(
+            data=fields["data"],
+            token=token,
+            android=messaging.AndroidConfig(priority="high", ttl=fields["ttl_seconds"]),
+        )
+        return messaging.send(msg)
+
+    # 시스템 알림 방식(앱 배포 전 호환): emergency_alarm 채널 + 잠금화면 노출 + 최고 우선순위
     android_notif = messaging.AndroidNotification(
-        channel_id="emergency_alarm" if critical else "safety_alert",
+        channel_id=fields["channel_id"],
         priority="max" if critical else "high",
         visibility="public",
         notification_count=1,
     )
-    # iOS: critical=True는 무음/방해금지 우회 (앱 entitlement 필요)
-    apns_sound = messaging.CriticalSound(name="alarm.wav", critical=True, volume=1.0) if critical \
-        else messaging.CriticalSound(name="default")
-    apns_payload = messaging.APNSPayload(
-        aps=messaging.Aps(sound=apns_sound, badge=1)
-    )
-
     msg = messaging.Message(
         notification=messaging.Notification(title=title, body=body),
-        data={k: str(v) for k, v in extra.items()},
+        data=fields["data"],
         token=token,
         android=messaging.AndroidConfig(
             priority="high",
+            ttl=fields["ttl_seconds"],
             notification=android_notif,
         ),
-        apns=messaging.APNSConfig(payload=apns_payload),
     )
     return messaging.send(msg)
 

@@ -508,5 +508,78 @@ class Phase2TranscriptTests(unittest.TestCase):
         self.assertNotIn("노드", body)
 
 
+class GuardianAppContractTests(unittest.TestCase):
+    """보호자 앱이 기대하는 푸시·요약 계약 (docs/app/guardian_app_kit/docs/02_API_SPEC.md)."""
+
+    def _notifier(self):
+        sent = []
+        ns = {"Any": object, "_send_fcm": lambda *args, **kwargs: sent.append((args, kwargs)) or "id"}
+        _extract_functions(
+            ROOT / "api" / "notifier.py",
+            {"build_fcm_fields", "build_risk_message", "send_risk_notification",
+             "send_voice_ok_notification", "send_heartbeat_notification"},
+            ns,
+        )
+        return ns, sent
+
+    def test_data_only_puts_title_body_in_string_data(self):
+        ns, _ = self._notifier()
+        fields = ns["build_fcm_fields"]("응급 상황 감지", "본문", {"node_id": 3, "emergency": True,
+                                                              "skip": None}, True, True)
+        self.assertIsNone(fields["notification"])
+        self.assertEqual(fields["channel_id"], "emergency_alarm")
+        self.assertEqual(fields["data"]["title"], "응급 상황 감지")
+        self.assertEqual(fields["data"]["node_id"], "3")
+        self.assertEqual(fields["data"]["emergency"], "True")
+        self.assertNotIn("skip", fields["data"])
+        self.assertTrue(all(isinstance(v, str) for v in fields["data"].values()))
+
+        legacy = ns["build_fcm_fields"]("t", "b", {}, False, False)
+        self.assertEqual(legacy["notification"], ("t", "b"))
+        self.assertEqual(legacy["channel_id"], "safety_alert")
+        self.assertNotIn("title", legacy["data"])
+
+    def test_emergency_and_voice_ok_payload_carry_type_and_msg_id(self):
+        ns, sent = self._notifier()
+        ns["send_risk_notification"]("tok", 0.85, "critical", True,
+                                     {"summary": "낙상 확정(M1 3/5)", "node_id": 3, "ts_ms": 1,
+                                      "msg_id": "1-0", "slm_mode": "rule"})
+        args, kwargs = sent[-1]
+        self.assertEqual(args[3]["type"], "emergency")
+        self.assertEqual(args[3]["msg_id"], "1-0")
+        self.assertEqual(args[3]["slm_mode"], "rule")
+        self.assertTrue(kwargs["critical"])
+
+        ns["send_voice_ok_notification"]("tok", 3, 1, "괜찮아요", "1-0")
+        args, kwargs = sent[-1]
+        self.assertEqual((args[3]["type"], args[3]["msg_id"]), ("voice_ok", "1-0"))
+        self.assertFalse(kwargs["critical"])
+
+        ns["send_heartbeat_notification"]("tok", 2, 3)
+        self.assertEqual(sent[-1][0][3]["type"], "heartbeat")
+
+    def test_app_summary_counts_expected_nodes_and_hides_private_fields(self):
+        ns = _extract_functions(
+            ROOT / "api" / "main.py", {"_compose_app_summary", "_stream_id_ts_ms"},
+            {"APP_EXPECTED_NODES": (1, 2, 3), "FCM_READY": False, "time": __import__("time")},
+        )
+        nodes = {"node_1": {"status": "online"}, "node_2": {"status": "offline"},
+                 "node_3": {"status": "online"}, "node_4": {"status": "online"}}
+        latest = {"risk_level": "warning", "risk_score": 0.65,
+                  "experts": {"speech_ko": {"transcript_ko": "비밀"}}}
+        summary = ns["_compose_app_summary"](latest, "10000-0", nodes,
+                                             {"ai_enabled": True, "models": {"m1": False}},
+                                             None, "ok", 12_500)
+        self.assertEqual((summary["nodes_online"], summary["nodes_expected"]), (2, 3))
+        self.assertEqual(summary["data_age_s"], 2.5)
+        self.assertEqual(summary["risk_level"], "warning")
+        self.assertFalse(summary["monitoring"]["m1"])
+        self.assertNotIn("비밀", json.dumps(summary, ensure_ascii=False))
+
+        empty = ns["_compose_app_summary"](None, None, {}, {}, None, "degraded", 1)
+        self.assertIsNone(empty["risk_level"])
+        self.assertEqual(empty["nodes_online"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

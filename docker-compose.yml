@@ -201,6 +201,10 @@ services:
       - ALERT_REPLAY_MS=${ALERT_REPLAY_MS:-30000}
       # 단일 마이크 노드 번호(0이면 경보 노드와 같은 노드의 응답만 사용)
       - VOICE_NODE_ID=${VOICE_NODE_ID:-1}
+      # 보호자 앱 배포와 같은 날 true로 전환(data 전용 푸시). false면 시스템 알림 형식
+      - FCM_DATA_ONLY=${FCM_DATA_ONLY:-false}
+      - HEARTBEAT_INTERVAL_SEC=${HEARTBEAT_INTERVAL_SEC:-0}
+      - APP_EXPECTED_NODES=${APP_EXPECTED_NODES:-1,2,3}
     volumes:
       - ./api/auth:/app/auth:ro
     networks:

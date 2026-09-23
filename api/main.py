@@ -10,6 +10,9 @@ api/main.py
 - GET  /charts/minute       : 분 단위 평균 차트 데이터
 - GET  /system/resources    : 호스트 CPU·온도·메모리·디스크 (조회 시 계산, 저장 없음)
 - POST /auth/register-token : FCM 토큰 등록
+- DELETE /auth/register-token/{device_id} : FCM 토큰 삭제
+- POST /alerts/{msg_id}/feedback : 보호자 오탐·미탐 신고
+- GET  /app/summary        : 보호자 앱 홈 요약
 - WS   /ws/monitor          : 실시간 ai:result 스트리밍
 """
 
@@ -37,6 +40,7 @@ from notifier import (
     load_risk_threshold,
     router as notify_router,
     send_risk_notification,
+    send_heartbeat_notification,
     send_voice_ok_notification,
 )
 
@@ -210,6 +214,14 @@ ALERT_REPLAY_MS     = int(os.getenv("ALERT_REPLAY_MS", "30000"))
 VOICE_NODE_ID       = int(os.getenv("VOICE_NODE_ID", "0") or 0)
 # FCM 토큰·설정은 TTL 1시간을 지키되, API가 살아 있는 동안 주기적으로 연장한다.
 TTL_REFRESH_SEC     = int(os.getenv("TTL_REFRESH_SEC", "600"))
+# 보호자 앱 정상 동작 신호 주기(초). 0이면 보내지 않는다(예: 86400 = 하루 1회).
+HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "0"))
+# 앱 홈 요약에서 "설치된 센서"로 보는 노드(M1 필수 노드와 같게 둔다).
+APP_EXPECTED_NODES = tuple(
+    int(v) for v in os.getenv("APP_EXPECTED_NODES", "1,2,3").split(",") if v.strip()
+)
+# 보호자 신고를 M5 보정에 쓰는 기존 키(ai-experts MQTT 피드백과 같은 키·형식, TTL 3600).
+FEEDBACK_REDIS_KEY = os.getenv("MQTT_FEEDBACK_REDIS_KEY", "mqtt:feedback:last")
 AUDIO_CLIP_KEY_PREFIX = "ai:clip:"
 AUDIO_CLIP_TTL_SECONDS = int(os.getenv("AUDIO_CLIP_TTL_SECONDS", "3600"))
 AUDIO_CLIP_POST_WAIT_MS = int(os.getenv("AUDIO_CLIP_POST_WAIT_MS", "15000"))
@@ -504,8 +516,11 @@ def _classify_phase2(transcript: str | None) -> str:
     return "call_emergency"
 
 
-async def _notify_all(redis_client, dedupe_prefix: str, send_fn, *send_args) -> int:
-    """등록된 모든 기기에 FCM을 보낸다. 중복 방지 키 쓰기가 실패해도 발송은 한다."""
+async def _notify_all(redis_client, dedupe_prefix: str | None, send_fn, *send_args) -> int:
+    """등록된 모든 기기에 FCM을 보낸다. 중복 방지 키 쓰기가 실패해도 발송은 한다.
+
+    dedupe_prefix가 None이면 중복 방지 키를 쓰지 않는다(정기 신호 등).
+    """
     try:
         tokens = await _list_registered_tokens(redis_client)
     except RedisError as exc:
@@ -513,13 +528,15 @@ async def _notify_all(redis_client, dedupe_prefix: str, send_fn, *send_args) -> 
         return 0
     sent = 0
     for device_id, token in tokens:
-        try:
-            claimed = await redis_client.set(
-                f"{dedupe_prefix}:{device_id}", "1", ex=ALERT_DEDUP_TTL_SECONDS, nx=True
-            )
-        except RedisError as exc:
-            _log(logging.WARNING, "notify_dedupe_failed", device_id=device_id, error=str(exc))
-            claimed = True
+        claimed = True
+        if dedupe_prefix is not None:
+            try:
+                claimed = await redis_client.set(
+                    f"{dedupe_prefix}:{device_id}", "1", ex=ALERT_DEDUP_TTL_SECONDS, nx=True
+                )
+            except RedisError as exc:
+                _log(logging.WARNING, "notify_dedupe_failed", device_id=device_id, error=str(exc))
+                claimed = True
         if not claimed:
             continue
         try:
@@ -592,7 +609,8 @@ async def _handle_single_emergency(redis_client, msg_id: str, payload: dict):
     sent = await _notify_all(
         redis_client, f"notify:sent:{msg_id}", send_risk_notification,
         payload["risk_score"], payload["risk_level"], True,
-        {"summary": payload["summary"], "ts_ms": payload["ts_ms"], "node_id": node_id},
+        {"summary": payload["summary"], "ts_ms": payload["ts_ms"], "node_id": node_id,
+         "msg_id": msg_id, "slm_mode": payload.get("slm_mode")},
     )
     _log(logging.WARNING, "alert_sent", node_id=node_id, msg_id=msg_id, devices=sent,
          voice_enabled=VOICE_ENABLED)
@@ -607,7 +625,7 @@ async def _handle_single_emergency(redis_client, msg_id: str, payload: dict):
             # 응급 채널이 아닌 일반 알림으로 "괜찮다고 응답"을 따로 알린다.
             await _notify_all(
                 redis_client, f"notify:followup:{msg_id}", send_voice_ok_notification,
-                node_id, payload["ts_ms"], transcript,
+                node_id, payload["ts_ms"], transcript, msg_id,
             )
 
     # 키는 재알림 쿨다운을 위해 TTL까지 유지하되, 추론 억제는 실제 Phase 2 동안만 적용한다.
@@ -616,6 +634,26 @@ async def _handle_single_emergency(redis_client, msg_id: str, payload: dict):
             await redis_client.set(lock_key, "cooldown", xx=True, keepttl=True)
         except RedisError as exc:
             _log(logging.WARNING, "phase2_lock_update_failed", node_id=node_id, error=str(exc))
+
+
+async def _heartbeat_worker():
+    """HEARTBEAT_INTERVAL_SEC마다 보호자 앱에 정상 동작 신호를 보낸다(첫 발송은 한 주기 뒤)."""
+    while True:
+        await asyncio.sleep(HEARTBEAT_INTERVAL_SEC)
+        try:
+            redis_client = await _ensure_redis()
+            nodes = await get_node_health()
+            online = sum(
+                1 for node_id in APP_EXPECTED_NODES
+                if (nodes.get(f"node_{node_id}") or {}).get("status") == "online"
+            )
+            sent = await _notify_all(redis_client, None, send_heartbeat_notification,
+                                     online, len(APP_EXPECTED_NODES))
+            _log(logging.INFO, "heartbeat_sent", devices=sent, nodes_online=online)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            _log(logging.WARNING, "heartbeat_failed", error=str(exc))
 
 
 async def _ttl_refresh_worker():
@@ -699,6 +737,8 @@ async def startup():
     task.add_done_callback(_restart_alert_worker)
     app.state.alert_worker = task
     app.state.ttl_refresh = asyncio.create_task(_ttl_refresh_worker())
+    if HEARTBEAT_INTERVAL_SEC > 0:
+        app.state.heartbeat = asyncio.create_task(_heartbeat_worker())
     _log(logging.INFO, "startup_completed", redis_host=REDIS_HOST, redis_port=REDIS_PORT,
          fcm_ready=FCM_READY, voice_enabled=VOICE_ENABLED)
     if not FCM_READY:
@@ -708,7 +748,7 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
-    for name in ("alert_worker", "ttl_refresh"):
+    for name in ("alert_worker", "ttl_refresh", "heartbeat"):
         worker = getattr(app.state, name, None)
         if worker is not None:
             worker.cancel()
@@ -859,24 +899,33 @@ async def get_node_health():
 
 
 @app.get("/history")
-async def get_history(n: int = 100, level: str = "warning"):
+async def get_history(n: int = 100, level: str = "warning", before: str | None = None):
+    """경보 이력(최신순). before=스트림 ID면 그보다 오래된 항목부터(페이지네이션)."""
     n = max(1, min(n, 3600))
     if level not in ("warning", "critical"):
         return JSONResponse({"error": "level must be 'warning' or 'critical'"}, status_code=400)
 
     redis_client = await _ensure_redis()
-    entries = await redis_client.xrevrange(EMERGENCY_STREAM, count=3600)
     result = []
-    for msg_id, fields in entries:
-        payload = _normalize_emergency(_parse_result_payload(fields.get("data", "")), msg_id)
-        rl = payload.get("risk_level", "normal")
-        if level == "critical" and rl != "critical":
-            continue
-        if level == "warning" and rl not in ("warning", "critical"):
-            continue
-        result.append(payload)
-        if len(result) >= n:
+    upper = f"({before}" if before else "+"
+    scanned = 0
+    # 필요한 만큼만 200건씩 거꾸로 읽는다(최대 3,600건 = 스트림 한도).
+    while len(result) < n and scanned < 3600:
+        entries = await redis_client.xrevrange(EMERGENCY_STREAM, max=upper, count=200)
+        if not entries:
             break
+        scanned += len(entries)
+        for msg_id, fields in entries:
+            payload = _normalize_emergency(_parse_result_payload(fields.get("data", "")), msg_id)
+            rl = payload.get("risk_level", "normal")
+            if level == "critical" and rl != "critical":
+                continue
+            if level == "warning" and rl not in ("warning", "critical"):
+                continue
+            result.append(payload)
+            if len(result) >= n:
+                break
+        upper = f"({entries[-1][0]}"
     return result
 
 
@@ -918,6 +967,96 @@ async def register_fcm_token(body: TokenRegistration):
     redis_client = await _ensure_redis()
     await redis_client.set(f"{TOKEN_KEY_PREFIX}{body.device_id}", body.token, ex=TOKEN_TTL_SECONDS)
     return {"status": "registered", "device_id": body.device_id, "ttl_seconds": TOKEN_TTL_SECONDS}
+
+
+@app.delete("/auth/register-token/{device_id}")
+async def unregister_fcm_token(device_id: str):
+    redis_client = await _ensure_redis()
+    removed = await redis_client.delete(f"{TOKEN_KEY_PREFIX}{device_id}")
+    return {"status": "removed" if removed else "not_found", "device_id": device_id}
+
+
+class AlertFeedback(BaseModel):
+    device_id: str
+    feedback: str = Field(pattern="^(false_alarm|missed_alert)$")
+
+
+@app.post("/alerts/{msg_id}/feedback")
+async def post_alert_feedback(msg_id: str, body: AlertFeedback):
+    """보호자 오탐·미탐 신고. 기존 M5 피드백 키에 기록해 다음 1시간 M5 점수를 ±0.08 보정한다.
+
+    규칙 경보(slm_mode=rule)는 M5를 거치지 않으므로 이 보정의 영향을 받지 않는다.
+    """
+    redis_client = await _ensure_redis()
+    entry = {
+        "feedback": body.feedback,
+        "source": "guardian_app",
+        "msg_id": msg_id,
+        "device_id": body.device_id,
+        "ts_ms": int(time.time() * 1000),
+    }
+    await redis_client.set(FEEDBACK_REDIS_KEY, json.dumps(entry, ensure_ascii=False), ex=3600)
+    _log(logging.INFO, "alert_feedback", msg_id=msg_id, device_id=body.device_id, feedback=body.feedback)
+    return {"ok": True, "msg_id": msg_id, "feedback": body.feedback}
+
+
+def _compose_app_summary(latest: dict | None, latest_id: str | None, nodes: dict, settings: dict,
+                         last_alert: dict | None, server_status: str, now_ms: int) -> dict:
+    """보호자 앱 홈 요약. 음성 전사·생체신호는 싣지 않는다."""
+    online = sum(
+        1 for node_id in APP_EXPECTED_NODES
+        if (nodes.get(f"node_{node_id}") or {}).get("status") == "online"
+    )
+    models = settings.get("models") or {}
+    summary = {
+        "risk_level": None,
+        "risk_score": None,
+        "data_age_s": None,
+        "nodes_online": online,
+        "nodes_expected": len(APP_EXPECTED_NODES),
+        "server": server_status,
+        "fcm_ready": FCM_READY,
+        "last_alert": last_alert,
+        "monitoring": {
+            "ai_enabled": bool(settings.get("ai_enabled", True)),
+            "m1": bool(models.get("m1", True)),
+        },
+        "ts_ms": now_ms,
+    }
+    if latest is not None and latest_id:
+        summary["risk_level"] = latest.get("risk_level", "normal")
+        summary["risk_score"] = latest.get("risk_score")
+        summary["data_age_s"] = round(max(0, now_ms - _stream_id_ts_ms(latest_id)) / 1000, 1)
+    return summary
+
+
+@app.get("/app/summary")
+async def get_app_summary():
+    redis_client = await _ensure_redis()
+    now_ms = int(time.time() * 1000)
+    latest, latest_id = None, None
+    entries = await redis_client.xrevrange(RESULT_STREAM, count=1)
+    if entries:
+        latest_id, fields = entries[0]
+        latest = _parse_result_payload(fields.get("data", ""))
+
+    last_alert = None
+    for msg_id, fields in await redis_client.xrevrange(EMERGENCY_STREAM, count=50):
+        alert = _normalize_emergency(_parse_result_payload(fields.get("data", "")), msg_id)
+        if alert["risk_level"] == "critical":
+            last_alert = {k: alert.get(k) for k in ("ts_ms", "node_id", "summary", "slm_mode")}
+            last_alert["msg_id"] = msg_id
+            break
+
+    raw_settings = await redis_client.get(SETTINGS_KEY)
+    settings = json.loads(raw_settings) if raw_settings else SystemSettings().model_dump()
+    try:
+        info = await redis_client.info("memory")
+        server_status = "degraded" if _redis_memory_summary(info)["critical"] else "ok"
+    except RedisError:
+        server_status = "degraded"
+    return _compose_app_summary(latest, latest_id, await get_node_health(), settings,
+                                last_alert, server_status, now_ms)
 
 
 @app.get("/auth/tokens")
