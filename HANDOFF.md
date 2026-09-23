@@ -160,7 +160,8 @@ iOS용 APNs 설정은 발송 코드에서 뺐다(대상 기기 Android).
 노트북 GPU 실행 경로(RPi5 무관): `ai/Dockerfile` gpu-runtime(CUDA 12.8, ORT GPU 1.22, torch cu128), gguf-gpu-runtime(llama.cpp CUDA sm_120).
 설정 `reports/laptop/compose.{cpu,gpu}.yml`, GPU M5는 `USE_TORCH=0` 필요(NCCL 심볼 충돌).
 도구: `scripts/bench_models.py`, `scripts/dev/{check_esp32_rx,csi_excel_logger,voice_probe,slm_probe,phase2_test,boundary_check}.py`.
-담당자별 공유 문서: `handoff/laptop-20260923/` (M1·M2 김태연, M3 소민섭, M4 이대경, M5 노진산). 빈 방 113분 기록: M1 경보 65건, 오류 0.
+담당자별 공유 문서·팀원별 할 일: `handoff/laptop-20260923/README.md`. 빈 방 113분 기록: M1 경보 65건, 오류 0.
+M3 평가셋(`data/m3_eval_v34/`)으로 낙상 50회 재현 46/50(담당자 보고값과 일치).
 
 ## 5. 팀 연계
 
