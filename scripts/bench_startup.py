@@ -35,12 +35,15 @@ CONTAINER = {"ai-experts": "rp5-ai-experts", "ai-qwen": "rp5-ai-qwen", "api": "r
 
 def run(cmd, timeout=120):
     return subprocess.run(cmd, cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          text=True, timeout=timeout).stdout
+                          text=True, encoding="utf-8", errors="replace", timeout=timeout).stdout
 
 
 def meminfo():
+    # Windows 호스트(노트북 Docker Desktop)에는 /proc가 없으므로 Docker VM의 값을 db 컨테이너로 읽는다.
+    local = Path("/proc/meminfo")
+    text = local.read_text() if local.exists() else run(["docker", "exec", "rp5-db", "cat", "/proc/meminfo"])
     m = {}
-    for line in Path("/proc/meminfo").read_text().splitlines():
+    for line in text.splitlines():
         k, v = line.split(":", 1)
         m[k] = int(v.split()[0]) // 1024
     return {"used_mb": m["MemTotal"] - m["MemAvailable"], "swap_used_mb": m["SwapTotal"] - m["SwapFree"]}
