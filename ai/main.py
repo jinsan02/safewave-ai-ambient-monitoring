@@ -259,9 +259,12 @@ class AIEngine:
                 return name, output, (time.perf_counter() - started) * 1000.0
             expert_input = data
         if name == "env_sound" and isinstance(expert_input, dict):
-            extracted = self._extract_audio_signal(expert_input)
-            if extracted is not None:
-                expert_input = extracted
+            # M3 는 dict 를 그대로 받는다 — sample_rate 와 raw_peak(게인 보정 전 원본
+            # peak, 무음 게이트 판정용) 메타를 잃지 않기 위해 파형만 꺼내지 않는다.
+            if self._extract_audio_signal(expert_input) is None:
+                expert_input = None
+        if expert_input is None and name == "env_sound":
+            return name, self._empty_output(name), (time.perf_counter() - started) * 1000.0
         output = self.experts[name].infer(expert_input)
         return name, output, (time.perf_counter() - started) * 1000.0
 
@@ -574,11 +577,13 @@ def _audio_worker_loop(r, ai_engine) -> None:
                 # Phase 2 중에는 M3를 생략해 M4·API·오디오 장치에 CPU 여유를 남긴다.
                 if m3 and _enabled.get("env_sound", True) and not phase2_active:
                     try:
-                        # M3._preprocess는 numpy array를 기대함 — dict에서 waveform 직접 추출
-                        wav = audio_in.get("waveform")
-                        m3_wav = np.asarray(wav, dtype=np.float32).reshape(-1) \
-                            if wav is not None else np.zeros(1, dtype=np.float32)
-                        m3_result = m3.infer(m3_wav) or {}
+                        # M3(v34)는 dict로 받는다: sample_rate, raw_peak(sensing이 게인 보정 전에 잰
+                        # peak, 무음 게이트용). VAD 이벤트(최대 6초) 안에서 어느 3초를 볼지는 M3가 고른다.
+                        m3_result = m3.infer({
+                            "waveform": audio_in.get("waveform"),
+                            "sample_rate": audio_in.get("sample_rate") or 16000,
+                            "raw_peak": audio_in.get("raw_peak"),
+                        }) or {}
                     except Exception as exc:
                         _log(logging.WARNING, "audio_m3_failed", error=str(exc))
                 elif m3:
@@ -622,10 +627,12 @@ def _merge_audio_window(events: list[dict], window_ms: int) -> dict | None:
     channels = int(last_event.get("channels", 1) or 1)
     max_samples = int(sample_rate * (window_ms / 1000.0))
     peak_db = -120.0
+    raw_peak = 0.0
     waveforms = []
 
     for event in events:
         peak_db = max(peak_db, float(event.get("peak_db", -120.0) or -120.0))
+        raw_peak = max(raw_peak, float(event.get("raw_peak", 0.0) or 0.0))
         waveform = event.get("waveform")
         if waveform is None:
             continue
@@ -645,6 +652,7 @@ def _merge_audio_window(events: list[dict], window_ms: int) -> dict | None:
         "channels": channels,
         "duration_ms": int(merged.size * 1000 / sample_rate),
         "peak_db": round(float(peak_db), 2),
+        "raw_peak": round(float(raw_peak), 6),  # 게인 보정 전 원본 peak (M3 게이트용)
         "waveform": merged,
         "window_ms": window_ms,
         "ts_ms": int(last_event.get("ts_ms", int(time.time() * 1000))),

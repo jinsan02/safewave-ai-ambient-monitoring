@@ -104,9 +104,11 @@ ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶
 |---|---|---|---|
 | M1 | `experts/m1_wifi_pose.py` | CSI `(1, M1_MAX_NODES, 64, 100)` — 기본 5노드. 1노드 학습 모델은 `.env`에 `M1_MAX_NODES=1` | 낙상 위험 점수 (0–1, 모델 그래프 안에서 sigmoid). `fall_detected` 임계값 `M1_FALL_THRESHOLD` 기본 0.80 |
 | M2 | `experts/m2_frenel_vital.py` | CSI 시간 시리즈 (N,) @ 100Hz — per-node deque | 생체신호 점수 (HR, RR) |
-| M3 | `experts/m3_ast_base.py` | raw waveform → 고정 AST tensor | 휴리스틱 7종 라벨 + AST top class/confidence |
+| M3 | `experts/m3_ast_base.py` | 오디오 PCM 16kHz mono 3초 | 환경음 6종 분류 + `impact_prob`/`impact_alert` (v34_homepos ONNX, 전처리 그래프 내장) |
 | M4 | `experts/m4_whisper_small.py` | 오디오 PCM (최근 5s) | 한국어 STT |
 | M5 | `logic/qwen_gguf.py` — Qwen2.5-1.5B GGUF Q5_K_M (llama.cpp, 기본 배포 목표본) | 상태 한 줄 + [1h추세] 시계열 요약 | 통합 위험도 판단 |
+
+M3 환경음(v34_homepos, 소민섭): 입력 16 kHz mono 3초, 출력 6종 `silence/speech/impact/noise/alarm/unknown`. 무음 게이트 `raw_peak < M3_SILENCE_GATE(0.005)` → silence, 낙상 충격 `probs[impact] ≥ M3_IMPACT_THRESHOLD(0.6)` → `impact_alert`. `raw_peak`은 audio-sensing이 게인 보정 전에 잰 값을 이벤트 메타로 싣는다. 설치·검증: `python scripts/setup_m3_ast_onnx.py --src <dir>`, 자세한 규격은 `docs/m3-env-sound-onnx.md`.
 
 ### M5 백엔드 (`SLM_BACKEND` env)
 
@@ -166,7 +168,7 @@ ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶
   → ai:result / ai:m3:latest / monitor.html
 ```
 
----
+### M3 환경음 (AST 6-class 파인튜닝 ONNX)
 
 ## Redis 키 맵
 
@@ -498,7 +500,8 @@ rp5/
 │   ├── export_m4_whisper_onnx.py
 │   └── export_m5_qwen_onnx.py
 └── volumes/
-    └── models/                 # ONNX 모델 파일 (Git 제외)
+    └── models/                 # 모델 파일 (Git 제외)
+        └── ast_onnx/           # M3 환경음 AST 6-class ONNX
 ```
 
 ---

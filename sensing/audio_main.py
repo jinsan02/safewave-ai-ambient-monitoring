@@ -36,6 +36,28 @@ VAD_HANGOVER_MS = int(os.getenv("VAD_HANGOVER_MS", "250"))
 AUDIO_MAX_EVENT_SECONDS = float(os.getenv("AUDIO_MAX_EVENT_SECONDS", "6.0"))
 
 
+def normalize_quiet_waveform(waveform: np.ndarray) -> np.ndarray:
+    """VAD 통과 후에도 작은 peak면 전송 전에 gain을 보정한다."""
+    if os.getenv("AUDIO_GAIN_NORMALIZE", "1") == "0":
+        return waveform
+
+    x = np.asarray(waveform, dtype=np.float32).reshape(-1)
+    if x.size == 0:
+        return x
+
+    peak = float(np.max(np.abs(x)))
+    if peak <= 1e-9:
+        return x
+
+    target_peak = float(os.getenv("AUDIO_TARGET_PEAK", "0.85"))
+    normalize_below = float(os.getenv("AUDIO_NORMALIZE_BELOW_PEAK", "0.12"))
+    if peak >= normalize_below:
+        return x
+
+    scaled = x * (target_peak / peak)
+    return np.clip(scaled, -1.0, 1.0).astype(np.float32)
+
+
 def rms_dbfs(samples: np.ndarray) -> float:
     if samples.size == 0:
         return -120.0
@@ -45,13 +67,16 @@ def rms_dbfs(samples: np.ndarray) -> float:
     return 20.0 * np.log10(rms)
 
 
-def xadd_audio_event(r: redis.Redis, waveform: np.ndarray, peak_db: float):
+def xadd_audio_event(r: redis.Redis, waveform: np.ndarray, peak_db: float, raw_peak: float = 0.0):
     ts_ms = int(time.time() * 1000)
     meta = {
         "sample_rate": AUDIO_SAMPLE_RATE,
         "channels": AUDIO_CHANNELS,
         "duration_ms": int(len(waveform) * 1000 / AUDIO_SAMPLE_RATE),
         "peak_db": round(float(peak_db), 2),
+        # 게인 보정 '전' 원본 최대 진폭. M3 무음 게이트는 이 값으로 판정해야 한다
+        # (보정 후 파형으로 재면 조용한 소리도 0.85로 올라가 게이트가 무력화된다).
+        "raw_peak": round(float(raw_peak), 6),
     }
 
     r.xadd(
@@ -138,7 +163,9 @@ def run_audio_loop(r: redis.Redis):
                 waveform = np.concatenate(event_buffers) if event_buffers else np.zeros(0, dtype=np.float32)
                 if enough_voice and waveform.size > 0:
                     try:
-                        xadd_audio_event(r, waveform, event_peak_db)
+                        raw_peak = float(np.max(np.abs(waveform)))  # 보정 전에 잰다
+                        waveform = normalize_quiet_waveform(waveform)
+                        xadd_audio_event(r, waveform, event_peak_db, raw_peak)
                         print(
                             f"[audio] event xadd samples={waveform.size} "
                             f"dur_ms={int(waveform.size * 1000 / AUDIO_SAMPLE_RATE)} peak_db={event_peak_db:.1f}",

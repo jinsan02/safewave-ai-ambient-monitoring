@@ -76,7 +76,7 @@ services:
       - AUDIO_SAMPLE_RATE=16000
       - AUDIO_CHANNELS=1
       - AUDIO_BLOCK_SIZE=1024
-      - VAD_THRESHOLD_DB=-45
+      - VAD_THRESHOLD_DB=${VAD_THRESHOLD_DB:--45}
       - VAD_MIN_ACTIVE_MS=300
       - VAD_HANGOVER_MS=250
       - AUDIO_MAX_EVENT_SECONDS=6
@@ -133,6 +133,13 @@ services:
       - MKL_NUM_THREADS=1
       - NUMEXPR_NUM_THREADS=1
       - MALLOC_ARENA_MAX=2
+      # M3 환경음 모델 (AST 6-class end-to-end ONNX, v34_homepos)
+      - M3_ENV_SOUND_MODEL=${M3_ENV_SOUND_MODEL:-ast_onnx}
+      - M3_ENV_SOUND_ONNX=${M3_ENV_SOUND_ONNX:-}
+      - M3_SILENCE_GATE=${M3_SILENCE_GATE:-0.005}
+      - M3_IMPACT_THRESHOLD=${M3_IMPACT_THRESHOLD:-0.6}
+      # 3초보다 긴 입력에서 분석할 3초 선택: peak(충격 중심) / latest(마지막 3초)
+      - M3_WINDOW_MODE=${M3_WINDOW_MODE:-peak}
     volumes:
       - ./volumes/models:/app/models
     networks:
