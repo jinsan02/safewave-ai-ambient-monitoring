@@ -224,6 +224,16 @@ class M5ResultConsistencyTests(unittest.TestCase):
         self.assertEqual(context["warning_count"], 1)
         self.assertEqual(context["sampled_result_points"], 0)
 
+    def test_state_line_marks_missing_vitals_instead_of_zero(self):
+        # M2 off → vital {}: '심박:0'이면 모델이 심정지로 읽는다(노트북 실측 critical 오판).
+        logic = qwen_15b.QwenLogic.__new__(qwen_15b.QwenLogic)
+        line = logic._state_line({"fall": {"fall_score": 0.7}, "vital": {}})
+        self.assertIn("심박:미측정", line)
+        self.assertIn("호흡:미측정", line)
+        self.assertNotIn("심박:0", line)
+        measured = logic._state_line({"vital": {"heart_rate": 72, "breathing_rate": 15}})
+        self.assertIn("심박:72,호흡:15", measured)
+
 
 class M5RiskPolicyTests(unittest.TestCase):
     def test_context_and_feedback_are_clamped(self):

@@ -300,7 +300,10 @@ class QwenLogic:
             if hc or hw:
                 ctx_note += f", 1h:c={hc},w={hw}"
 
-        line = (f"낙상:{fall_detected}({fall_score:.0%}),심박:{hr:.0f},호흡:{rr:.0f},"
+        # M2가 꺼지면 vital은 {} → 0을 그대로 적으면 모델이 심정지(hr=0)로 읽어 critical을 낸다.
+        hr_s = f"{hr:.0f}" if hr > 0 else "미측정"
+        rr_s = f"{rr:.0f}" if rr > 0 else "미측정"
+        line = (f"낙상:{fall_detected}({fall_score:.0%}),심박:{hr_s},호흡:{rr_s},"
                 f"환경:{env_label},소견:{findings_str}{ctx_note}")
         return line
 
