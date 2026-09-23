@@ -1,6 +1,6 @@
 # HANDOFF — SafeWave-AI (rp5)
 
-> 갱신: 2026-09-17 밤 · 노진산(+Claude/Codex) · 다음 작업자(Claude·Codex)는 이 문서부터 읽는다.
+> 갱신: 2026-09-23 밤 (4-2 노트북 실험·M3 v34 병합 추가) / 본문 2026-09-17 밤 · 노진산(+Claude/Codex) · 다음 작업자(Claude·Codex)는 이 문서부터 읽는다.
 > 규칙·제약: `AGENTS.md` / `CLAUDE.md` · 근거 현황: `docs/validation_status.md`
 > 이전 판(09-17 작업 경과를 누적 기록한 487줄)은 Git 기록 `f022cf2:HANDOFF.md`에 있다.
 
@@ -10,6 +10,7 @@
   노트북에서 RPi5 유사 조건 전체 스택 테스트로 기능을 확인했다(수치는 보고 금지).
 - **RPi5**: 아직 새 코드를 받지 않았다(`5b30f96`, 09-17 17:20 확인). ai-qwen은 정지 상태, 스왑 가득.
 - **다음 할 일**: RPi5에서 pull·재빌드 → 기능 확인 → 전체 스택 1회 실측 (2절).
+- **09-23**: M3 v34_homepos(소민섭) 병합, 노트북 CPU·GPU 효용 실험(4-2). RPi5에는 아직 미반영.
 - **결정 대기**: `handoff/rpi5-20260917/OPEN_DECISIONS.md` (18건). 결정 전에는 구현하지 않는다.
 
 ## 1. 현재 상태
@@ -41,7 +42,7 @@
 |---|---|---|
 | M1 | `m1_wifi_pose_onnx/` | 김태연 인계(3노드 학습 → 입력 `(1,5,64,100)`, 출력 `fall_score`, 그래프 내 sigmoid, 임계 0.80). 이전 1노드 모델 `..._1node_20260802/`(RPi5), `..._stub_backup_20260917/`(노트북) |
 | M2 | `m2_frenel_vital_onnx/` | 미학습 스텁(심박 118 고정). **기본 off** |
-| M3 | `ast_onnx/` | 6/11 AST. v3.4 인계 대기(소민섭) |
+| M3 | `ast_onnx/v34_homepos.onnx` | 소민섭 v34 6-class(전처리 그래프 내장, sha256 `d06265e9…b615`). 받기·검증 `scripts/setup_m3_ast_onnx.py`. 옛 모델은 노트북 `ast_onnx_old_backup_20260923/`. **RPi5에도 설치 필요** |
 | M4 | `whisper_onnx_int8_ft_svc/` (기본) | 이대경 INT8의 서비스용 복사본(`generation_config.json`만 교체, 가중치 하드링크). 원본 `whisper_onnx_int8_ft/`, 이전 fp32 `whisper_onnx/` |
 | M5 | `qwen_15b_gguf_q5/` + `qwen_15b/` | GGUF Q5_K_M 1.23GB + 토크나이저 |
 | 평가 데이터 | `data/m4_eval_2398/` | 이대경 M4 평가 세트 2,398개(노트북·RPi5). **공개 저장소 업로드 금지** |
@@ -135,13 +136,38 @@ docker logs -f rp5-ai-experts | grep m1_gate_stats     # 60초마다
 iOS용 APNs 설정은 발송 코드에서 뺐다(대상 기기 Android).
 결정 대기: S2 확인 기능(새 키 `alert:ack:{msg_id}`), S6 인증, 원격 접속 방식(키트 `docs/05_OPEN_DECISIONS.md`).
 
+## 4-2. 노트북 CPU·GPU 효용 실험 (09-23, 교수님 요청)
+
+기록: `reports/laptop/EXPERIMENT_CPU_GPU.md`(Git 제외). 실제 ESP32 4노드 → 노트북 192.168.1.11(ipTIME 고정 할당). 노트북 수치는 RPi5 측정표에 쓰지 않는다.
+
+| | CPU(RPi5 스레드) | CPU(풀컨디션) | GPU RTX 5060 |
+|---|---|---|---|
+| M3 v34 / M4 단독 | 2.15 s / 1.00 s | 0.61 s / 0.65 s | 0.04 s / 0.47 s |
+| 음성 이벤트→결과 | 2.98 s | 1.28 s | 0.75 s |
+| M5 추론 p50 / p95 | 1.6 s / 20 s | — | 0.75 s / 1.05 s |
+| M4 정확도(200) | CER 5.15%, 키워드 90% | — | 같음 |
+| M5 정확도(100) | exact 51%, adjacent 82%, safe fail 0 | — | exact 53%, adjacent 82% |
+| 경계값 / Phase 2 | 18/18 / 3/3 | — | 18/18 / 3/3 |
+
+발견 (RPi5에도 해당)
+- **빈 방 M1 오경보**: 실제 ESP32 데이터에서 낙상 점수 0.5~0.8, 규칙 경보 약 90초마다. 규칙 경보 뒤 90초 M5 억제가 겹쳐 M5가 사실상 호출되지 않음 → 김태연 공유 필요.
+- **M5 prefill이 전 코어 사용**: `n_threads_batch` 미지정 → llama-cpp-python 기본값(전 코어). RPi5에서도 M5 실행 중 4코어 점유. 수정 결정 대기.
+- **M2 off일 때 상태 문장 `심박:0` → M5가 심정지로 판단(critical)** → "미측정"으로 수정(이번 커밋).
+- M2 스텁 on → 전 노드 HR 118 → M5 critical 연속·Phase 2 적체·M3 생략. M2는 계속 off.
+- ESP32 패킷이 몰려 도착(약 8%가 1 ms 이내) → M1 격자 0 채움 13% 이상. RPi5 실측 비교 필요.
+- 노트북 USB 마이크에서 M4 환각("MBC 뉴스 ○○○입니다", "너 죽어") → 노트북 VAD -35 dB/500 ms로 보정. 환각 필터는 보류(이대경 공유).
+
+노트북 GPU 실행 경로(RPi5 무관): `ai/Dockerfile` gpu-runtime(CUDA 12.8, ORT GPU 1.22, torch cu128), gguf-gpu-runtime(llama.cpp CUDA sm_120).
+설정 `reports/laptop/compose.{cpu,gpu}.yml`, GPU M5는 `USE_TORCH=0` 필요(NCCL 심볼 충돌).
+도구: `scripts/bench_models.py`, `scripts/dev/{check_esp32_rx,csi_excel_logger,voice_probe,slm_probe,phase2_test,boundary_check}.py`.
+
 ## 5. 팀 연계
 
 | 담당 | 상태 | 문서 |
 |---|---|---|
 | 김태연 M1·M2 | 2차 답변 반영 완료. 회신 초안(슬롯 충돌 처리·격자 원점 질문) **미발송**. 5노드 2차 수집 예정(`M1_REQUIRED_NODES`만 변경), 다음 모델은 창끝 게이트 불필요 가능. CSI2 792B 진단 포맷은 펌웨어 공유 후, 10/05 종료 | `handoff/rpi5-20260917/TO_KIMTAEYEON_M1_M2.md`, `REPLY_TO_KIMTAEYEON_M1.md`, `REPLY2_TO_KIMTAEYEON_M1.md` |
 | 이대경 M4 | INT8 기본값. `lang_to_id` 포함 설정·짧은 발화 설정·오인식 개선 요청 중 | `handoff/rpi5-20260917/TO_LEEDAEGYEONG_M4.md` |
-| 소민섭 M3 | v3.4 인계 대기(log-Mel 전처리, 라벨 이름 매핑, 임계 0.6) | — |
+| 소민섭 M3 | v34 병합 완료(09-23). 브랜치의 VAD -55 dB는 보류(-45 유지), 오래된 torch·transformers 고정 제외 | `docs/m3-env-sound-onnx.md` |
 | 소민섭 보호자 앱 | 개발 키트 전달(Android, Kotlin + Compose 권장). 서버 쪽 S0·S1·S3·S4·S5·S7·S9 구현 완료, S2(확인, 새 Redis 키) 결정 대기 | `handoff/guardian_app_kit/` |
 
 팀원 브랜치(`feature/*` 등)에는 커밋하지 않는다. 병합은 한 번에 하나씩, 병합 후 같은 방법으로 측정한다.
@@ -152,7 +178,7 @@ iOS용 APNs 설정은 발송 코드에서 뺐다(대상 기기 Android).
 2. Redis 512MB 도달 시 ai-experts·M5·API 쓰기 실패 대응이 sensing만큼 정교하지 않음(정상 예산 256MB)
 3. ai-experts 준비 신호 없음(API·M5는 `service_started`만 기다림), 대시보드 "AI 준비 중" 표시 없음
 4. 재연결 시 이전 Redis 클라이언트 미종료(기능 영향 작음, 실측 후 판단)
-5. M3 입력이 log-Mel이 아님(M3 v3.4 인계 때 해결)
+5. ~~M3 입력이 log-Mel이 아님~~ → v34 병합으로 해결(전처리 그래프 내장)
 6. M4 반복 방지 wrapper 미통합
 7. 노트북 Docker 소켓 파일 접근 불가(Win32 1920) 근본 원인 미확인 — 관리자 `fltmc filters`
 8. 대시보드 좁은 화면에서 카드·범례 잘림
