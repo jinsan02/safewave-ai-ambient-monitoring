@@ -52,7 +52,7 @@
 |---|---|---|
 | 1 | M5 긴급 키워드 가드(키워드 있으면 최소 warning) | "낙상위험 51~59% + 도와주세요 → normal" 발견 |
 | 2 | RPi5 반영: pull, **M3 모델 설치**(`setup_m3_ast_onnx.py`), M3 스레드 1·2·4 측정, ai-experts 메모리(노트북 2.71/3 GB) 확인 | M3 v34 RPi5 미측정 |
-| 3 | 영상 시험 준비: 화면 시계 페이지, 경보 내보내기, 채점 스크립트, 시나리오표 | 운용 가능성 판단의 핵심 |
+| 3 | 영상 시험 준비: 화면 시계 페이지, ~~경보 내보내기~~, 채점 스크립트, 시나리오표 | 운용 가능성 판단의 핵심. 모델별 출력 기록기는 구현함(09-24): `scripts/dev/validation_recorder.py` → `data/validation/<시각>_<label>/` m1_fall·m2_vital·gate·m3_env·m4_stt·m5_emergency CSV(시각 3종: Redis·payload·노트북) |
 | 4 | M3 ambient 4시간 오탐률 재현(GPU 약 10분) | 담당자 채점 CSV와 대조 |
 | 5 | M5 평가 13건 정답 재판정, reason "미측정" 정리, `n_threads_batch` 설정 | |
 | 6 | 규칙 경보 뒤 M5 억제 설계 결정, FCM 키 받아 실제 수신 확인 | |
