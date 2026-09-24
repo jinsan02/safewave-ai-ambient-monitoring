@@ -68,7 +68,16 @@ def rule_alert_reason(breakdown: dict | None, expert_results: dict | None) -> st
         reasons.append(
             f"생체신호 위기(HR={vital.get('heart_rate', '?')}, RR={vital.get('breathing_rate', '?')})"
         )
+    if breakdown.get("voice_emergency_bypass"):
+        reasons.append(voice_emergency_text(experts.get("speech_ko")))
     return " / ".join(reasons) if reasons else None
+
+
+def voice_emergency_text(speech: dict | None) -> str:
+    speech = speech or {}
+    heard = str(speech.get("transcript_ko", "") or "").strip()
+    return (f"긴급 음성 '{heard}'(≈{speech.get('emergency_phrase', '?')}, "
+            f"유사도 {safe_float(speech.get('emergency_phrase_sim'), 0.0):.2f})")
 
 
 def has_emergency_keyword(speech: dict | None) -> bool:
@@ -85,6 +94,7 @@ def rubric_level(expert_results: dict | None, gate_score: float,
     critical ① 위기 생체신호 + (낙상 확정·위험음·긴급키워드)
              ② 낙상 확정 + (위험음·긴급키워드)
              ③ 게이트 점수가 이미 critical
+             ④ M4 긴급 음성(환각 필터 통과 + 긴급 문장 유사 매칭) — 음성 확인 절차가 오경보를 거른다
     warning  그 밖에 게이트 >= 0.6 (M5 호출 구간)
     normal   게이트 < 0.6 (운영에서는 M5를 부르지 않는 구간)
     평가 정답 v2(scripts/eval_qwen_accuracy.py)와 노트북 프롬프트 판정표가 이 함수와 같다.
@@ -113,6 +123,8 @@ def rubric_level(expert_results: dict | None, gate_score: float,
         return "critical", "판정표① " + "+".join(crisis + fall + hazard + keyword)
     if fall and (hazard or keyword):
         return "critical", "판정표② " + "+".join(fall + hazard + keyword)
+    if (er.get("speech_ko") or {}).get("emergency_phrase_detected"):
+        return "critical", "판정표④ " + voice_emergency_text(er.get("speech_ko"))
     basis = crisis + fall
     if (gate_breakdown or {}).get("temporal_escalation"):
         basis.append("시계열 악화")

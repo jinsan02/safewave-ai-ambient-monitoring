@@ -110,6 +110,12 @@ ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶
 
 M3 환경음(v34_homepos, 소민섭): 입력 16 kHz mono 3초, 출력 6종 `silence/speech/impact/noise/alarm/unknown`. 무음 게이트 `raw_peak < M3_SILENCE_GATE(0.005)` → silence, 낙상 충격 `probs[impact] ≥ M3_IMPACT_THRESHOLD(0.6)` → `impact_alert`. `raw_peak`은 audio-sensing이 게인 보정 전에 잰 값을 이벤트 메타로 싣는다. 설치·검증: `python scripts/setup_m3_ast_onnx.py --src <dir>`, 자세한 규격은 `docs/m3-env-sound-onnx.md`.
 
+M4 후처리(09-24, 통합 래퍼): Whisper가 무음·잡음에도 문장("MBC 뉴스 ○○○입니다" 등)을 만들어 '말 없음' 확률·토큰
+평균 로그확률로 환각을 버리고(`hallucination_filtered`, 원문 `transcript_raw`), 긴급 문장(도와주세요·살려주세요·넘어졌어요 등)을
+발음 기준 자모 유사도로 찾는다(`emergency_phrase_detected`). 확인되면 규칙 게이트 `voice_emergency_bypass` → 규칙 경보
+critical + 음성 확인(판정표 ④). 생활 소음 4시간 오경보 시간당 0.25회, 도움 요청 300/300. 자세한 내용은
+`handoff/laptop-20260923/TO_LEEDAEGYEONG_M4.md` 5절.
+
 ### M5 백엔드 (`SLM_BACKEND` env)
 
 | 백엔드 | 모델 | 외부 qwen-llmops 평가 기록 | SafeWave에서 확인된 범위 |

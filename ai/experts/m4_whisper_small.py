@@ -19,6 +19,93 @@ except Exception:
     AutoProcessor = None
     pipeline = None
 
+# ── 긴급 문장 유사 매칭 ────────────────────────────────────────────────────
+# 오인식("넘어졌어요" → "나마졌어요")도 잡도록 한글을 자모로 풀어 편집거리로 비교한다.
+# 문장 목록은 M4 평가셋(data/m4_eval_2398) 라벨의 긴급 키워드 묶음에서 가져왔다.
+# 값 = 기존 키워드 줄기(emergency_score·M5가 쓰는 목록과 같은 이름).
+EMERGENCY_PHRASES = {
+    "도와주세요": "도와", "도와줘": "도와", "살려주세요": "살려", "살려줘": "살려", "사람살려": "살려",
+    "신고해주세요": "119", "119불러줘": "119", "119불러주세요": "119",
+    "구급차불러줘": "응급", "구급차불러주세요": "응급",
+    "넘어졌어요": "넘어", "미끄러졌어요": "넘어", "쓰러졌어요": "넘어", "못일어나겠어요": "넘어",
+    "불이야": "화재", "숨을못쉬겠어요": "응급",
+}
+# 오인식 흔적이 남은 전사도 잡되, 무관한 말은 걸리지 않을 유사도(09-24 평가셋·생활 소음 4시간으로 정함)
+PHRASE_MIN_SIM = float(os.getenv("M4_PHRASE_MIN_SIM", "0.8"))
+# 환각 판정 — 말이 아닌 것으로 보고 전사·키워드를 버린다(원문은 transcript_raw):
+#   '말 없음' 확률 > NO_SPEECH_MAX, 또는 (확률 > SURE_SPEECH_MAX 이면서 토큰 평균 로그확률 < MIN_AVG_LOGPROB)
+# 실제 발화는 '말 없음' 확률이 0.005 이하라, 오인식으로 확신도가 낮아도 버리지 않는다.
+# 09-24 측정(생활 소음 4시간 VAD 이벤트 175개, 평가 발화 550개)으로 정함: 소음 163/175 버림,
+# 실제 발화 버림 1/550(규칙 '0.1 또는 -0.5'는 11/550).
+NO_SPEECH_MAX = float(os.getenv("M4_NO_SPEECH_MAX", "0.05"))
+SURE_SPEECH_MAX = float(os.getenv("M4_SURE_SPEECH_MAX", "0.005"))
+MIN_AVG_LOGPROB = float(os.getenv("M4_MIN_AVG_LOGPROB", "-0.5"))
+
+_CHO = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
+_JUNG = "ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ"
+_JONG = " ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ"
+
+
+# 받침은 대표음으로(겹받침 포함) — 발음 기준 비교
+_JONG_SOUND = {"ㄲ": "ㄱ", "ㄳ": "ㄱ", "ㄵ": "ㄴ", "ㄶ": "ㄴ", "ㄺ": "ㄱ", "ㄻ": "ㅁ", "ㄼ": "ㄹ", "ㄽ": "ㄹ",
+               "ㄾ": "ㄹ", "ㄿ": "ㅂ", "ㅀ": "ㄹ", "ㅄ": "ㅂ", "ㅅ": "ㄷ", "ㅆ": "ㄷ", "ㅈ": "ㄷ", "ㅊ": "ㄷ",
+               "ㅋ": "ㄱ", "ㅌ": "ㄷ", "ㅍ": "ㅂ", "ㅎ": "ㄷ"}
+# 음성 인식이 잘 헷갈리는 비슷한 소리 — 서로 바뀌면 편집 비용 0.5
+_NEAR = [set("ㅏㅓㅑㅕ"), set("ㅗㅜㅛㅠ"), set("ㅐㅔㅒㅖ"), set("ㅚㅙㅞㅟ"), set("ㅘㅝ"), set("ㅡㅣㅢ"),
+         set("ㄱㄲㅋ"), set("ㄷㄸㅌ"), set("ㅂㅃㅍ"), set("ㅅㅆ"), set("ㅈㅉㅊ")]
+
+
+def to_jamo(text):
+    """한글 → 발음에 가까운 자모열. 첫소리 ㅇ(소리 없음)은 빼고, 받침은 대표음으로 바꿔
+    다음 음절 첫소리와 같은 기호로 둔다(연음: 넘어 → ㄴㅓㅁㅓ = 너머). 공백·문장부호는 뺀다."""
+    out = []
+    for ch in str(text):
+        code = ord(ch) - 0xAC00
+        if 0 <= code < 11172:
+            cho = _CHO[code // 588]
+            if cho != "ㅇ":
+                out.append(cho)
+            out.append(_JUNG[(code % 588) // 28])
+            if code % 28:
+                jong = _JONG[code % 28]
+                out.append(_JONG_SOUND.get(jong, jong))
+        elif ch.isalnum():
+            out.append(ch)
+    return out
+
+
+def _sub_cost(a, b):
+    if a == b:
+        return 0.0
+    return 0.5 if any(a in g and b in g for g in _NEAR) else 1.0
+
+
+def phrase_similarity(phrase, text):
+    """text 안 어느 부분과 phrase가 가장 가까운지 — 1 - (최소 편집 비용 / phrase 자모 수)."""
+    p, t = to_jamo(phrase), to_jamo(text)
+    if not p or not t:
+        return 0.0
+    prev = [0.0] * (len(t) + 1)               # 부분 문자열 매칭: text 어디서든 시작 가능
+    for i, pc in enumerate(p, 1):
+        cur = [float(i)] + [0.0] * len(t)
+        for j, tc in enumerate(t, 1):
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + _sub_cost(pc, tc))
+        prev = cur
+    sim = max(0.0, 1.0 - min(prev) / len(p))
+    # 짧은 문장(자모 8개 미만, 예: 도와줘·살려줘)은 한 글자만 달라도 다른 말이 된다 → 거의 그대로여야 인정
+    return sim if len(p) >= 8 or sim >= 0.95 else 0.0
+
+
+def match_emergency_phrase(text):
+    """가장 가까운 긴급 문장과 유사도. 없으면 ("", 0.0)."""
+    best, best_sim = "", 0.0
+    for phrase in EMERGENCY_PHRASES:
+        sim = phrase_similarity(phrase, text)
+        if sim > best_sim:
+            best, best_sim = phrase, sim
+    return best, round(best_sim, 3)
+
+
 class WhisperSmallModel:
     def __init__(self, model_path):
         self.model_path = model_path
@@ -133,29 +220,52 @@ class WhisperSmallModel:
         return found[:5]
 
     def _predict_stt(self, waveform):
+        """Whisper 전사 + 환각 판정용 지표. 반환 (text, conf, source), 지표는 self._last_stt_meta.
+
+        pipeline 대신 encoder 1회 → ① 첫 위치 '말 없음'(<|nocaptions|>) 확률(decoder 1스텝)
+        ② 같은 encoder 출력으로 generate(전사는 pipeline과 동일) ③ 토큰 로그확률 평균.
+        Whisper는 무음·잡음에도 문장을 만든다("MBC 뉴스 ○○○입니다", 무음 → "도와주셨습니다").
+        09-24 재현: 실제 음성 no_speech ≤ 0.0012, 무음·잡음 0.003~0.78(중앙값 0.37~0.78).
+        """
+        self._last_stt_meta = {}
         if not self._asr_init_attempted:
             self._init_asr_pipeline()
         if self.asr_pipe is None or waveform is None or waveform.size == 0:
             return None, None, None
         try:
-            result = self.asr_pipe(
-                {"array": waveform.astype(np.float32), "sampling_rate": 16000},
-                generate_kwargs={"language": "ko", "task": "transcribe",
-                                 "num_beams": 1,
-                                 "max_new_tokens": int(os.getenv("M4_MAX_NEW_TOKENS", "48"))},
-            )
-            if isinstance(result, dict):
-                text = str(result.get("text", "")).strip()
-            else:
-                text = str(result).strip()
-            if not text:
-                return "", 0.0, "whisper-stt"
-            base_conf = 0.75
-            if len(text) <= 2:
-                base_conf = 0.55
-            return text, base_conf, "whisper-stt"
+            import torch
+            model = self.asr_pipe.model
+            fe, tok = self.asr_pipe.feature_extractor, self.asr_pipe.tokenizer
+            feats = fe(waveform.astype(np.float32), sampling_rate=16000,
+                       return_tensors="pt").input_features.to(model.device)
+            with torch.no_grad():
+                enc = model.encoder(input_features=feats, attention_mask=None)
+                sot = tok.convert_tokens_to_ids("<|startoftranscript|>")
+                first = model.decoder(input_ids=torch.tensor([[sot]], device=model.device),
+                                      encoder_hidden_states=enc.last_hidden_state)
+                no_speech = float(torch.softmax(first.logits[0, -1].float(), -1)[self._nospeech_id(tok)])
+                gen = model.generate(feats, encoder_outputs=enc, language="ko", task="transcribe",
+                                     num_beams=1, max_new_tokens=int(os.getenv("M4_MAX_NEW_TOKENS", "48")),
+                                     return_dict_in_generate=True, output_scores=True)
+                lp = model.compute_transition_scores(gen.sequences, gen.scores, normalize_logits=True)[0]
+                lp = lp[torch.isfinite(lp)]
+                avg_logprob = float(lp.mean()) if lp.numel() else -10.0
+            text = tok.batch_decode(gen.sequences, skip_special_tokens=True)[0].strip()
+            # 실제 확신도 = (1 - 말 없음 확률) × 토큰 평균 확률 (기존 0.75 고정값 대체)
+            conf = float(np.clip((1.0 - no_speech) * np.exp(avg_logprob), 0.0, 1.0))
+            self._last_stt_meta = {"no_speech_prob": round(no_speech, 4),
+                                   "avg_logprob": round(avg_logprob, 3), "raw_text": text}
+            return text, conf, "whisper-stt"
         except Exception:
             return None, None, None
+
+    @staticmethod
+    def _nospeech_id(tok):
+        for t in ("<|nocaptions|>", "<|nospeech|>"):
+            i = tok.convert_tokens_to_ids(t)
+            if i is not None and i != tok.unk_token_id:
+                return i
+        raise KeyError("no-speech token")
 
     def _predict_fallback(self, waveform):
         if waveform is None or waveform.size == 0:
@@ -186,8 +296,19 @@ class WhisperSmallModel:
             if text is None:
                 text, stt_conf, source = self._predict_fallback(waveform)
 
+        meta = (getattr(self, "_last_stt_meta", None) or {}) if direct_text is None else {}
+        filtered = bool(meta) and (meta["no_speech_prob"] > NO_SPEECH_MAX
+                                   or (meta["no_speech_prob"] > SURE_SPEECH_MAX
+                                       and meta["avg_logprob"] < MIN_AVG_LOGPROB))
+        if filtered:
+            text = ""          # 말이 아닌 구간(환각) — 전사·키워드를 버린다
+
         speech_detected = bool(text) or occupancy_score >= 0.2
         keywords = self._extract_keywords(text)
+        phrase, phrase_sim = match_emergency_phrase(text) if text else ("", 0.0)
+        phrase_hit = phrase_sim >= PHRASE_MIN_SIM
+        if phrase_hit and EMERGENCY_PHRASES[phrase] not in keywords:
+            keywords.append(EMERGENCY_PHRASES[phrase])
         stt_conf_val = float(np.clip(stt_conf if stt_conf is not None else 0.0, 0.0, 1.0))
 
         if source == "upstream-text":
@@ -204,6 +325,15 @@ class WhisperSmallModel:
             "stt_source": source,
             "language": "ko",
             "keywords": keywords,
+            # 긴급 문장 유사 매칭(자모 편집거리). emergency_phrase_detected면 규칙 게이트가 긴급 음성으로 본다
+            "emergency_phrase": phrase,
+            "emergency_phrase_sim": phrase_sim,
+            "emergency_phrase_detected": phrase_hit,
+            # 환각 판정 지표와 버리기 전 원문
+            "no_speech_prob": meta.get("no_speech_prob"),
+            "avg_logprob": meta.get("avg_logprob"),
+            "hallucination_filtered": filtered,
+            "transcript_raw": meta.get("raw_text", text),
             "infer_confidence": round(infer_conf, 3),
             # 하위 호환 키 (기존 occupancy UI/로직 유지)
             "occupied": speech_detected,

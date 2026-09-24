@@ -469,6 +469,7 @@ class QwenLogic:
         ("fall_hazard_bypass", "낙상+위험음"),
         ("vital_bypass", "생체위기"),
         ("temporal_escalation", "시계열악화"),
+        ("voice_emergency_bypass", "긴급음성"),
     )
 
     @staticmethod

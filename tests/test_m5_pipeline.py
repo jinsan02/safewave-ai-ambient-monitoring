@@ -728,5 +728,64 @@ class GuardianAppContractTests(unittest.TestCase):
         self.assertEqual(empty["nodes_online"], 0)
 
 
+class M4VoiceEmergencyTests(unittest.TestCase):
+    """M4 환각 필터·긴급 문장 유사 매칭(09-24)과 규칙 게이트·판정표 ④."""
+
+    @classmethod
+    def setUpClass(cls):
+        utils_stub.get_ort_providers = lambda: ["CPUExecutionProvider"]
+        utils_stub.get_session_opts = lambda *_a, **_k: None
+        cls.m4 = _load_module("m4_under_test", ROOT / "ai" / "experts" / "m4_whisper_small.py")
+
+    def _model(self, text, no_speech, avg_logprob):
+        model = self.m4.WhisperSmallModel.__new__(self.m4.WhisperSmallModel)
+        model.session = None
+
+        def fake_stt(_wave):
+            model._last_stt_meta = {"no_speech_prob": no_speech, "avg_logprob": avg_logprob, "raw_text": text}
+            return text, 0.9, "whisper-stt"
+        model._predict_stt = fake_stt
+        return model
+
+    def test_phrase_similarity_catches_misrecognition_not_everyday_speech(self):
+        match = self.m4.match_emergency_phrase
+        self.assertEqual(match("누가 좀 도와주세요")[0], "도와주세요")
+        self.assertGreaterEqual(match("나마졌어요")[1], 0.8)        # 넘어졌어요 오인식
+        self.assertGreaterEqual(match("실려주세요")[1], 0.8)        # 살려주세요 오인식
+        for text in ("도와주셨습니다", "MBC 뉴스 이덕영입니다", "오늘 날씨가 좋네요", "불 좀 꺼줘"):
+            self.assertLess(match(text)[1], 0.8, text)
+
+    def test_hallucination_is_dropped(self):
+        # 무음에서 Whisper가 만든 "도와주셨습니다"(no_speech 0.78) → 전사·키워드 버림
+        out = self._model("도와주셨습니다", 0.7822, -1.174).infer({"waveform": [0.0] * 1600})
+        self.assertTrue(out["hallucination_filtered"])
+        self.assertEqual(out["transcript_ko"], "")
+        self.assertEqual(out["keywords"], [])
+        self.assertFalse(out["emergency_phrase_detected"])
+        self.assertEqual(out["transcript_raw"], "도와주셨습니다")
+
+    def test_real_speech_detects_phrase(self):
+        out = self._model("넘어 졌어요 도와주세요", 0.0001, -0.02).infer({"waveform": [0.1] * 1600})
+        self.assertFalse(out["hallucination_filtered"])
+        self.assertTrue(out["emergency_phrase_detected"])
+        self.assertIn("도와", out["keywords"])
+
+    def test_voice_bypass_reaches_rule_alert_and_rubric(self):
+        speech = {"transcript_ko": "살려 주세요", "keywords": ["살려"], "stt_confidence": 0.95,
+                  "speech_detected": True, "emergency_phrase": "살려주세요",
+                  "emergency_phrase_sim": 1.0, "emergency_phrase_detected": True}
+        score, bd = emergency_score.compute_emergency_score({"speech_ko": speech})
+        self.assertGreaterEqual(score, 0.65)
+        self.assertTrue(bd["voice_emergency_bypass"])
+        reason = risk_policy.rule_alert_reason(bd, {"speech_ko": speech})
+        self.assertIn("긴급 음성 '살려 주세요'", reason)
+        level, why = risk_policy.rubric_level({"speech_ko": speech}, score, bd)
+        self.assertEqual(level, "critical")
+        self.assertTrue(why.startswith("판정표④"))
+        # 문장 매칭이 안 된 말은 게이트를 올리지 않는다
+        plain = dict(speech, emergency_phrase_detected=False)
+        self.assertLess(emergency_score.compute_emergency_score({"speech_ko": plain})[0], 0.6)
+
+
 if __name__ == "__main__":
     unittest.main()
