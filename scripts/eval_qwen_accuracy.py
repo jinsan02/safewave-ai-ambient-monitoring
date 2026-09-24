@@ -24,6 +24,7 @@ from logic.emergency_score import compute_emergency_score
 # 정답 v2(09-24): 게이트 등급을 기본으로, 아래 경우는 critical로 올린다(M5 노트북 판정표와 같음).
 #   ① 위기 생체신호 + (낙상 확정·위험음·긴급키워드) ② 낙상 확정 + (위험음·긴급키워드) ③ 게이트 critical
 # 긴급키워드는 M5 상태 문장과 같은 목록(logic.risk_policy.EMERGENCY_KEYWORDS).
+# 운영 판정표 하한(logic.risk_policy.rubric_level)과 일부러 따로 구현 — 테스트가 둘이 같은지 대조한다.
 _ALERT_KWS = ("살려", "도와", "응급", "위험", "119", "불", "화재")
 
 DATASET_PATH = os.path.join(os.path.dirname(__file__), "qwen_eval_dataset.json")
@@ -402,7 +403,7 @@ def run_evaluation(cases: list[dict], qwen, filter_id=None, filter_cat=None, gt_
             "adjacent":   adj,
             "safe_fail":  safe_fail,
             "reason":     reason,
-            "rule_floor": bool(qr.get("rule_floor")),
+            "rubric_floor": qr.get("rubric_floor"),
             "vital_override": bool(qr.get("vital_override")),
             "prompt_tokens": qr.get("prompt_tokens"),
             "qwen_raw":   (raw or "")[:200],

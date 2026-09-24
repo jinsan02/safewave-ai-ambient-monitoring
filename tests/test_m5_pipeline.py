@@ -259,8 +259,8 @@ class M5ResultConsistencyTests(unittest.TestCase):
         measured = logic._state_line({"vital": {"heart_rate": 72, "breathing_rate": 15}})
         self.assertIn("심박:72,호흡:15", measured)
 
-    def test_rule_floor_keeps_confirmed_fall_at_warning(self):
-        # 게이트가 M5를 부른 낙상 확정을 모델이 normal로 내려도 warning을 보장한다.
+    def test_rubric_floor_keeps_confirmed_fall_at_warning(self):
+        # 게이트가 M5를 부른 낙상 확정을 모델이 normal로 내려도 warning을 보장하고 근거를 남긴다.
         logic = self._logic()
         logic._evaluate_with_qwen = lambda _messages: (
             '{"risk_score":0.2,"risk_level":"normal","reason":"정상"}'
@@ -268,9 +268,38 @@ class M5ResultConsistencyTests(unittest.TestCase):
         result = logic.evaluate({"fall": {"fall_score": 0.9, "fall_detected": True}})
         self.assertEqual(result["risk_score"], 0.65)
         self.assertEqual(result["risk_level"], "warning")
-        self.assertTrue(result["rule_floor"])
+        self.assertEqual(result["rubric_floor"], "warning")
+        self.assertEqual(result["qwen_reason"], "판정표 warning 낙상감지 → 최소 warning")
 
-    def test_rule_floor_needs_gate_to_call_m5(self):
+    def test_rubric_floor_raises_crisis_with_hazard_to_critical(self):
+        # held-out에서 모델이 warning으로 낮춘 유형: 위기 생체신호 + 위험음 → 판정표① critical.
+        logic = self._logic()
+        logic._evaluate_with_qwen = lambda _messages: (
+            '{"reason":"심박위기(hr=31)+위험음(alarm)","risk_level":"warning","risk_score":0.75}'
+        )
+        result = logic.evaluate({
+            "vital": {"heart_rate": 31, "breathing_rate": 16},
+            "env_sound": {"env_sound_label": "alarm", "label": "alarm", "confidence": 0.9},
+        })
+        self.assertEqual(result["risk_level"], "critical")
+        self.assertEqual(result["rubric_floor"], "critical")
+        self.assertEqual(
+            result["qwen_reason"],
+            "심박위기(hr=31)+위험음(alarm) / 판정표① 심박위기(hr=31)+위험음(alarm) → 최소 critical",
+        )
+
+    def test_rubric_floor_does_not_lower_model(self):
+        # 모델이 판정표보다 높게 낸 경우(과대)는 건드리지 않는다.
+        logic = self._logic()
+        logic._evaluate_with_qwen = lambda _messages: (
+            '{"reason":"낙상감지","risk_level":"critical","risk_score":0.95}'
+        )
+        result = logic.evaluate({"fall": {"fall_score": 0.9, "fall_detected": True}})
+        self.assertEqual(result["risk_level"], "critical")
+        self.assertNotIn("rubric_floor", result)
+        self.assertEqual(result["qwen_reason"], "낙상감지")
+
+    def test_rubric_floor_needs_gate_to_call_m5(self):
         # 키워드만 있고 게이트가 0.6 미만이면(운영에서 M5 미호출) 하한을 걸지 않는다.
         logic = self._logic()
         logic._evaluate_with_qwen = lambda _messages: (
@@ -279,7 +308,17 @@ class M5ResultConsistencyTests(unittest.TestCase):
         result = logic.evaluate({"speech_ko": {"transcript_ko": "살려", "keywords": ["살려"],
                                                "speech_detected": True, "stt_confidence": 0.55}})
         self.assertEqual(result["risk_level"], "normal")
-        self.assertNotIn("rule_floor", result)
+        self.assertNotIn("rubric_floor", result)
+
+    def test_rubric_matches_independent_eval_answer(self):
+        # 운영 하한(risk_policy.rubric_level)과 평가 정답 v2(별도 구현)가 같은 등급을 내야 한다.
+        ev = _load_module("eval_qwen_rubric_check", ROOT / "scripts" / "eval_qwen_accuracy.py")
+        cases = ev.generate_dataset() + ev.generate_dataset(ev._random_case_defs(400, 7))
+        for c in cases:
+            er = c["expert_results"]
+            level, reason = risk_policy.rubric_level(er, c["ground_truth"]["emg_score"])
+            self.assertEqual(level, c["ground_truth"]["risk_level_v2"], c["id"])
+            self.assertEqual(bool(reason), level != "normal", c["id"])
 
 
 class M5LaptopProfileTests(unittest.TestCase):

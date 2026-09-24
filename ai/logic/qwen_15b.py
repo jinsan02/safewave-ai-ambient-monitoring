@@ -8,13 +8,14 @@ import onnxruntime as ort
 
 from logic.emergency_score import compute_emergency_score
 from logic.risk_policy import (
-    EMERGENCY_KEYWORDS,
+    RUBRIC_FLOOR_SCORE,
     WARNING_THRESHOLD,
     apply_context_window,
     apply_feedback_adjustment,
     apply_hourly_fallback_weight,
     classify_score,
     normalize_result,
+    rubric_level,
 )
 from utils import safe_float as _safe_float, stream_id_ts_ms as _stream_id_ts_ms
 
@@ -986,17 +987,19 @@ class QwenLogic:
                     result["qwen_reason"] = _cur_reason + "+" + "+".join(_vr_parts)
                     result["vital_override"] = True
 
-        # 안전 하한: 게이트가 M5를 부를 만큼(≥0.6) 위험하고 확정 규칙(낙상 확정·낙상+위험음)이나
-        # 긴급 키워드가 있으면, 모델이 normal로 내려도 warning을 보장한다(vital_override와 같은 방식).
+        # 판정표 하한: 모델이 판정표 등급보다 낮게 내면 판정표 등급으로 올리고, 어느 규칙 때문인지
+        # reason에 남긴다(알림 문구 qwen_reason으로 나간다). 모델이 더 높게 낸 경우는 그대로 둔다.
+        # 1.5B는 판정표를 일관되게 적용하지 못해 critical을 warning으로 내리는 일이 있었다(09-24 held-out).
         gate_score, gate_bd = gate
-        _speech = (expert_results or {}).get("speech_ko") or {}
-        _kw = any(k in str(_speech.get("transcript_ko", "")) for k in EMERGENCY_KEYWORDS) or \
-            any(k in EMERGENCY_KEYWORDS for k in (_speech.get("keywords") or []))
-        if gate_score >= WARNING_THRESHOLD and (
-                gate_bd.get("fall_consensus_bypass") or gate_bd.get("fall_hazard_bypass") or _kw):
-            if _safe_float(result.get("risk_score"), 0.0) < 0.65:
-                result["risk_score"] = 0.65
-                result["rule_floor"] = True
+        rub_level, rub_reason = rubric_level(expert_results, gate_score, gate_bd)
+        floor = RUBRIC_FLOOR_SCORE.get(rub_level)
+        if floor and _safe_float(result.get("risk_score"), 0.0) < floor:
+            result["risk_score"] = floor
+            result["rubric_floor"] = rub_level
+            model_reason = str(result.get("qwen_reason") or "").strip()
+            note = f"{rub_reason} → 최소 {rub_level}"
+            result["qwen_reason"] = note if model_reason in ("", "정상", "normal") \
+                else f"{model_reason} / {note}"
 
         # 모든 보정이 끝난 뒤 점수·단계·응급 플래그를 한 번에 정규화한다.
         # 모델 JSON의 level과 후처리 score가 서로 다른 상태로 ai:emergency에 나가는 것을 막는다.
