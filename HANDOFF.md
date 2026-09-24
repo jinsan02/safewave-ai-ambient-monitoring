@@ -1,6 +1,6 @@
 # HANDOFF — SafeWave-AI (rp5)
 
-> 갱신: 2026-09-23 밤 (4-2 노트북 실험·M3 v34 병합 추가) / 본문 2026-09-17 밤 · 노진산(+Claude/Codex) · 다음 작업자(Claude·Codex)는 이 문서부터 읽는다.
+> 갱신: 2026-09-25 새벽 (09-24 M5 노트북 프로필·판정표 하한, M4 환각 거르기·긴급 음성 경보, 노트북 시작 스크립트 — 자세한 내용은 `handoff/laptop-20260923/`) / 2026-09-23 밤 (4-2 노트북 실험·M3 v34 병합 추가) / 본문 2026-09-17 밤 · 노진산(+Claude/Codex) · 다음 작업자(Claude·Codex)는 이 문서부터 읽는다.
 > 규칙·제약: `AGENTS.md` / `CLAUDE.md` · 근거 현황: `docs/validation_status.md`
 > 이전 판(09-17 작업 경과를 누적 기록한 487줄)은 Git 기록 `f022cf2:HANDOFF.md`에 있다.
 
@@ -42,7 +42,7 @@
 |---|---|---|
 | M1 | `m1_wifi_pose_onnx/` | 김태연 인계(3노드 학습 → 입력 `(1,5,64,100)`, 출력 `fall_score`, 그래프 내 sigmoid, 임계 0.80). 이전 1노드 모델 `..._1node_20260802/`(RPi5), `..._stub_backup_20260917/`(노트북) |
 | M2 | `m2_frenel_vital_onnx/` | 미학습 스텁(심박 118 고정). **기본 off** |
-| M3 | `ast_onnx/v34_homepos.onnx` | 소민섭 v34 6-class(전처리 그래프 내장, sha256 `d06265e9…b615`). 받기·검증 `scripts/setup_m3_ast_onnx.py`. 옛 모델은 노트북 `ast_onnx_old_backup_20260923/`. **RPi5에도 설치 필요** |
+| M3 | `ast_onnx/v34_homepos.onnx` | 소민섭 v34 6-class(전처리 그래프 내장, sha256 `d06265e9…b615`). 받기·검증 `scripts/setup_m3_ast_onnx.py`. 옛 모델 백업은 09-24 폴더 정리 때 휴지통으로 이동. **RPi5에도 설치 필요** |
 | M4 | `whisper_onnx_int8_ft_svc/` (기본) | 이대경 INT8의 서비스용 복사본(`generation_config.json`만 교체, 가중치 하드링크). 원본 `whisper_onnx_int8_ft/`, 이전 fp32 `whisper_onnx/` |
 | M5 | `qwen_15b_gguf_q5/` + `qwen_15b/` | GGUF Q5_K_M 1.23GB + 토크나이저 |
 | 평가 데이터 | `data/m4_eval_2398/` | 이대경 M4 평가 세트 2,398개(노트북·RPi5). **공개 저장소 업로드 금지** |
@@ -115,6 +115,7 @@ docker logs -f rp5-ai-experts | grep m1_gate_stats     # 60초마다
 | `scripts/sim_esp32.py` | 3노드 100Hz UDP(788B) + 음성 주입 부하 시뮬레이터(기능 확인용) |
 | `scripts/alert_e2e_check.py` | 경보 경로(락·발송 시도)와 규칙 경보 확인 |
 | `scripts/dev/start_docker_desktop.ps1 -Restart` | 노트북 Docker Desktop 안전 시작(남은 소켓 폴더 비켜두기, 자동 업데이트 끄기) |
+| `reports/laptop/start_laptop.ps1` / `stop_laptop.ps1` (Git 제외) | 노트북 한 번에 켜기·끄기: Docker Desktop → 스택(기본 GPU, `-Mode cpu`) → 마이크·TTS 호스트 창(`start_voice_host.ps1`, `-NoVoice`로 생략) → 모니터(127.0.0.1:8081). 음성 확인(`VOICE_ENABLED=true`)은 마이크·TTS 창이 떠 있어야 동작 |
 | `reports/laptop/compose.laptop.yml` (Git 제외) | 노트북 RPi5 유사 CPU 한도 override. 기록 `reports/laptop/LAPTOP_TEST_LOG.md` |
 | 대시보드 | 노트북 `python -m http.server 8081` → `http://localhost:8081/monitor.html?api=http://192.168.1.2:8000` (노트북 스택은 `api=http://localhost:8000`). 자원 패널 제목의 주소로 어느 장비 값인지 확인 |
 
