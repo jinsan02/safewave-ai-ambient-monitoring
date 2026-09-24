@@ -6,7 +6,10 @@ import json
 import numpy as np
 import onnxruntime as ort
 
+from logic.emergency_score import compute_emergency_score
 from logic.risk_policy import (
+    EMERGENCY_KEYWORDS,
+    WARNING_THRESHOLD,
     apply_context_window,
     apply_feedback_adjustment,
     apply_hourly_fallback_weight,
@@ -387,8 +390,135 @@ class QwenLogic:
          '{"risk_score":0.7,"risk_level":"warning","reason":"지속경고 누적(rr=10,40분)"}'),
     ]
 
-    def _build_messages(self, expert_results, context_window=None, hourly_context=None, time_series=None):
+    # ── 노트북 프로필(SLM_PROMPT_PROFILE=laptop) ─────────────────────────────
+    # 프롬프트가 길어도 되는 장비용. 게이트 발동 규칙을 입력에 넣고, critical 판정표를
+    # 명시하고, 등급이 고르게 섞인 예시를 준다. 고정 prefix라 2회차부터 KV 캐시로 재사용된다.
+    # 출력은 reason을 먼저 쓰게 해 근거를 정한 뒤 등급을 고르게 한다.
+    _SYSTEM_LAPTOP = (
+        "너는 독거노인 안전 모니터링 AI다. 센서 규칙 게이트가 먼저 점수를 매긴 뒤 너에게 판단을 맡긴다. "
+        "현재 상태를 보고 최종 위험 등급을 정해 JSON 한 줄만 출력한다. 예시를 베끼지 말고 입력으로 새로 판단한다.\n"
+        "입력 읽는 법:\n"
+        "- 낙상:True = 낙상 확정(여러 번 연속 판정). 낙상:False(xx%) = 단일 판정 확률일 뿐 확정이 아니다\n"
+        "- 심박·호흡 '미측정'은 판단에서 뺀다. '이상'은 경고 수준, '위기'는 심박 ≤40/≥130 또는 호흡 ≤5/≥35\n"
+        "- 위험음 = 환경 alarm 또는 impact. 긴급키워드 = 소견에 '긴급키워드'가 있을 때만\n"
+        "- 게이트규칙 = 센서 규칙 게이트가 발동한 규칙(등급이 아니다). 게이트critical = 규칙 점수가 이미 critical\n"
+        "등급 판정표:\n"
+        "- critical: ① 위기 생체신호 + (낙상감지·위험음·긴급키워드 중 하나 이상) "
+        "② 낙상감지 + (위험음 또는 긴급키워드) ③ 게이트critical. "
+        "조건을 만족하면 소견이 더 붙어도 critical이다(신호가 많을수록 더 위험)\n"
+        "- warning: critical이 아니면서 낙상감지 단독(이상 수준 활력징후가 붙어도), 위기 생체신호 단독"
+        "(심박·호흡 동시 위기 포함), 또는 게이트규칙이 있을 때\n"
+        "- normal: 게이트규칙이 없고 낙상감지·위기 생체신호·긴급키워드가 모두 없을 때. "
+        "이상 수준 활력징후, 낙상 확률, 위험음은 하나씩만으로는 normal\n"
+        "reason에는 등급 근거가 된 소견만 짧게 쓰고 입력에 없는 소견을 지어내지 않는다.\n"
+        '형식: {"reason":"근거","risk_level":"normal|warning|critical","risk_score":점수} '
+        "(normal 0.1~0.5, warning 0.6~0.8, critical 0.9~1.0)"
+    )
+    # (심박, 호흡, 낙상확률, 낙상확정, 환경, 환경신뢰도, 키워드, 시계열, 정답 JSON)
+    # 평가셋(eval_qwen_accuracy.py) 케이스와 겹치지 않는 값으로 만든다.
+    _SHOT_DEFS_LAPTOP = [
+        (70, 14, 0.05, False, "silence", 0.9, [], None,
+         '{"reason":"정상","risk_level":"normal","risk_score":0.1}'),
+        (104, 16, 0.10, False, "silence", 0.9, [], None,
+         '{"reason":"심박이상(hr=104) 단독","risk_level":"normal","risk_score":0.3}'),
+        (72, 15, 0.93, False, "silence", 0.9, [], None,
+         '{"reason":"낙상위험(93%)은 단일 판정, 확정 아님","risk_level":"normal","risk_score":0.4}'),
+        (112, 15, 0.05, False, "alarm", 0.9, [], None,
+         '{"reason":"심박이상(hr=112)+위험음(alarm), 위기·낙상 없음","risk_level":"normal","risk_score":0.4}'),
+        (74, 14, 0.88, True, "silence", 0.9, [], None,
+         '{"reason":"낙상감지 단독","risk_level":"warning","risk_score":0.7}'),
+        (38, 14, 0.03, False, "silence", 0.9, [], None,
+         '{"reason":"심박위기(hr=38) 단독","risk_level":"warning","risk_score":0.7}'),
+        (150, 16, 0.03, False, "silence", 0.9, [], None,
+         '{"reason":"심박위기(hr=150) 단독","risk_level":"warning","risk_score":0.75}'),
+        (30, 4, 0.03, False, "silence", 0.9, [], None,
+         '{"reason":"심박위기(hr=30)+호흡위기(rr=4), 다른 영역 없음","risk_level":"warning","risk_score":0.8}'),
+        (68, 10, 0.03, False, "silence", 0.9, [], [{"hr": 68, "rr": 10}] * 40,
+         '{"reason":"지속경고 누적(rr=10,40분)","risk_level":"warning","risk_score":0.65}'),
+        (82, 29, 0.91, True, "noise", 0.5, [], None,
+         '{"reason":"낙상감지+호흡이상(rr=29), 위험음·키워드 없음","risk_level":"warning","risk_score":0.7}'),
+        (76, 38, 0.05, False, "speech", 0.8, ["도와"], None,
+         '{"reason":"호흡위기(rr=38)+긴급키워드","risk_level":"critical","risk_score":0.9}'),
+        (27, 16, 0.10, False, "speech", 0.8, ["도와"], None,
+         '{"reason":"심박위기(hr=27)+긴급키워드","risk_level":"critical","risk_score":0.9}'),
+        (36, 15, 0.82, True, "silence", 0.9, [], None,
+         '{"reason":"낙상감지+심박위기(hr=36)","risk_level":"critical","risk_score":0.95}'),
+        (74, 15, 0.86, True, "impact", 0.82, [], None,
+         '{"reason":"낙상감지+위험음(impact)","risk_level":"critical","risk_score":0.9}'),
+        (37, 16, 0.10, False, "alarm", 0.88, [], None,
+         '{"reason":"심박위기(hr=37)+위험음(alarm)","risk_level":"critical","risk_score":0.9}'),
+        (70, 16, 0.93, True, "speech", 0.8, ["살려"], None,
+         '{"reason":"낙상감지+긴급키워드","risk_level":"critical","risk_score":0.9}'),
+        (78, 15, 0.84, True, "alarm", 0.86, ["응급"], None,
+         '{"reason":"낙상감지+위험음(alarm)+긴급키워드","risk_level":"critical","risk_score":0.95}'),
+        (72, 26, 0.90, True, "impact", 0.9, [], None,
+         '{"reason":"낙상감지+호흡이상(rr=26)+위험음(impact)","risk_level":"critical","risk_score":0.9}'),
+        (132, 16, 0.87, True, "speech", 0.8, ["살려"], None,
+         '{"reason":"낙상감지+심박위기(hr=132)+긴급키워드","risk_level":"critical","risk_score":0.95}'),
+        (145, 3, 0.05, False, "impact", 0.8, [], None,
+         '{"reason":"심박위기(hr=145)+호흡위기(rr=3)+위험음(impact)","risk_level":"critical","risk_score":0.95}'),
+        (142, 36, 0.9, True, "alarm", 0.9, ["119"], None,
+         '{"reason":"낙상감지+심박위기(hr=142)+호흡위기(rr=36)+위험음(alarm)+긴급키워드","risk_level":"critical","risk_score":1.0}'),
+    ]
+    # M5 호출 임계(0.6)로 끌어올리는 규칙만 — 키워드+낙상의심 보너스(+0.15)는 normal에서도 붙어 뺀다.
+    _GATE_RULE_NAMES = (
+        ("fall_consensus_bypass", "낙상확정"),
+        ("fall_hazard_bypass", "낙상+위험음"),
+        ("vital_bypass", "생체위기"),
+        ("temporal_escalation", "시계열악화"),
+    )
+
+    @staticmethod
+    def _laptop_profile():
+        return os.getenv("SLM_PROMPT_PROFILE", "rpi5").strip().lower() == "laptop"
+
+    @staticmethod
+    def _gate(expert_results, time_series=None):
+        """ai/main.py와 같은 규칙 게이트 점수 — M5 입력(노트북)과 안전 하한에 쓴다."""
+        return compute_emergency_score(expert_results or {}, time_series=time_series)
+
+    def _gate_note(self, gate):
+        # 게이트 등급(warning)을 그대로 적으면 1.5B가 그 등급을 복사한다(held-out 09-24: 위기+위험음·
+        # 키워드 critical 21건을 warning으로). 발동 규칙만 적고, 등급은 critical일 때만 알린다.
+        score, bd = gate
+        _, level, _ = classify_score(score)
+        rules = [name for key, name in self._GATE_RULE_NAMES if bd.get(key)]
+        if not rules and score >= WARNING_THRESHOLD:
+            rules = ["점수초과"]   # 규칙 없이 가중합만으로 0.6 이상
+        note = "게이트규칙:" + (",".join(rules) if rules else "없음")
+        return note + (" 게이트critical" if level == "critical" else "")
+
+    @staticmethod
+    def _shot_experts(hr, rr, fall, fall_det, env, env_conf, kws):
+        return {
+            "fall": {"fall_score": fall, "fall_detected": fall_det, "infer_confidence": 0.75},
+            "vital": {"heart_rate": hr, "breathing_rate": rr, "infer_confidence": 0.7},
+            "env_sound": {"label": env, "env_sound_label": env, "confidence": env_conf,
+                          "env_sound_confidence": env_conf, "infer_confidence": 0.8},
+            "speech_ko": {"transcript_ko": " ".join(kws), "speech_detected": bool(kws),
+                          "stt_confidence": 0.55 if kws else 0.0, "keywords": list(kws),
+                          "infer_confidence": 0.55},
+        }
+
+    def _laptop_user(self, expert_results, context_window=None, hourly_context=None,
+                     time_series=None, gate=None):
+        cur = self._state_line(expert_results, context_window, hourly_context)
+        cur += " | " + self._gate_note(gate or self._gate(expert_results, time_series))
+        series_line = self._series_prompt(time_series) if time_series else ""
+        return cur + ("\n" + series_line if series_line else "")
+
+    def _build_messages(self, expert_results, context_window=None, hourly_context=None,
+                        time_series=None, gate=None):
         """system + few-shot(user/assistant 턴) + 현재 상태(+시계열)(user)로 messages 구성."""
+        if self._laptop_profile():
+            messages = [{"role": "system", "content": self._SYSTEM_LAPTOP}]
+            for *args, ts, answer in self._SHOT_DEFS_LAPTOP:
+                shot = self._shot_experts(*args)
+                messages.append({"role": "user", "content": self._laptop_user(shot, time_series=ts)})
+                messages.append({"role": "assistant", "content": answer})
+            messages.append({"role": "user", "content": self._laptop_user(
+                expert_results, context_window, hourly_context, time_series, gate)})
+            return messages
         cur = self._state_line(expert_results, context_window, hourly_context)
         if time_series:
             series_line = self._series_prompt(time_series)
@@ -657,7 +787,10 @@ class QwenLogic:
             formatted += "{"
 
             inputs = self.tokenizer(
-                formatted, return_tensors="np", truncation=True, max_length=1024
+                formatted, return_tensors="np", truncation=True,
+                # 노트북 프로필 프롬프트는 약 2,730토큰 — 1024에서 자르면 현재 상태가 잘린다.
+                max_length=int(os.getenv("QWEN_ONNX_MAX_PROMPT",
+                                         "4096" if self._laptop_profile() else "1024")),
             )
             input_ids = inputs["input_ids"].astype(np.int64)
             attention_mask = inputs.get("attention_mask")
@@ -764,8 +897,9 @@ class QwenLogic:
         qwen_infer_ms = None
         parsed_response = None
         used_fallback = False
+        gate = self._gate(expert_results, time_series)
         if self.session and self.tokenizer:
-            messages = self._build_messages(expert_results, context_window, hourly_context, time_series)
+            messages = self._build_messages(expert_results, context_window, hourly_context, time_series, gate)
             qwen_started = time.perf_counter()
             qwen_response = self._evaluate_with_qwen(messages)
             qwen_infer_ms = (time.perf_counter() - qwen_started) * 1000.0
@@ -851,6 +985,18 @@ class QwenLogic:
                              for p in _vr_parts if "(" in p):
                     result["qwen_reason"] = _cur_reason + "+" + "+".join(_vr_parts)
                     result["vital_override"] = True
+
+        # 안전 하한: 게이트가 M5를 부를 만큼(≥0.6) 위험하고 확정 규칙(낙상 확정·낙상+위험음)이나
+        # 긴급 키워드가 있으면, 모델이 normal로 내려도 warning을 보장한다(vital_override와 같은 방식).
+        gate_score, gate_bd = gate
+        _speech = (expert_results or {}).get("speech_ko") or {}
+        _kw = any(k in str(_speech.get("transcript_ko", "")) for k in EMERGENCY_KEYWORDS) or \
+            any(k in EMERGENCY_KEYWORDS for k in (_speech.get("keywords") or []))
+        if gate_score >= WARNING_THRESHOLD and (
+                gate_bd.get("fall_consensus_bypass") or gate_bd.get("fall_hazard_bypass") or _kw):
+            if _safe_float(result.get("risk_score"), 0.0) < 0.65:
+                result["risk_score"] = 0.65
+                result["rule_floor"] = True
 
         # 모든 보정이 끝난 뒤 점수·단계·응급 플래그를 한 번에 정규화한다.
         # 모델 JSON의 level과 후처리 score가 서로 다른 상태로 ai:emergency에 나가는 것을 막는다.

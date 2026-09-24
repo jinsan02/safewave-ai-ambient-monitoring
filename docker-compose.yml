@@ -175,6 +175,8 @@ services:
       # RPi5 4코어 운영 후보: M5 2코어 + sensing/Redis/CSI 처리 여유.
       - QWEN_GGUF_THREADS=${QWEN_GGUF_THREADS:-2}
       - QWEN_GGUF_CACHE_MB=${QWEN_GGUF_CACHE_MB:-64}
+      # rpi5 = 짧은 프롬프트(약 740토큰). laptop = 판정표·게이트규칙·예시 21개(약 2,730토큰) — CACHE_MB 256 필요.
+      - SLM_PROMPT_PROFILE=${SLM_PROMPT_PROFILE:-rpi5}
       - MALLOC_ARENA_MAX=2
     volumes:
       - ./volumes/models:/app/models

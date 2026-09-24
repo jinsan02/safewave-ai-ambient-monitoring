@@ -38,7 +38,8 @@ class QwenLogic(_QwenLogic15B):
         # 기본 64: 출력 토큰 분석 p99≈56(cap)에서 truncation 발생 → MAX=p99+여유=64 적용
         self.max_new_tokens = int(os.getenv("QWEN_MAX_NEW_TOKENS", "64"))
         self.max_new_tokens = max(40, min(80, self.max_new_tokens))
-        self.n_ctx = int(os.getenv("QWEN_GGUF_N_CTX", "2048"))
+        # 노트북 프로필 프롬프트는 약 2,730토큰이라 2048이면 넘친다.
+        self.n_ctx = int(os.getenv("QWEN_GGUF_N_CTX", "4096" if self._laptop_profile() else "2048"))
         self.n_threads = int(os.getenv("QWEN_GGUF_THREADS", "0")) or None  # 0 → llama 기본
         self.hourly_window_ms = int(os.getenv("SLM_HOURLY_WINDOW_MS", "3600000"))
         self.hourly_emergency_scan_limit = int(os.getenv("SLM_HOURLY_EMERGENCY_SCAN_LIMIT", "300"))
@@ -87,7 +88,9 @@ class QwenLogic(_QwenLogic15B):
             if os.getenv("QWEN_GGUF_CACHE", "1") == "1":
                 try:
                     from llama_cpp import LlamaRAMCache
-                    cache_mb = int(os.getenv("QWEN_GGUF_CACHE_MB", "64"))
+                    # 1.5B KV는 토큰당 약 28 KB — 노트북 프롬프트(약 2,730토큰)는 약 76 MB라 64 MB를 넘는다.
+                    cache_mb = int(os.getenv("QWEN_GGUF_CACHE_MB",
+                                             "256" if self._laptop_profile() else "64"))
                     self._llama.set_cache(LlamaRAMCache(capacity_bytes=cache_mb * 1024 * 1024))
                     _LOGGER.info("qwen_gguf_cache_enabled capacity_mb=%d", cache_mb)
                 except Exception as e:

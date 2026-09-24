@@ -259,6 +259,65 @@ class M5ResultConsistencyTests(unittest.TestCase):
         measured = logic._state_line({"vital": {"heart_rate": 72, "breathing_rate": 15}})
         self.assertIn("심박:72,호흡:15", measured)
 
+    def test_rule_floor_keeps_confirmed_fall_at_warning(self):
+        # 게이트가 M5를 부른 낙상 확정을 모델이 normal로 내려도 warning을 보장한다.
+        logic = self._logic()
+        logic._evaluate_with_qwen = lambda _messages: (
+            '{"risk_score":0.2,"risk_level":"normal","reason":"정상"}'
+        )
+        result = logic.evaluate({"fall": {"fall_score": 0.9, "fall_detected": True}})
+        self.assertEqual(result["risk_score"], 0.65)
+        self.assertEqual(result["risk_level"], "warning")
+        self.assertTrue(result["rule_floor"])
+
+    def test_rule_floor_needs_gate_to_call_m5(self):
+        # 키워드만 있고 게이트가 0.6 미만이면(운영에서 M5 미호출) 하한을 걸지 않는다.
+        logic = self._logic()
+        logic._evaluate_with_qwen = lambda _messages: (
+            '{"risk_score":0.2,"risk_level":"normal","reason":"정상"}'
+        )
+        result = logic.evaluate({"speech_ko": {"transcript_ko": "살려", "keywords": ["살려"],
+                                               "speech_detected": True, "stt_confidence": 0.55}})
+        self.assertEqual(result["risk_level"], "normal")
+        self.assertNotIn("rule_floor", result)
+
+
+class M5LaptopProfileTests(unittest.TestCase):
+    def setUp(self):
+        import os
+        self._old = os.environ.get("SLM_PROMPT_PROFILE")
+        os.environ["SLM_PROMPT_PROFILE"] = "laptop"
+        self.logic = qwen_15b.QwenLogic.__new__(qwen_15b.QwenLogic)
+
+    def tearDown(self):
+        import os
+        if self._old is None:
+            os.environ.pop("SLM_PROMPT_PROFILE", None)
+        else:
+            os.environ["SLM_PROMPT_PROFILE"] = self._old
+
+    def test_laptop_messages_carry_gate(self):
+        msgs = self.logic._build_messages({"fall": {"fall_score": 0.9, "fall_detected": True}})
+        self.assertEqual(msgs[0]["content"], qwen_15b.QwenLogic._SYSTEM_LAPTOP)
+        self.assertEqual(len(msgs), 2 + 2 * len(qwen_15b.QwenLogic._SHOT_DEFS_LAPTOP))
+        self.assertIn("게이트규칙:낙상확정", msgs[-1]["content"])
+        self.assertNotIn("warning", msgs[-1]["content"])
+
+    def test_rpi5_profile_unchanged(self):
+        import os
+        os.environ["SLM_PROMPT_PROFILE"] = "rpi5"
+        msgs = self.logic._build_messages({})
+        self.assertEqual(msgs[0]["content"], qwen_15b.QwenLogic._SYSTEM)
+        self.assertEqual(len(msgs), 2 + 2 * len(qwen_15b.QwenLogic._SHOTS))
+
+    def test_laptop_shots_follow_eval_rubric(self):
+        # 예시 정답이 평가 정답 v2(판정표)와 같은 규칙을 따라야 한다.
+        ev = _load_module("eval_qwen_under_test", ROOT / "scripts" / "eval_qwen_accuracy.py")
+        for *args, ts, answer in qwen_15b.QwenLogic._SHOT_DEFS_LAPTOP:
+            er = self.logic._shot_experts(*args)
+            score, _ = emergency_score.compute_emergency_score(er, time_series=ts)
+            self.assertEqual(ev._gt_level_v2(er, score), json.loads(answer)["risk_level"], args)
+
 
 class M5RiskPolicyTests(unittest.TestCase):
     def test_context_and_feedback_are_clamped(self):

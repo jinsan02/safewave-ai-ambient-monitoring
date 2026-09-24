@@ -21,6 +21,11 @@ import sys, os, json, time, argparse
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ai"))
 from logic.emergency_score import compute_emergency_score
 
+# 정답 v2(09-24): 게이트 등급을 기본으로, 아래 경우는 critical로 올린다(M5 노트북 판정표와 같음).
+#   ① 위기 생체신호 + (낙상 확정·위험음·긴급키워드) ② 낙상 확정 + (위험음·긴급키워드) ③ 게이트 critical
+# 긴급키워드는 M5 상태 문장과 같은 목록(logic.risk_policy.EMERGENCY_KEYWORDS).
+_ALERT_KWS = ("살려", "도와", "응급", "위험", "119", "불", "화재")
+
 DATASET_PATH = os.path.join(os.path.dirname(__file__), "qwen_eval_dataset.json")
 RESULTS_PATH = os.path.join(os.path.dirname(__file__), "..", "reports", "qwen_eval_results.json")
 
@@ -207,13 +212,57 @@ def _gt_level(emg_score: float) -> str:
     return "normal"
 
 
+def _gt_level_v2(er: dict, emg_score: float) -> str:
+    level = _gt_level(emg_score)
+    if level != "warning":
+        return level
+    hr = er["vital"]["heart_rate"]
+    rr = er["vital"]["breathing_rate"]
+    crisis = (0 < hr <= 40) or hr >= 130 or (0 < rr <= 5) or rr >= 35
+    fall_det = er["fall"]["fall_detected"]
+    hazard = er["env_sound"]["env_sound_label"] in ("alarm", "impact")
+    sp = er["speech_ko"]
+    kw = any(k in sp["transcript_ko"] for k in _ALERT_KWS) or any(k in _ALERT_KWS for k in sp["keywords"])
+    if (crisis and (fall_det or hazard or kw)) or (fall_det and (hazard or kw)):
+        return "critical"
+    return level
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 데이터셋 생성
 # ─────────────────────────────────────────────────────────────────────────────
 
-def generate_dataset() -> list[dict]:
+def _random_case_defs(n: int, seed: int) -> list[dict]:
+    """held-out 무작위 케이스 — 프롬프트 예시를 평가셋 100건에 맞춰 고치는 과적합을 확인하는 용도.
+    값은 평가셋·예시와 같은 범주에서 무작위로 섞는다. 정답은 같은 규칙(v1 게이트, v2 판정표)."""
+    import random
+    rng = random.Random(seed)
+    hr_odd = [25, 31, 38, 44, 52, 57, 103, 115, 126, 134, 148, 165]
+    rr_odd = [2, 4, 6, 9, 11, 23, 27, 33, 37, 44]
+    envs = [("silence", 0.9), ("speech", 0.8), ("noise", 0.5), ("music", 0.7),
+            ("alarm", 0.9), ("alarm", 0.45), ("impact", 0.85), ("impact", 0.62)]
+    kws = [[], [], [], [], ["살려"], ["도와"], ["119"], ["응급"], ["화재"], ["아파"]]
+    defs = []
+    for i in range(n):
+        fall_det = rng.random() < 0.35
+        fall = round(rng.uniform(0.8, 0.99) if fall_det else rng.uniform(0.0, 0.95), 2)
+        env, ec = rng.choice(envs)
+        kw = rng.choice(kws)
+        if kw and rng.random() < 0.5:
+            env, ec = "speech", 0.8
+        defs.append({
+            "id": f"R-{i + 1:03d}", "cat": "random", "scenario": "held-out 무작위",
+            "hr": rng.choice(hr_odd) if rng.random() < 0.5 else rng.choice([61, 69, 77, 86, 94]),
+            "rr": rng.choice(rr_odd) if rng.random() < 0.4 else rng.choice([13, 15, 17, 19]),
+            "fall": fall, "fall_det": fall_det, "env": env, "env_conf": ec,
+            "tx": " ".join(kw), "kw": kw,
+        })
+    return defs
+
+
+def generate_dataset(defs=None) -> list[dict]:
     cases = []
-    for d in _CASE_DEFS:
+    for d in (defs or _CASE_DEFS):
         er = _build_expert(d)
         score, bd = compute_emergency_score(er)
         gt = _gt_level(score)
@@ -225,6 +274,7 @@ def generate_dataset() -> list[dict]:
             "ground_truth": {
                 "emg_score":    round(score, 4),
                 "risk_level":   gt,
+                "risk_level_v2": _gt_level_v2(er, score),
                 "vital_bypass": bd.get("vital_bypass", False),
                 "keyword_fall_bonus": bd.get("keyword_fall_bonus", False),
                 "breakdown":    bd,
@@ -236,7 +286,7 @@ def generate_dataset() -> list[dict]:
 def save_dataset(cases: list[dict]):
     os.makedirs(os.path.dirname(DATASET_PATH), exist_ok=True)
     with open(DATASET_PATH, "w", encoding="utf-8") as f:
-        json.dump({"version": "1.0", "total": len(cases), "cases": cases},
+        json.dump({"version": "2.0", "total": len(cases), "cases": cases},
                   f, ensure_ascii=False, indent=2)
     print(f"[GEN] 데이터셋 저장: {DATASET_PATH}  ({len(cases)}건)")
 
@@ -269,6 +319,19 @@ def _load_qwen(impl="05b"):
         except Exception as e:
             print(f"[ERR] Qwen gguf 로드 실패: {e}")
             return None
+    if impl == "15b":
+        p = os.getenv("SLM_MODEL", os.path.join(models_dir, "qwen_15b"))
+        try:
+            from logic.qwen_15b import QwenLogic
+            q = QwenLogic(p)
+            q._ensure_model_loaded()
+            if q.session is None or q.tokenizer is None:
+                raise RuntimeError("ONNX 세션 또는 토크나이저 없음")
+            print(f"[LOAD] Qwen(15b onnx): {p}")
+            return q
+        except Exception as e:
+            print(f"[ERR] Qwen 15b 로드 실패: {e}")
+            return None
     p = SLM_MODEL_PATH
     if not os.path.exists(p):
         candidates = [
@@ -296,7 +359,7 @@ def _level_to_int(level: str) -> int:
     return {"normal": 0, "warning": 1, "critical": 2}.get(level, -1)
 
 
-def run_evaluation(cases: list[dict], qwen, filter_id=None, filter_cat=None):
+def run_evaluation(cases: list[dict], qwen, filter_id=None, filter_cat=None, gt_key="risk_level_v2"):
     if filter_id:
         cases = [c for c in cases if c["id"] == filter_id]
     if filter_cat:
@@ -306,7 +369,7 @@ def run_evaluation(cases: list[dict], qwen, filter_id=None, filter_cat=None):
     per_cat: dict[str, list] = {}
 
     for i, case in enumerate(cases):
-        gt   = case["ground_truth"]["risk_level"]
+        gt   = case["ground_truth"][gt_key]
         emg  = case["ground_truth"]["emg_score"]
 
         t0 = time.perf_counter()
@@ -331,12 +394,17 @@ def run_evaluation(cases: list[dict], qwen, filter_id=None, filter_cat=None):
             "scenario":   case["scenario"],
             "gt_level":   gt,
             "gt_emg":     emg,
+            "m5_called":  emg >= 0.60,   # 운영에서 게이트가 M5를 부르는 케이스
+            "gt_v1":      case["ground_truth"]["risk_level"],
             "pred_level": pred,
             "pred_score": round(pred_score, 3),
             "exact":      exact,
             "adjacent":   adj,
             "safe_fail":  safe_fail,
             "reason":     reason,
+            "rule_floor": bool(qr.get("rule_floor")),
+            "vital_override": bool(qr.get("vital_override")),
+            "prompt_tokens": qr.get("prompt_tokens"),
             "qwen_raw":   (raw or "")[:200],
             "infer_ms":   round(elapsed, 1),
         }
@@ -378,6 +446,13 @@ def print_report(results: list[dict], per_cat: dict):
     print(f"  Critical recall: {crit_recall:5.1f}%  (GT critical -> warning or critical)")
     print(f"  Normal FP rate : {fn_rate:5.1f}%  (GT normal -> 비normal 예측)")
     print(f"  Avg infer ms  : {avg_ms:6.1f}ms")
+    op = [r for r in results if r.get("m5_called")]
+    if op:
+        o_ex = sum(1 for r in op if r["exact"])
+        over = sum(1 for r in op if _level_to_int(r["pred_level"]) > _level_to_int(r["gt_level"]))
+        under = sum(1 for r in op if _level_to_int(r["pred_level"]) < _level_to_int(r["gt_level"]))
+        print(f"  [운영 구간: 게이트>=0.6, M5 호출] exact {o_ex}/{len(op)} ({o_ex/len(op)*100:5.1f}%)"
+              f"  과대 {over}  과소 {under}")
     print()
     print(f"  {'카테고리':<22} {'건수':>4}  {'Exact':>6}  {'Adj':>6}")
     print(f"  {'-'*22}  {'-'*4}  {'-'*6}  {'-'*6}")
@@ -398,9 +473,13 @@ def print_report(results: list[dict], per_cat: dict):
             print(f"      reason: {r['reason']}")
 
 
-def save_results(results: list[dict]):
-    os.makedirs(os.path.dirname(RESULTS_PATH), exist_ok=True)
+def save_results(results: list[dict], path=RESULTS_PATH, meta=None):
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    op = [r for r in results if r.get("m5_called")]
     out = {
+        "meta":         meta or {},
+        "op_total":     len(op),
+        "op_exact":     sum(1 for r in op if r["exact"]),
         "evaluated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "total":        len(results),
         "exact":        sum(1 for r in results if r["exact"]),
@@ -408,9 +487,9 @@ def save_results(results: list[dict]):
         "safe_fail":    sum(1 for r in results if r["safe_fail"]),
         "results":      results,
     }
-    with open(RESULTS_PATH, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
-    print(f"\n  결과 저장: {RESULTS_PATH}")
+    print(f"\n  결과 저장: {path}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -422,8 +501,29 @@ def main():
     ap.add_argument("--gen",  action="store_true", help="데이터셋 재생성만 (Qwen 미호출)")
     ap.add_argument("--id",   default=None, help="단일 케이스 ID (예: D-01)")
     ap.add_argument("--cat",  default=None, help="카테고리 필터 (예: vital_crisis_solo)")
-    ap.add_argument("--impl", default="05b", choices=["05b", "gguf"], help="M5 백엔드 (기본 05b)")
+    ap.add_argument("--impl", default="05b", choices=["05b", "gguf", "15b"], help="M5 백엔드 (기본 05b)")
+    ap.add_argument("--gt",   default="v2", choices=["v1", "v2"], help="정답 기준 (v1=게이트 등급, v2=판정표)")
+    ap.add_argument("--out",  default=RESULTS_PATH, help="결과 JSON 경로")
+    ap.add_argument("--random", type=int, default=0, help="held-out 무작위 N건으로 평가(데이터셋 파일은 그대로)")
+    ap.add_argument("--seed", type=int, default=924)
     args = ap.parse_args()
+
+    if args.random:
+        cases = generate_dataset(_random_case_defs(args.random, args.seed))
+        _print_dataset_summary(cases)
+        qwen = _load_qwen(impl=args.impl)
+        if qwen is None:
+            sys.exit(1)
+        gt_key = "risk_level_v2" if args.gt == "v2" else "risk_level"
+        results, per_cat = run_evaluation(cases, qwen, gt_key=gt_key)
+        print_report(results, per_cat)
+        save_results(results, args.out, meta={
+            "impl": args.impl, "gt": args.gt, "random": args.random, "seed": args.seed,
+            "profile": os.getenv("SLM_PROMPT_PROFILE", "rpi5"),
+            "gguf_gpu_layers": os.getenv("QWEN_GGUF_GPU_LAYERS", "0"),
+            "ort_use_gpu": os.getenv("ORT_USE_GPU", "0"),
+        })
+        return
 
     if args.gen:
         cases = generate_dataset()
@@ -431,8 +531,10 @@ def main():
         _print_dataset_summary(cases)
         return
 
-    cases = load_dataset()
-    print(f"[LOAD] 데이터셋: {len(cases)}건")
+    # 정답은 매번 현재 규칙으로 다시 계산한다(규칙이 바뀌면 저장본이 낡는다 — 09-23 9건 차이).
+    cases = generate_dataset()
+    save_dataset(cases)
+    print(f"[LOAD] 데이터셋: {len(cases)}건 (정답 {args.gt})")
 
     qwen = _load_qwen(impl=args.impl)
     if qwen is None:
@@ -440,21 +542,29 @@ def main():
         sys.exit(1)
 
     print(f"\n추론 시작 (첫 호출 JIT warmup ~6s 포함)...\n")
-    results, per_cat = run_evaluation(cases, qwen, filter_id=args.id, filter_cat=args.cat)
+    gt_key = "risk_level_v2" if args.gt == "v2" else "risk_level"
+    results, per_cat = run_evaluation(cases, qwen, filter_id=args.id, filter_cat=args.cat, gt_key=gt_key)
     print_report(results, per_cat)
     if not args.id and not args.cat:
-        save_results(results)
+        save_results(results, args.out, meta={
+            "impl": args.impl, "gt": args.gt,
+            "profile": os.getenv("SLM_PROMPT_PROFILE", "rpi5"),
+            "gguf_gpu_layers": os.getenv("QWEN_GGUF_GPU_LAYERS", "0"),
+            "ort_use_gpu": os.getenv("ORT_USE_GPU", "0"),
+        })
 
 
 def _print_dataset_summary(cases: list[dict]):
     from collections import Counter
     cats = Counter(c["category"] for c in cases)
     gts  = Counter(c["ground_truth"]["risk_level"] for c in cases)
+    gts2 = Counter(c["ground_truth"]["risk_level_v2"] for c in cases)
     bps  = sum(1 for c in cases if c["ground_truth"]["vital_bypass"])
     print("\n  [데이터셋 요약]")
     for cat, n in sorted(cats.items()):
         print(f"    {cat:<22} {n}건")
     print(f"\n  GT 분포: normal={gts['normal']} warning={gts['warning']} critical={gts['critical']}")
+    print(f"  GT v2 분포: normal={gts2['normal']} warning={gts2['warning']} critical={gts2['critical']}")
     print(f"  vital_bypass 케이스: {bps}건")
 
 
