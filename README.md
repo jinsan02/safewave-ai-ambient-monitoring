@@ -129,7 +129,8 @@ M3 환경음(v34_homepos, 소민섭): 입력 16 kHz mono 3초, 출력 6종 `sile
 
 프롬프트 프로필(`SLM_PROMPT_PROFILE`): `rpi5`(기본, 약 740토큰)와 `laptop`(판정표·게이트 발동 규칙·고정 예시 21개
 + 입력과 비슷한 판정표 라벨 예시 3개, 약 3,170토큰, `QWEN_GGUF_CACHE_MB=256` 권장). 노트북 held-out 평가(1.5B Q5 고정,
-운영 구간 98건)에서 80% → 98%(과소 0건), 지연 p50 GPU 0.73 → 0.93 s·CPU 1.38 → 3.60 s.
+운영 구간 98건)에서 80% → 98%(과소 0건), M2 꺼짐(심박·호흡 미측정) 조건 102건에서 76% → 95%,
+지연 p50 GPU 0.73 → 0.93 s·CPU 1.38 → 3.60 s.
 판정표 하한(`logic/risk_policy.rubric_level`)은 두 프로필 공통: 게이트 ≥ 0.6이면 최소 warning,
 위기 생체신호·낙상 확정이 위험음·긴급키워드와 겹치면 최소 critical, 올린 근거는 `qwen_reason`에 붙는다. 자세한 내용은
 `handoff/laptop-20260923/M5_NOTES_NOJINSAN.md` 7·8절. 평가: `python scripts/eval_qwen_accuracy.py --impl gguf [--random 150 --seed 2024]`.

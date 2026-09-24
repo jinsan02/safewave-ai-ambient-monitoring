@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import time
+import itertools
 import json
 import numpy as np
 import onnxruntime as ort
@@ -543,34 +544,37 @@ class QwenLogic:
     _KNN_POOL = None
 
     def _knn_pool(self):
-        """판정표 라벨 예시 풀(고정 격자 288개). 라벨·근거는 rubric_level로 만든다."""
+        """판정표 라벨 예시 풀(격자 306개 — 미측정 18개 포함). 라벨·근거는 rubric_level로 만든다."""
         if QwenLogic._KNN_POOL is None:
+            # (0, 0) = M2 꺼짐(심박·호흡 미측정). 이 묶음이 없으면 M2를 끈 운영 조건에서 비슷한 예시가
+            # 엉뚱하게 골라져 held-out 102건 중 모델만 75건이었다(09-24).
+            vitals = [(hr, rr) for hr in (72, 108, 34, 150) for rr in (15, 9, 3, 38)] + [(0, 0)]
+            falls = ((0.1, False), (0.8, False), (0.9, True))
+            envs = (("silence", 0.9), ("alarm", 0.9), ("impact", 0.85))
             pool = []
-            for hr in (72, 108, 34, 150):
-                for rr in (15, 9, 3, 38):
-                    for fall, det in ((0.1, False), (0.8, False), (0.9, True)):
-                        for env, conf in (("silence", 0.9), ("alarm", 0.9), ("impact", 0.85)):
-                            for kws in ([], ["도와"]):
-                                er = self._shot_experts(hr, rr, fall, det, env, conf, kws)
-                                score, bd = compute_emergency_score(er)
-                                level, _ = rubric_level(er, score, bd)
-                                # 근거 = 상태 문장의 소견(고정 예시와 같은 모양). warning은 critical이 아닌
-                                # 이유를 붙인다 — 없으면 1.5B가 소견이 여럿이면 critical로 올렸다(09-24 held-out).
-                                reason = self._state_line(er).split("소견:", 1)[1].replace(", ", "+")
-                                if level == "warning":
-                                    sig = self._signature(er)
-                                    crisis = "crisis" in (sig["hr"], sig["rr"])
-                                    if sig["fall"] == "det":
-                                        reason += ", 위험음·키워드·위기 없음"
-                                    elif crisis:
-                                        reason += ", 낙상확정·위험음·키워드 없음"
-                                    else:
-                                        reason += ", 낙상 확정 아님·위기 없음"
-                                ans = json.dumps({"reason": reason, "risk_level": level,
-                                                  "risk_score": {"normal": 0.3, "warning": 0.7,
-                                                                 "critical": 0.9}[level]},
-                                                 ensure_ascii=False, separators=(",", ":"))
-                                pool.append((self._signature(er), er, ans))
+            for (hr, rr), (fall, det), (env, conf), kws in itertools.product(
+                    vitals, falls, envs, ([], ["도와"])):
+                er = self._shot_experts(hr, rr, fall, det, env, conf, kws)
+                score, bd = compute_emergency_score(er)
+                level, _ = rubric_level(er, score, bd)
+                # 근거 = 상태 문장의 소견(고정 예시와 같은 모양). warning은 critical이 아닌 이유를
+                # 붙인다 — 없으면 1.5B가 소견이 여럿이면 critical로 올렸다(09-24 held-out).
+                reason = self._state_line(er).split("소견:", 1)[1].replace(", ", "+")
+                if level == "warning":
+                    sig = self._signature(er)
+                    unmeasured = sig["hr"] == sig["rr"] == "none"
+                    if sig["fall"] == "det":
+                        reason += (", 위험음·키워드 없음(생체신호 미측정)" if unmeasured
+                                   else ", 위험음·키워드·위기 없음")
+                    elif "crisis" in (sig["hr"], sig["rr"]):
+                        reason += ", 낙상확정·위험음·키워드 없음"
+                    else:
+                        reason += (", 낙상 확정 아님(생체신호 미측정)" if unmeasured
+                                   else ", 낙상 확정 아님·위기 없음")
+                ans = json.dumps({"reason": reason, "risk_level": level,
+                                  "risk_score": {"normal": 0.3, "warning": 0.7, "critical": 0.9}[level]},
+                                 ensure_ascii=False, separators=(",", ":"))
+                pool.append((self._signature(er), er, ans))
             QwenLogic._KNN_POOL = pool
         return QwenLogic._KNN_POOL
 

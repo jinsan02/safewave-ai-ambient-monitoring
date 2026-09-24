@@ -25,6 +25,9 @@ def replay(path):
     data = json.load(open(path, encoding="utf-8"))
     meta = data.get("meta") or {}
     defs = ev._random_case_defs(meta["random"], meta["seed"]) if meta.get("random") else None
+    if defs and meta.get("m2_off"):
+        for d in defs:
+            d["hr"] = d["rr"] = 0
     cases = {c["id"]: c for c in ev.generate_dataset(defs)}
     q = QwenLogic.__new__(QwenLogic)
     q.session = q.tokenizer = True

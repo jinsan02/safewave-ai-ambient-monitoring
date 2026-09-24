@@ -507,10 +507,16 @@ def main():
     ap.add_argument("--out",  default=RESULTS_PATH, help="결과 JSON 경로")
     ap.add_argument("--random", type=int, default=0, help="held-out 무작위 N건으로 평가(데이터셋 파일은 그대로)")
     ap.add_argument("--seed", type=int, default=924)
+    ap.add_argument("--m2-off", action="store_true",
+                    help="held-out 케이스의 심박·호흡을 0(미측정)으로 — M2를 끈 현재 운영 조건")
     args = ap.parse_args()
 
     if args.random:
-        cases = generate_dataset(_random_case_defs(args.random, args.seed))
+        defs = _random_case_defs(args.random, args.seed)
+        if args.m2_off:
+            for d in defs:
+                d["hr"] = d["rr"] = 0
+        cases = generate_dataset(defs)
         _print_dataset_summary(cases)
         qwen = _load_qwen(impl=args.impl)
         if qwen is None:
@@ -520,6 +526,7 @@ def main():
         print_report(results, per_cat)
         save_results(results, args.out, meta={
             "impl": args.impl, "gt": args.gt, "random": args.random, "seed": args.seed,
+            "m2_off": args.m2_off,
             "profile": os.getenv("SLM_PROMPT_PROFILE", "rpi5"),
             "gguf_gpu_layers": os.getenv("QWEN_GGUF_GPU_LAYERS", "0"),
             "ort_use_gpu": os.getenv("ORT_USE_GPU", "0"),
