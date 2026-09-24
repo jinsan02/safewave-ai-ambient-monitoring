@@ -338,7 +338,7 @@ class M5LaptopProfileTests(unittest.TestCase):
     def test_laptop_messages_carry_gate(self):
         msgs = self.logic._build_messages({"fall": {"fall_score": 0.9, "fall_detected": True}})
         self.assertEqual(msgs[0]["content"], qwen_15b.QwenLogic._SYSTEM_LAPTOP)
-        self.assertEqual(len(msgs), 2 + 2 * len(qwen_15b.QwenLogic._SHOT_DEFS_LAPTOP))
+        self.assertEqual(len(msgs), 2 + 2 * (len(qwen_15b.QwenLogic._SHOT_DEFS_LAPTOP) + 3))
         self.assertIn("게이트규칙:낙상확정", msgs[-1]["content"])
         self.assertNotIn("warning", msgs[-1]["content"])
 
@@ -348,6 +348,20 @@ class M5LaptopProfileTests(unittest.TestCase):
         msgs = self.logic._build_messages({})
         self.assertEqual(msgs[0]["content"], qwen_15b.QwenLogic._SYSTEM)
         self.assertEqual(len(msgs), 2 + 2 * len(qwen_15b.QwenLogic._SHOTS))
+
+    def test_knn_pool_follows_rubric_and_retrieves_same_signature(self):
+        # 유사 예시 풀의 정답은 판정표(평가 정답 v2와 같음)이고, 같은 모양의 입력이 먼저 붙는다.
+        ev = _load_module("eval_qwen_knn_check", ROOT / "scripts" / "eval_qwen_accuracy.py")
+        for _sig, er, answer in self.logic._knn_pool():
+            score, _ = emergency_score.compute_emergency_score(er)
+            self.assertEqual(ev._gt_level_v2(er, score), json.loads(answer)["risk_level"])
+        er = {"vital": {"heart_rate": 31, "breathing_rate": 16},
+              "env_sound": {"env_sound_label": "alarm", "label": "alarm", "confidence": 0.9}}
+        shots = self.logic._knn_shots(er)
+        self.assertEqual(len(shots), 3)
+        self.assertEqual(self.logic._signature(shots[-1][0]), self.logic._signature(er))
+        msgs = self.logic._build_messages(er)
+        self.assertEqual(len(msgs), 2 + 2 * (len(qwen_15b.QwenLogic._SHOT_DEFS_LAPTOP) + 3))
 
     def test_laptop_shots_follow_eval_rubric(self):
         # 예시 정답이 평가 정답 v2(판정표)와 같은 규칙을 따라야 한다.

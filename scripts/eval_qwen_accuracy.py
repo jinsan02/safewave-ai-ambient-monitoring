@@ -406,7 +406,7 @@ def run_evaluation(cases: list[dict], qwen, filter_id=None, filter_cat=None, gt_
             "rubric_floor": qr.get("rubric_floor"),
             "vital_override": bool(qr.get("vital_override")),
             "prompt_tokens": qr.get("prompt_tokens"),
-            "qwen_raw":   (raw or "")[:200],
+            "qwen_raw":   (raw or "")[:400],
             "infer_ms":   round(elapsed, 1),
         }
         results.append(rec)

@@ -14,6 +14,7 @@ from logic.risk_policy import (
     apply_feedback_adjustment,
     apply_hourly_fallback_weight,
     classify_score,
+    has_emergency_keyword,
     normalize_result,
     rubric_level,
 )
@@ -508,6 +509,78 @@ class QwenLogic:
         series_line = self._series_prompt(time_series) if time_series else ""
         return cur + ("\n" + series_line if series_line else "")
 
+    # ── 노트북 유사 예시(retrieval few-shot) ─────────────────────────────────
+    # 고정 예시 21개 뒤에 입력과 가장 비슷한 판정표 라벨 예시 3개를 붙인다. 고정 prefix는 그대로라
+    # 캐시가 유지되고, 붙는 예시(약 450토큰)만 매번 새로 읽는다. 09-24 held-out에서 모델만 정확도
+    # 74/92 → 88/92. 같이 시험한 판정표 체크리스트 출력(84/92, 대부분 하한이 채움)·등급 logit 보정
+    # (다른 세트로 일반화 안 됨)은 뺐다.
+    @staticmethod
+    def _signature(er):
+        er = er or {}
+        v = er.get("vital") or {}
+        hr = _safe_float(v.get("heart_rate"), 0.0)
+        rr = _safe_float(v.get("breathing_rate"), 0.0)
+
+        def cat(x, crit_lo, crit_hi, warn_lo, warn_hi):
+            if x <= 0:
+                return "none"
+            if x <= crit_lo or x >= crit_hi:
+                return "crisis"
+            return "warn" if (x < warn_lo or x > warn_hi) else "ok"
+
+        f = er.get("fall") or {}
+        fs = _safe_float(f.get("fall_score"), 0.0)
+        snd = er.get("env_sound") or {}
+        label = str(snd.get("env_sound_label") or snd.get("label") or "")
+        return {
+            "hr": cat(hr, 40, 130, 60, 100),
+            "rr": cat(rr, 5, 35, 12, 25),
+            "fall": "det" if f.get("fall_detected") else ("prob" if fs >= 0.5 else "none"),
+            "hazard": label in ("alarm", "impact"),
+            "kw": has_emergency_keyword(er.get("speech_ko")),
+        }
+
+    _KNN_POOL = None
+
+    def _knn_pool(self):
+        """판정표 라벨 예시 풀(고정 격자 288개). 라벨·근거는 rubric_level로 만든다."""
+        if QwenLogic._KNN_POOL is None:
+            pool = []
+            for hr in (72, 108, 34, 150):
+                for rr in (15, 9, 3, 38):
+                    for fall, det in ((0.1, False), (0.8, False), (0.9, True)):
+                        for env, conf in (("silence", 0.9), ("alarm", 0.9), ("impact", 0.85)):
+                            for kws in ([], ["도와"]):
+                                er = self._shot_experts(hr, rr, fall, det, env, conf, kws)
+                                score, bd = compute_emergency_score(er)
+                                level, _ = rubric_level(er, score, bd)
+                                # 근거 = 상태 문장의 소견(고정 예시와 같은 모양). warning은 critical이 아닌
+                                # 이유를 붙인다 — 없으면 1.5B가 소견이 여럿이면 critical로 올렸다(09-24 held-out).
+                                reason = self._state_line(er).split("소견:", 1)[1].replace(", ", "+")
+                                if level == "warning":
+                                    sig = self._signature(er)
+                                    crisis = "crisis" in (sig["hr"], sig["rr"])
+                                    if sig["fall"] == "det":
+                                        reason += ", 위험음·키워드·위기 없음"
+                                    elif crisis:
+                                        reason += ", 낙상확정·위험음·키워드 없음"
+                                    else:
+                                        reason += ", 낙상 확정 아님·위기 없음"
+                                ans = json.dumps({"reason": reason, "risk_level": level,
+                                                  "risk_score": {"normal": 0.3, "warning": 0.7,
+                                                                 "critical": 0.9}[level]},
+                                                 ensure_ascii=False, separators=(",", ":"))
+                                pool.append((self._signature(er), er, ans))
+            QwenLogic._KNN_POOL = pool
+        return QwenLogic._KNN_POOL
+
+    def _knn_shots(self, expert_results, k=3):
+        sig = self._signature(expert_results)
+        ranked = sorted(self._knn_pool(),
+                        key=lambda item: -sum(item[0][f] == sig[f] for f in sig))
+        # 가장 비슷한 예시를 입력 바로 앞(마지막)에 둔다
+        return [(er, ans) for _, er, ans in reversed(ranked[:k])]
+
     def _build_messages(self, expert_results, context_window=None, hourly_context=None,
                         time_series=None, gate=None):
         """system + few-shot(user/assistant 턴) + 현재 상태(+시계열)(user)로 messages 구성."""
@@ -516,6 +589,9 @@ class QwenLogic:
             for *args, ts, answer in self._SHOT_DEFS_LAPTOP:
                 shot = self._shot_experts(*args)
                 messages.append({"role": "user", "content": self._laptop_user(shot, time_series=ts)})
+                messages.append({"role": "assistant", "content": answer})
+            for er, answer in self._knn_shots(expert_results):
+                messages.append({"role": "user", "content": self._laptop_user(er)})
                 messages.append({"role": "assistant", "content": answer})
             messages.append({"role": "user", "content": self._laptop_user(
                 expert_results, context_window, hourly_context, time_series, gate)})
@@ -908,6 +984,12 @@ class QwenLogic:
             if qwen_response:
                 parsed_response = self._parse_qwen_json_response(qwen_response)
                 if parsed_response is not None:
+                    if self._laptop_profile():
+                        # 노트북: 등급이 점수 구간과 어긋나면(예: warning인데 0.4) 등급을 믿고 점수를 구간에 맞춘다.
+                        # 점수가 권위값이라 0.4면 normal로 떨어지던 문제(09-24 held-out 5건).
+                        s, lv = parsed_response["risk_score"], parsed_response["risk_level"]
+                        if classify_score(s)[1] != lv:
+                            parsed_response["risk_score"] = {"normal": 0.3, "warning": 0.7, "critical": 0.9}[lv]
                     risk_score = parsed_response["risk_score"]
                 else:
                     risk_score = self._extract_risk_score(qwen_response)

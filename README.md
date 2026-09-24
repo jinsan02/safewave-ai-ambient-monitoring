@@ -127,12 +127,12 @@ M3 환경음(v34_homepos, 소민섭): 입력 16 kHz mono 3초, 출력 6종 `sile
 시계열 에스컬레이션(지속 경고 누적·점진 악화 → M5 임계 0.6 floor)이 포함되며,
 시계열 소스는 `agg:minute:*` 분 집계다 (없으면 스냅샷 전용 — 하위호환).
 
-프롬프트 프로필(`SLM_PROMPT_PROFILE`): `rpi5`(기본, 약 740토큰)와 `laptop`(판정표·게이트 발동 규칙·예시 21개,
-약 2,730토큰, `QWEN_GGUF_CACHE_MB=256` 권장). 노트북 held-out 평가(1.5B Q5 고정, 운영 구간 92건)에서
-72~73% → 79~80%(판정표 하한 포함 83~84%, 과소 0건), 지연 p50 GPU 0.76 → 0.85 s·CPU 1.66 → 2.09 s.
+프롬프트 프로필(`SLM_PROMPT_PROFILE`): `rpi5`(기본, 약 740토큰)와 `laptop`(판정표·게이트 발동 규칙·고정 예시 21개
++ 입력과 비슷한 판정표 라벨 예시 3개, 약 3,170토큰, `QWEN_GGUF_CACHE_MB=256` 권장). 노트북 held-out 평가(1.5B Q5 고정,
+운영 구간 98건)에서 80% → 98%(과소 0건), 지연 p50 GPU 0.73 → 0.93 s·CPU 1.38 → 3.60 s.
 판정표 하한(`logic/risk_policy.rubric_level`)은 두 프로필 공통: 게이트 ≥ 0.6이면 최소 warning,
 위기 생체신호·낙상 확정이 위험음·긴급키워드와 겹치면 최소 critical, 올린 근거는 `qwen_reason`에 붙는다. 자세한 내용은
-`handoff/laptop-20260923/M5_NOTES_NOJINSAN.md` 7절. 평가: `python scripts/eval_qwen_accuracy.py --impl gguf [--random 150 --seed 2024]`.
+`handoff/laptop-20260923/M5_NOTES_NOJINSAN.md` 7·8절. 평가: `python scripts/eval_qwen_accuracy.py --impl gguf [--random 150 --seed 2024]`.
 
 ### M3 환경음 라벨 (7종)
 
