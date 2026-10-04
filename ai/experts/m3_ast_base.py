@@ -28,9 +28,9 @@ DEFAULT_WINDOW_MS = 3000
 ENV_SOUND_LABELS = ("silence", "speech", "impact", "noise", "alarm", "unknown")
 IMPACT_INDEX = ENV_SOUND_LABELS.index("impact")
 # 디렉터리로 지정됐을 때 찾아볼 파일명 (앞에서부터 우선)
-# INT8 양자화본은 FP32 뒤에 둔다 — 둘 다 놓여 있으면 FP32 가 기본이고,
-# INT8 을 쓰려면 M3_ENV_SOUND_ONNX 로 명시한다 (조용한 소리에서 판정이 갈릴 수 있음)
-ONNX_CANDIDATES = ("m3_env_sound.onnx", "v34_homepos.onnx", "ast.onnx", "v34_homepos_int8.onnx")
+# INT8 양자화본을 FP32 앞에 둔다 — 둘 다 놓여 있으면 INT8 이 기본이다 (CPU 1초 홉 실시간:
+# FP32 1.09초 / INT8 0.84초, 운영 판정 동일). FP32 를 쓰려면 M3_ENV_SOUND_ONNX 로 명시한다
+ONNX_CANDIDATES = ("m3_env_sound.onnx", "v34_homepos_int8.onnx", "v34_homepos.onnx", "ast.onnx")
 
 
 class EnvSoundAnalysisModel:

@@ -70,8 +70,8 @@
 
 | 파일 | 크기 | 설명 |
 |---|---|---|
-| `v34_homepos.onnx` | 330.3 MB | 모델 본체 (전처리 포함) — **기본** |
-| `v34_homepos_int8.onnx` | 88.0 MB | 같은 모델의 INT8 양자화본 (선택, §2.1) |
+| `v34_homepos_int8.onnx` | 88.0 MB | INT8 양자화본 (전처리 포함) — **기본** (§2.1) |
+| `v34_homepos.onnx` | 330.3 MB | 같은 모델의 FP32 원본 — 기준 모델·GPU용 |
 | `model_spec.json` | 1.5 KB | 입출력·전처리 상수·권장 운영값 (기계 판독용) |
 | `labels.json` | 0.1 KB | 라벨 id → 이름 |
 
@@ -97,10 +97,10 @@ python scripts/setup_m3_ast_onnx.py --src ./ast_onnx
 ### 교체할 때
 
 입출력 규격과 라벨 순서가 고정이므로 **`.onnx` 파일만 바꾸면 된다.** 코드 수정은 필요 없다.
-파일명이 `m3_env_sound.onnx` / `v34_homepos.onnx` / `ast.onnx` 중 하나면 자동으로 찾고,
-아니면 `M3_ENV_SOUND_ONNX` 로 파일명을 지정한다.
+파일명이 `m3_env_sound.onnx` / `v34_homepos_int8.onnx` / `v34_homepos.onnx` / `ast.onnx` 중
+하나면 이 순서로 자동으로 찾고, 아니면 `M3_ENV_SOUND_ONNX` 로 파일명을 지정한다.
 
-## 2.1 INT8 양자화본 — CPU가 버거울 때 (선택)
+## 2.1 INT8 양자화본 — 기본 모델
 
 FP32와 **같은 학습 결과물**이다. 가중치만 INT8로 압축했고 입출력·라벨·전처리는 동일하다.
 
@@ -135,22 +135,24 @@ FP32와 **같은 학습 결과물**이다. 가중치만 INT8로 압축했고 입
 
 ```bash
 hf sync hf://buckets/sobh6498/ast-finetuned-audioset-10-10-0.4593-bucket/ast-base/exports/ast_onnx ./ast_onnx
-python scripts/setup_m3_ast_onnx.py --src ./ast_onnx --model v34_homepos_int8.onnx   # 복사 + INT8 검증
+python scripts/setup_m3_ast_onnx.py --src ./ast_onnx     # 복사 + 검증 (INT8 자동 선택)
 ```
 
-두 파일이 같은 폴더에 있으면 **FP32가 기본으로 선택된다.** INT8로 돌리려면 명시한다.
+두 파일이 같은 폴더에 있으면 **INT8이 기본으로 선택된다.** FP32로 돌리려면 명시한다.
 
 ```bash
-M3_ENV_SOUND_ONNX=v34_homepos_int8.onnx     # docker-compose 환경변수로 지정
+M3_ENV_SOUND_ONNX=v34_homepos.onnx     # docker-compose 환경변수로 지정
 ```
 
 ### 언제 쓸까
 
-- **기본은 FP32.** 기준 모델이고, 등가성은 위 표본에서 확인한 것이다.
-- **INT8**: CPU만 있고 1초 홉 실시간이 필요할 때(0.84초 < 1초), 또는 메모리·이미지 크기를
-  줄여야 할 때. 0.84초는 여유가 작으니 무음 게이트 선필터를 함께 쓴다(게이트 미통과 윈도우는
-  모델을 호출하지 않아도 결과가 같다).
-- **GPU가 있으면 INT8은 쓰지 않는다.** FP32 + `CUDAExecutionProvider` 가 더 빠르다.
+- **기본은 INT8.** CPU 1초 홉 실시간을 FP32(1.09초)는 못 맞추고 INT8(0.84초)은 맞춘다.
+  0.84초도 여유가 작으니 무음 게이트 선필터를 함께 쓴다(게이트 미통과 윈도우는 모델을
+  호출하지 않아도 결과가 같다).
+- **FP32**: 기준 모델이다. 판정이 의심될 때 대조용으로 쓴다.
+- **GPU가 있으면 FP32를 쓴다.** FP32 + `CUDAExecutionProvider` 가 더 빠르다.
+- **ARM(RPi5) 미검증**: 위 등가성은 x86(i7-8700K)에서만 확인했다. ARM은 INT8 연산 커널이
+  달라 확률이 조금 달라질 수 있으므로, 실기기에서 FP32와 판정을 한 번 대조한다.
 - 미재검증 항목: AI-Hub held-out 낙상 재현율(FP32 0.993). 실환경 50시행이 전부 일치했으므로
   감지 쪽 위험은 낮게 보지만 정식 재측정은 하지 않았다.
 
@@ -246,7 +248,7 @@ dict로 넘길 때 읽는 메타는 두 개다.
     "silence": 0.0012, "speech": 0.1803, "impact": 0.7124,
     "noise": 0.0001, "alarm": 0.0003, "unknown": 0.1057
   },
-  "env_sound_model": "v34_homepos"
+  "env_sound_model": "v34_homepos_int8"
 }
 ```
 
