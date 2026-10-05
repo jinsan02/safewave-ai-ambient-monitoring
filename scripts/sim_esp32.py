@@ -7,6 +7,9 @@
 
 예) python scripts/sim_esp32.py --seconds 300 --audio-every 15 \
         --audio-dir data/m4_eval_2398/audio/fall_related
+- --format npose: N_pose 펌웨어 흉내. CSI2(280B, --hz 50 권장) + 보드 추론 결과 CSR!(32B, 5 Hz).
+  평소 점수 0.05~0.3, --fall-at 초부터 3초 동안 --fall-nodes 점수 0.95(window_full·coverage 1.0).
+예) python scripts/sim_esp32.py --format npose --hz 50 --nodes 1,2,3 --seconds 60 --fall-at 20 --fall-nodes 1,2
 """
 
 import argparse
@@ -22,6 +25,8 @@ import wave
 import numpy as np
 
 PACKET = struct.Struct("<4sBBHIIhH192f")
+CSI2 = struct.Struct("<4sBBHIIhH64ff")    # N_pose 원본 CSI, 280B
+CSR = struct.Struct("<4sBBHIIhHfff")      # N_pose 추론 결과, 32B
 
 
 def build_packet(node_id: int, seq: int, dev_ts: int, t: float, rssi: int) -> bytes:
@@ -32,6 +37,23 @@ def build_packet(node_id: int, seq: int, dev_ts: int, t: float, rssi: int) -> by
     floats = np.concatenate([np.clip(raw, 0, 1), resp, heart]).astype(np.float32)
     return PACKET.pack(b"CSI!", node_id, 0, 64, seq & 0xFFFFFFFF, dev_ts & 0xFFFFFFFF,
                        rssi, 0, *floats.tolist())
+
+
+def build_npose_csi(node_id: int, seq: int, t: float, rssi: int, fresh: bool) -> bytes:
+    k = np.arange(64, dtype=np.float32)
+    raw = np.clip(np.abs(np.sin(k / 6.0 + t * 2.0 + node_id)) + np.random.normal(0, 0.05, 64), 0, None)
+    raw[[0, 1, 2, 3, 4, 5, 32, 59, 60, 61, 62, 63]] = 0.0
+    peak = float(raw.max()) or 1.0
+    ts = int(time.time() * 1000) & 0xFFFFFFFF
+    return CSI2.pack(b"CSI2", node_id, 1 if fresh else 0, 64, seq & 0xFFFFFFFF, ts, rssi, 0,
+                     *(raw / peak).astype(np.float32).tolist(), peak * 40.0)
+
+
+def build_npose_result(node_id: int, seq: int, rssi: int, score: float, window_full: bool) -> bytes:
+    logit = math.log(score / (1 - score)) if 0 < score < 1 else 0.0
+    ts = int(time.time() * 1000) & 0xFFFFFFFF
+    return CSR.pack(b"CSR!", node_id, 0, 2 if window_full else 0, seq & 0xFFFFFFFF, ts, rssi,
+                    12, score, logit, 1.0 if window_full else 0.5)
 
 
 def load_wavs(audio_dir: str | None, limit: int = 50) -> list[np.ndarray]:
@@ -68,7 +90,14 @@ def main() -> None:
     ap.add_argument("--audio-dir", default=None)
     ap.add_argument("--audio-node", type=int, default=1)
     ap.add_argument("--redis-port", type=int, default=6379)
+    ap.add_argument("--format", choices=("legacy", "npose"), default="legacy",
+                    help="legacy = 788B CSI!(100Hz) / npose = CSI2 + CSR!(5Hz)")
+    ap.add_argument("--fall-at", type=float, default=-1.0, help="npose: 모의 낙상 시작 초(음수=없음)")
+    ap.add_argument("--fall-nodes", default="1", help="npose: 낙상 점수를 낼 노드")
     args = ap.parse_args()
+    fall_nodes = {int(n) for n in args.fall_nodes.split(",") if n}
+    result_every = max(1, round(args.hz / 5))     # npose 추론 5 Hz
+    result_seq = {}
 
     nodes = [int(n) for n in args.nodes.split(",") if n]
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -106,8 +135,18 @@ def main() -> None:
             if random.random() < args.loss:
                 lost += 1
                 continue
-            dev_ts = clock0[n] + int(elapsed * 1000 + random.uniform(0, args.jitter_ms))
-            sock.sendto(build_packet(n, seq[n], dev_ts, elapsed, rssi[n]), (args.host, args.port))
+            if args.format == "npose":
+                sock.sendto(build_npose_csi(n, seq[n], elapsed, rssi[n], random.random() > 0.1),
+                            (args.host, args.port))
+                if seq[n] % result_every == 0:
+                    result_seq[n] = result_seq.get(n, 0) + 1
+                    falling = n in fall_nodes and 0 <= elapsed - args.fall_at < 3.0
+                    score = 0.95 if falling else random.uniform(0.05, 0.3)
+                    sock.sendto(build_npose_result(n, result_seq[n], rssi[n], score, elapsed >= 2.0),
+                                (args.host, args.port))
+            else:
+                dev_ts = clock0[n] + int(elapsed * 1000 + random.uniform(0, args.jitter_ms))
+                sock.sendto(build_packet(n, seq[n], dev_ts, elapsed, rssi[n]), (args.host, args.port))
             sent += 1
         next_tick += period
         if r is not None and now - last_audio >= args.audio_every:

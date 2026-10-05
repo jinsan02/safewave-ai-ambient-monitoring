@@ -5,6 +5,7 @@ Redis 스트림 3개를 새로 들어오는 것부터 읽는다(서비스 코드
   ai:result    → m1_fall.csv(M1 창 점수·K/N 투표), m2_vital.csv(심박·호흡), gate.csv(규칙 점수·등급·M5 호출 여부)
   audio:result → m3_env.csv(환경음), m4_stt.csv(전사·키워드) — 오디오 이벤트 1건당 1행
   ai:emergency → m5_emergency.csv(M5 판단 전부 + ai-experts 규칙 경보, slm_mode로 구분)
+  m1:score     → m1_node_score.csv(N_pose 보드 추론 1회 = 1행: 노드 점수·로짓·창 채움·추론 시간)
 모든 행에 세 가지 시각을 적는다: stream_ms(Redis 기록 시각), ts_ms(payload 시각), host_iso(노트북 시계 —
 영상 속 화면 시계와 맞출 때 사용). audio:result·ai:emergency 원문은 raw_*.jsonl에도 남긴다
 (--raw-result면 ai:result 원문도, 시간당 약 100 MB).
@@ -26,7 +27,7 @@ from pathlib import Path
 
 import redis
 
-STREAMS = ("ai:result", "audio:result", "ai:emergency")
+STREAMS = ("ai:result", "audio:result", "ai:emergency", "m1:score")
 
 COLUMNS = {
     "m1_fall": ["fall_score", "window_fall_detected", "fall_detected", "fall_votes",
@@ -34,10 +35,13 @@ COLUMNS = {
     "m2_vital": ["heart_rate", "breathing_rate", "infer_confidence"],
     "gate": ["risk_score", "risk_level", "emergency", "slm_needed", "rule_alert",
              "fall_consensus_bypass", "fall_hazard_bypass", "vital_bypass", "keyword_fall_bonus",
-             "temporal_escalation", "breakdown"],
+             "temporal_escalation", "voice_emergency_bypass", "breakdown"],
     "m3_env": ["env_sound_label", "env_sound_confidence", "impact_prob", "impact_alert", "raw_peak",
                "env_sound_source", "duration_ms", "peak_db", "probs"],
-    "m4_stt": ["transcript_ko", "keywords", "stt_confidence", "speech_detected", "duration_ms"],
+    "m4_stt": ["transcript_ko", "keywords", "stt_confidence", "speech_detected", "duration_ms",
+               "emergency_phrase", "emergency_phrase_sim", "emergency_phrase_detected",
+               "no_speech_prob", "avg_logprob", "hallucination_filtered", "transcript_raw"],
+    "m1_node_score": ["seq", "score", "logit", "coverage", "infer_ms", "model_ver", "flags", "rssi"],
     "m5_emergency": ["slm_mode", "risk_level", "risk_score", "gate_score", "emergency", "slm_invoked",
                      "qwen_reason", "summary", "breakdown"],
 }
@@ -73,6 +77,17 @@ class Recorder:
     def handle(self, stream, msg_id, fields, nodes):
         sid = msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id)
         stream_ms = int(sid.split("-")[0])
+        if stream == "m1:score":       # 필드가 JSON이 아니라 평문
+            f = {(k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v)
+                 for k, v in fields.items()}
+            node = int(f.get("node", 0))
+            if nodes and node not in nodes:
+                return
+            self.first_ms = self.first_ms or stream_ms
+            self.last_ms = stream_ms
+            base = [sid, stream_ms, datetime.now().isoformat(timespec="milliseconds"), f.get("ts_ms"), node]
+            self.row("m1_node_score", base, f)
+            return
         raw = fields.get(b"data") or fields.get("data") or b"{}"
         raw = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
         try:
@@ -98,7 +113,8 @@ class Recorder:
             bd = p.get("emergency_breakdown") or {}
             gate = {k: p.get(k) for k in ("risk_score", "risk_level", "emergency", "slm_needed", "rule_alert")}
             gate.update({k: bd.get(k) for k in ("fall_consensus_bypass", "fall_hazard_bypass",
-                                                 "vital_bypass", "keyword_fall_bonus", "temporal_escalation")})
+                                                 "vital_bypass", "keyword_fall_bonus", "temporal_escalation",
+                                                 "voice_emergency_bypass")})
             gate["breakdown"] = {k: v for k, v in bd.items() if k in ("fall", "vital", "sound", "speech")}
             self.row("gate", base, gate)
         elif stream == "audio:result":

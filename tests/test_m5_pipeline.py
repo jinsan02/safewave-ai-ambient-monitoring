@@ -542,6 +542,88 @@ def _extract_functions(path: Path, names: set, namespace: dict) -> dict:
     return namespace
 
 
+class NposeBoardTests(unittest.TestCase):
+    """N_pose 보드 추론(CSR!) → 노드별 K/N → 허브 판정, 새 패킷 해석, M1 경보 범위 스위치."""
+
+    def _agg(self, **kw):
+        return runtime_inputs.BoardScoreAggregator(**{"threshold": 0.8, "required_votes": 3,
+                                                      "window_size": 5, "min_nodes": 1, **kw})
+
+    def test_node_k_of_n_and_hub_rule_match_receiver(self):
+        agg = self._agg()
+        for i, sc in enumerate((0.9, 0.2, 0.9, 0.85)):
+            agg.add(1, 1000 + i * 200, sc, 1.0, 2)            # window_full
+            agg.add(2, 1000 + i * 200, 0.1, 1.0, 2)
+        res = agg.result(1700)
+        self.assertTrue(res["fall_detected"])                   # 노드 1: 4회 중 3회
+        self.assertEqual(res["alarm_nodes"], [1])
+        self.assertEqual(res["fall_votes"], 3)
+        self.assertEqual(res["infer_source"], "board")
+        self.assertAlmostEqual(res["fall_score"], 0.85)
+        self.assertFalse(res["nodes"]["2"]["alarm"])
+
+        two = self._agg(min_nodes=2)
+        for i in range(3):
+            two.add(1, 1000 + i * 200, 0.95, 1.0, 2)
+        self.assertFalse(two.result(1500)["fall_detected"])     # 경보 노드 1개 < 2
+
+    def test_unusable_results_never_fire(self):
+        agg = self._agg()
+        for i in range(5):
+            agg.add(1, 1000 + i * 200, 0.99, 1.0, 0)            # 창이 덜 참
+            agg.add(2, 1000 + i * 200, 0.99, 0.5, 2)            # 새 프레임 부족
+            agg.add(3, 1000 + i * 200, 0.99, 1.0, 3)            # 벤치용 무작위 모델
+        res = agg.result(1900)
+        self.assertFalse(res["fall_detected"])
+        self.assertEqual(res["fall_score"], 0.0)
+        self.assertTrue(self._agg(allow_random=True).result(0)["insufficient_input"])
+
+    def test_stale_nodes_drop_out(self):
+        agg = self._agg(max_age_ms=1000)
+        for i in range(3):
+            agg.add(1, 1000 + i * 200, 0.95, 1.0, 2)
+        self.assertTrue(agg.result(1500)["fall_detected"])
+        stale = agg.result(5000)
+        self.assertFalse(stale["fall_detected"])
+        self.assertEqual(stale["input_status"], "insufficient_input")
+
+    def test_sensing_parses_csi2_and_csr(self):
+        import struct
+        import numpy as np
+        csi2 = struct.Struct("<4sBBHIIhH64ff")
+        csr = struct.Struct("<4sBBHIIhHfff")
+        ns = _extract_functions(ROOT / "sensing" / "main.py", {"parse_csi2", "parse_csr"},
+                                {"np": np, "_CSI2_STRUCT": csi2, "_CSI2_MAGIC": b"CSI2",
+                                 "_CSR_STRUCT": csr, "_CSR_MAGIC": b"CSR!"})
+        raw = [i / 64 for i in range(64)]
+        f = ns["parse_csi2"](csi2.pack(b"CSI2", 3, 0b1001, 64, 77, 123456, -45, 0, *raw, 12.5))
+        self.assertEqual((f["node_id"], f["seq"], f["ts_ms"], f["rssi"]), (3, 77, 123456, -45))
+        self.assertEqual(f["flags"] & 1, 1)
+        self.assertEqual((f["flags"] >> 2) & 3, 2)
+        self.assertAlmostEqual(float(f["raw64"][32]), 0.5)
+        self.assertAlmostEqual(f["frame_peak"], 12.5)
+        r = ns["parse_csr"](csr.pack(b"CSR!", 2, 7, 2, 9, 5000, -50, 14, 0.9, 2.2, 0.95))
+        self.assertEqual((r["node_id"], r["model_ver"], r["flags"], r["infer_ms"]), (2, 7, 2, 14))
+        self.assertAlmostEqual(r["score"], 0.9, places=5)
+        self.assertIsNone(ns["parse_csr"](b"CSI!" + bytes(28)))
+        self.assertIsNone(ns["parse_csi2"](bytes(788)))
+
+    def test_m1_alert_mode(self):
+        fall = {"fall": {"fall_score": 0.95, "fall_detected": True, "infer_confidence": 0.75}}
+        score, bd = emergency_score.compute_emergency_score(fall, m1_alert_mode="standalone")
+        self.assertTrue(bd.get("fall_consensus_bypass"))
+        self.assertGreaterEqual(score, 0.6)
+        score, bd = emergency_score.compute_emergency_score(fall, m1_alert_mode="corroborated")
+        self.assertNotIn("fall_consensus_bypass", bd)
+        self.assertLess(score, 0.6)
+        hazard = {**fall, "env_sound": {"label": "impact", "confidence": 0.9}}
+        _, bd = emergency_score.compute_emergency_score(hazard, m1_alert_mode="corroborated")
+        self.assertTrue(bd.get("fall_hazard_bypass"))           # 보강 규칙은 유지
+        score, bd = emergency_score.compute_emergency_score(hazard, m1_alert_mode="off")
+        self.assertNotIn("fall_hazard_bypass", bd)
+        self.assertEqual(bd["fall"], 0.0)
+
+
 class RuleAlertTests(unittest.TestCase):
     def test_reason_only_for_confirmed_rules(self):
         reason = risk_policy.rule_alert_reason

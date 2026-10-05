@@ -6,6 +6,15 @@
 
 ## 0. 한눈에
 
+- **10-05 N_pose 연동 준비**(코드·단위 테스트·노트북 시뮬레이터 확인, 실제 펌웨어 미확인)
+  - sensing이 CSI2·CSR! 수신. 보드 점수는 새 스트림 `m1:score`
+  - `M1_SOURCE=board`면 노드별 K/N → 허브 판정. 노트북 `reports/laptop/compose.*.yml` 기본이 board
+  - `M1_ALERT_MODE` 스위치(기본 standalone)
+  - 시뮬레이터 `scripts/sim_esp32.py --format npose --hz 50 --fall-at 12`
+  - 출력 기록기에 `m1_node_score.csv`
+  - 제약: 판정은 `csi:raw` 수신으로 돌기 때문에, 보드가 CSI2를 끄고 CSR!만 보내면 갱신되지 않는다
+- **10-05 보호자 앱**: 경보 확인 API(S2), Firebase 키 배치(노트북 `api/auth/`, Git 제외), 앱 토큰 등록·시험 푸시 성공. 전달 문서 `handoff/guardian_app_kit/TO_APP_20261005.md`
+
 - **코드**: 통합 파트 리팩토링·M5 우회 규칙 경보·경보 누락 수정·M1 2차 답변 반영까지 `develop`에 있다.
   노트북에서 RPi5 유사 조건 전체 스택 테스트로 기능을 확인했다(수치는 보고 금지).
 - **RPi5**: 아직 새 코드를 받지 않았다(`5b30f96`, 09-17 17:20 확인). ai-qwen은 정지 상태, 스왑 가득.

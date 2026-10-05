@@ -13,6 +13,7 @@ import redis as _redis
 from experts import m1_wifi_pose, m2_frenel_vital, m3_ast_base, m4_whisper_small
 from mqtt_helper import make_client, publish_json, topic
 from runtime_inputs import (
+    BoardScoreAggregator,
     aggregate_m1_result,
     build_m1_input,
     expired_m1_ticks,
@@ -75,6 +76,18 @@ M1_INFER_INTERVAL_MS = int(os.getenv("M1_INFER_INTERVAL_MS", "200"))
 M1_RESULT_MAX_AGE_MS = int(os.getenv("M1_RESULT_MAX_AGE_MS", "1000"))
 M1_AGGREGATION_K     = int(os.getenv("M1_AGGREGATION_K", "3"))
 M1_AGGREGATION_N     = int(os.getenv("M1_AGGREGATION_N", "5"))
+# M1 판정 출처: onnx = 허브(이 컨테이너)가 CSI 창을 조립해 ONNX 추론(9/16 인계 모델),
+#               board = N_pose 보드가 추론해 보낸 노드 점수(m1:score)를 노드별 K/N → 허브 판정
+M1_SOURCE            = os.getenv("M1_SOURCE", "onnx").strip().lower()
+M1_SCORE_STREAM      = "m1:score"
+M1_BOARD_THRESHOLD   = float(os.getenv("M1_BOARD_THRESHOLD", os.getenv("M1_FALL_THRESHOLD", "0.80")))
+M1_BOARD_MIN_NODES   = int(os.getenv("M1_BOARD_MIN_NODES", "1"))
+M1_BOARD_MIN_COVERAGE = float(os.getenv("M1_BOARD_MIN_COVERAGE", "0.9"))
+M1_BOARD_ALLOW_RANDOM = os.getenv("M1_BOARD_ALLOW_RANDOM", "0") == "1"
+# 보드 규칙의 K/N은 ONNX 경로와 따로 둔다. 기본은 N_pose receiver.py와 같은 3/5.
+# WiFall 검증(ID8·ID9, v1)에서 3/5 @0.8은 낙상 7/32, 1/5 @0.9는 25/32(비낙상 2/32) — 빈 방 오경보 확인 후 정한다.
+M1_BOARD_K           = int(os.getenv("M1_BOARD_K", os.getenv("M1_AGGREGATION_K", "3")))
+M1_BOARD_N           = int(os.getenv("M1_BOARD_N", os.getenv("M1_AGGREGATION_N", "5")))
 M2_CSI_WINDOW_FRAMES = int(os.getenv("M2_CSI_WINDOW_FRAMES", "1000"))
 # 1000프레임 = 10초 @ 100Hz; FFT bin 폭 0.1 Hz → 호흡 대역(0.1-0.6 Hz) 5 bin
 CSI_BACKLOG_SKIP_STREAK = int(os.getenv("CSI_BACKLOG_SKIP_STREAK", "5"))
@@ -864,6 +877,17 @@ if __name__ == "__main__":
         window_size=M1_AGGREGATION_N,
     )
     m1_votes = deque(maxlen=M1_AGGREGATION_N)
+    board_agg = BoardScoreAggregator(
+        threshold=M1_BOARD_THRESHOLD, required_votes=M1_BOARD_K, window_size=M1_BOARD_N,
+        min_nodes=M1_BOARD_MIN_NODES, min_coverage=M1_BOARD_MIN_COVERAGE,
+        allow_random=M1_BOARD_ALLOW_RANDOM, max_age_ms=M1_RESULT_MAX_AGE_MS,
+    ) if M1_SOURCE == "board" else None
+    # 재시작 직후에도 최근 2초 점수는 이어 받는다(오래된 점수는 max_age로 걸러진다)
+    board_last_id = f"{int(time.time() * 1000) - 2000}-0"
+    if board_agg is not None:
+        _log(logging.INFO, "m1_source_board", stream=M1_SCORE_STREAM, threshold=M1_BOARD_THRESHOLD,
+             k=M1_BOARD_K, n=M1_BOARD_N, min_nodes=M1_BOARD_MIN_NODES,
+             min_coverage=M1_BOARD_MIN_COVERAGE)
     _backlog_streak = 0
     _node_raw_buf:    dict[int, deque] = {}
     _node_resp_buf:   dict[int, deque] = {}
@@ -964,7 +988,7 @@ if __name__ == "__main__":
 
                     # M1 슬라이딩 버퍼: 노드별 block_raw (64ch) × 100frame.
                     # 실제 data_raw가 있는 패킷만 '마지막 슬롯 생존'으로 인정한다.
-                    if b"data_raw" in fields:
+                    if board_agg is None and b"data_raw" in fields:
                         # 학습 로더와 같이 수신 시각(stream id)으로 100Hz 전역 격자에 스냅한다.
                         slot = grid_slot(_stream_id_ts_ms(msg_id), M1_FRAME_INTERVAL_MS)
                         raw_buffer = _node_raw_buf.setdefault(
@@ -993,6 +1017,10 @@ if __name__ == "__main__":
                         enabled_experts.get("fall", True)
                         and now_ms - last_m1_inferred_at_ms >= M1_INFER_INTERVAL_MS
                     )
+                    # 보드 모드: 같은 200 ms 주기로 m1:score 새 항목을 읽어 판정만 갱신한다(ONNX 추론 없음).
+                    board_due = board_agg is not None and m1_tick_due
+                    if board_agg is not None:
+                        m1_tick_due = False
                     m1_ready = m1_window_ready(
                         M1_REQUIRED_NODES,
                         _node_raw_buf,
@@ -1055,6 +1083,22 @@ if __name__ == "__main__":
                         expert_inputs=expert_inputs,
                         enabled=csi_enabled,
                     )
+                    if board_due:
+                        try:
+                            for score_id, sf in r.xrange(M1_SCORE_STREAM, min=f"({board_last_id}",
+                                                         max="+", count=500):
+                                board_last_id = score_id.decode() if isinstance(score_id, bytes) else score_id
+                                board_agg.add(int(sf.get(b"node", 0)), _stream_id_ts_ms(score_id),
+                                              _safe_float(sf.get(b"score")), _safe_float(sf.get(b"coverage")),
+                                              int(sf.get(b"flags", 0)))
+                        except _redis.exceptions.RedisError as exc:
+                            _log(logging.WARNING, "m1_score_read_failed", error=str(exc))
+                        cached_m1_result = board_agg.result(now_ms)
+                        expert_results["fall"] = cached_m1_result
+                        expert_latency_ms["fall"] = 0.0
+                        last_m1_result_at_ms = now_ms
+                        last_m1_inferred_at_ms = now_ms
+
                     if m1_due:
                         new_m1_result = expert_results.get("fall")
                         if new_m1_result:
@@ -1106,7 +1150,7 @@ if __name__ == "__main__":
                     # ai:mN:latest는 실제로 새 결과가 나온 것만 기록한다. 노드마다 패킷 단위로
                     # 덮어쓰면 오디오가 없는 노드의 빈 M3/M4가 실제 결과를 지운다.
                     latest_due = set()
-                    if m1_due and expert_results.get("fall"):
+                    if (m1_due or board_due) and expert_results.get("fall"):
                         latest_due.add("fall")
                     if audio_from_stream and                             audio_from_stream.get("ts_ms") != _node_last_audio_ts.get(node_id):
                         latest_due.update(("env_sound", "speech_ko"))

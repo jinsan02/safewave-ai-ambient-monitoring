@@ -16,7 +16,7 @@ ai:result ──▶ ai-qwen (M5) ──▶ ai:emergency ──▶ api (FastAPI/W
 
 | 서비스 | 경로 | 역할 |
 |---|---|---|
-| sensing | `sensing/main.py` | 788B UDP 수신 → `csi:raw`, 노드 헬스 |
+| sensing | `sensing/main.py` | UDP 수신(788B CSI!, N_pose CSI2·CSR!) → `csi:raw`·`m1:score`, 노드 헬스 |
 | ai-experts | `ai/main.py`, `ai/experts/` | M1 낙상, M2 바이탈, M3 환경음, M4 한국어 STT |
 | ai-qwen | `ai/qwen_service.py`, `ai/logic/` | M5 통합 위험도 (Qwen2.5-1.5B GGUF) |
 | api | `api/main.py` | REST/WS, 설정, 알림, Phase 2 |

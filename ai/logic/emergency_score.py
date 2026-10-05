@@ -5,6 +5,8 @@ SLM(M5) 호출 여부를 결정하는 경량 알고리즘.
 SLM은 임계값(threshold) 초과 시에만 호출된다.
 """
 
+import os
+
 import numpy as np
 
 # M2 생체신호 정상 범위
@@ -44,6 +46,14 @@ _COMPOSITE_MIN_PEAK_2DOM = 0.90
 _VITAL_CRIT_BYPASS = 0.65
 # M1의 K=3/N=5 사건 판정은 단독으로도 M5 평가를 시작할 수 있어야 한다.
 _FALL_CONSENSUS_BYPASS = 0.65
+# M1 단독 경보 범위(09-28 오경보 분석 S1). ai-experts·ai-qwen 둘 다 같은 값이어야 한다.
+#   standalone   M1 판정(K/N)만으로 M5 호출 임계·규칙 경보(현재 동작, 기본)
+#   corroborated M1 판정 단독으로는 올리지 않음. 낙상+충격음·긴급 단어+낙상 의심 같은 보강 규칙만
+#   off          M1을 게이트에서 아예 뺀다(기록·대시보드에는 남음)
+M1_ALERT_MODES = ("standalone", "corroborated", "off")
+_M1_ALERT_MODE = os.getenv("M1_ALERT_MODE", "standalone").strip().lower()
+if _M1_ALERT_MODE not in M1_ALERT_MODES:
+    _M1_ALERT_MODE = "standalone"
 # M4 긴급 문장(환각 필터 통과 + 유사 매칭) — 단독으로 M5 평가·규칙 경보
 _VOICE_EMERGENCY_BYPASS = 0.65
 
@@ -135,7 +145,8 @@ def _vital_component(val: float, crit_lo: float, warn_lo: float, warn_hi: float,
     return 0.0
 
 
-def compute_emergency_score(expert_results: dict, time_series=None) -> tuple[float, dict]:
+def compute_emergency_score(expert_results: dict, time_series=None,
+                            m1_alert_mode: str | None = None) -> tuple[float, dict]:
     """
     M1-M4 출력에서 응급지수(0.0-1.0)를 계산한다.
 
@@ -153,13 +164,15 @@ def compute_emergency_score(expert_results: dict, time_series=None) -> tuple[flo
 
     Args:
         expert_results: M1-M4 전문가 모델 출력 dict
+        m1_alert_mode: standalone|corroborated|off. None이면 환경변수 M1_ALERT_MODE
 
     Returns:
         (score, breakdown)
           - score: float 0.0~1.0 응급지수
           - breakdown: {"fall", "vital", "sound", "speech", "conf_fall", ...}
     """
-    fall_out   = expert_results.get("fall")      or {}
+    m1_mode = m1_alert_mode or _M1_ALERT_MODE
+    fall_out   = {} if m1_mode == "off" else (expert_results.get("fall") or {})
     vital_out  = expert_results.get("vital")     or {}
     sound_out  = expert_results.get("env_sound") or {}
     speech_out = expert_results.get("speech_ko") or {}
@@ -241,7 +254,7 @@ def compute_emergency_score(expert_results: dict, time_series=None) -> tuple[flo
 
     # M1의 단일 창 점수는 그대로 보조 문맥에 남기되, 전역 K/N 집계가 성립한 경우에만
     # M5 호출 임계 이상으로 올린다. 한 창의 우연한 발화는 이 경로를 타지 않는다.
-    if fall_out.get("fall_detected", False):
+    if fall_out.get("fall_detected", False) and m1_mode == "standalone":
         score = max(score, _FALL_CONSENSUS_BYPASS)
         breakdown["fall_consensus_bypass"] = True
 

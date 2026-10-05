@@ -179,3 +179,66 @@ def build_m1_input(
             continue
         slots[node_id - 1] = np.stack(list(frames), axis=0).T.astype(np.float32)
     return np.stack(slots, axis=0)[None, ...]
+
+
+class BoardScoreAggregator:
+    """N_pose 보드 추론 결과(CSR!, 노드별 5 Hz) → 노드별 K/N → 허브 판정.
+
+    규칙은 김태연 hub/receiver.py와 같다: 추론 1회는 창이 찼고(window_full) 새 프레임 비율이
+    min_coverage 이상이며 벤치용 무작위 모델이 아닐 때만 '쓸 수 있는' 추론이고, 그중 score ≥ threshold면 발화.
+    노드 최근 N회 중 K회 이상 발화면 노드 경보, 경보 노드 수 ≥ min_nodes면 허브 경보(fall_detected).
+    max_age_ms보다 오래 결과가 없는 노드는 꺼진 것으로 보고 판정에서 뺀다.
+    """
+
+    def __init__(self, *, threshold: float = 0.8, required_votes: int = 3, window_size: int = 5,
+                 min_nodes: int = 1, min_coverage: float = 0.9, allow_random: bool = False,
+                 max_age_ms: int = 1000):
+        if required_votes <= 0 or window_size <= 0 or required_votes > window_size or min_nodes <= 0:
+            raise ValueError("invalid board aggregation rule")
+        self.threshold, self.k, self.n = float(threshold), int(required_votes), int(window_size)
+        self.min_nodes, self.min_coverage = int(min_nodes), float(min_coverage)
+        self.allow_random, self.max_age_ms = bool(allow_random), int(max_age_ms)
+        self._nodes: dict[int, dict] = {}
+
+    def add(self, node_id: int, recv_ms: int, score: float, coverage: float, flags: int) -> None:
+        window_full, rand = bool(flags & 2), bool(flags & 1)
+        usable = window_full and coverage >= self.min_coverage and (self.allow_random or not rand)
+        st = self._nodes.setdefault(int(node_id), {"votes": deque(maxlen=self.n)})
+        st["votes"].append(usable and score >= self.threshold)
+        st.update(recv_ms=int(recv_ms), score=float(score), coverage=float(coverage),
+                  window_full=window_full, random=rand, usable=usable)
+
+    def result(self, now_ms: int) -> dict:
+        fresh = {n: st for n, st in self._nodes.items() if 0 <= now_ms - st["recv_ms"] <= self.max_age_ms}
+        if not fresh:
+            return insufficient_m1_result(required_votes=self.k, window_size=self.n) | {
+                "infer_source": "board", "alarm_nodes": [], "min_nodes": self.min_nodes, "nodes": {}}
+        nodes, alarm_nodes = {}, []
+        for n, st in sorted(fresh.items()):
+            votes = sum(st["votes"])
+            alarm = votes >= self.k
+            if alarm:
+                alarm_nodes.append(n)
+            nodes[str(n)] = {"score": round(st["score"], 4), "votes": votes, "samples": len(st["votes"]),
+                             "alarm": alarm, "coverage": round(st["coverage"], 3),
+                             "window_full": st["window_full"], "random": st["random"],
+                             "age_ms": int(now_ms - st["recv_ms"])}
+        usable_scores = [st["score"] for st in fresh.values() if st["usable"]]
+        top = max(fresh.values(), key=lambda st: sum(st["votes"]))
+        return {
+            # M5·게이트용 대표 점수 = 쓸 수 있는 추론 중 최고 노드 점수
+            "fall_score": round(max(usable_scores), 4) if usable_scores else 0.0,
+            "window_fall_detected": any(st["votes"] and st["votes"][-1] for st in fresh.values()),
+            "fall_detected": len(alarm_nodes) >= self.min_nodes,
+            "input_status": "ready",
+            "insufficient_input": False,
+            "infer_source": "board",
+            "infer_confidence": 0.75,
+            "fall_votes": sum(top["votes"]),
+            "fall_vote_samples": len(top["votes"]),
+            "fall_vote_required": self.k,
+            "fall_vote_window": self.n,
+            "alarm_nodes": alarm_nodes,
+            "min_nodes": self.min_nodes,
+            "nodes": nodes,
+        }

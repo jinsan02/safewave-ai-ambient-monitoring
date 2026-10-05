@@ -125,6 +125,15 @@ services:
       - M1_RESULT_MAX_AGE_MS=${M1_RESULT_MAX_AGE_MS:-1000}
       - M1_AGGREGATION_K=${M1_AGGREGATION_K:-3}
       - M1_AGGREGATION_N=${M1_AGGREGATION_N:-5}
+      # onnx = 허브 ONNX(9/16 인계 모델) / board = N_pose 보드 추론 점수(m1:score) → 노드별 K/N → 허브 판정
+      - M1_SOURCE=${M1_SOURCE:-onnx}
+      - M1_BOARD_THRESHOLD=${M1_BOARD_THRESHOLD:-0.80}
+      - M1_BOARD_K=${M1_BOARD_K:-3}
+      - M1_BOARD_N=${M1_BOARD_N:-5}
+      - M1_BOARD_MIN_NODES=${M1_BOARD_MIN_NODES:-1}
+      - M1_BOARD_MIN_COVERAGE=${M1_BOARD_MIN_COVERAGE:-0.9}
+      # standalone(현재) / corroborated(M1 단독으로는 경보 안 함) / off — ai-qwen과 같은 값
+      - M1_ALERT_MODE=${M1_ALERT_MODE:-standalone}
       - AUDIO_RESULT_MAX_AGE_MS=${AUDIO_RESULT_MAX_AGE_MS:-30000}
       # NumPy/Optimum 하위 BLAS·OpenMP의 숨은 코어 확장을 막는다.
       - OMP_NUM_THREADS=1
@@ -177,6 +186,7 @@ services:
       - QWEN_GGUF_CACHE_MB=${QWEN_GGUF_CACHE_MB:-64}
       # rpi5 = 짧은 프롬프트(약 740토큰). laptop = 판정표·게이트규칙·예시 21개+유사 예시 3개(약 3,170토큰) — CACHE_MB 256 필요.
       - SLM_PROMPT_PROFILE=${SLM_PROMPT_PROFILE:-rpi5}
+      - M1_ALERT_MODE=${M1_ALERT_MODE:-standalone}
       - MALLOC_ARENA_MAX=2
     volumes:
       - ./volumes/models:/app/models
