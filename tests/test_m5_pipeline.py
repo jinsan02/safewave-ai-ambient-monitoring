@@ -530,6 +530,32 @@ class RuntimeInputTests(unittest.TestCase):
         self.assertTrue(insufficient["insufficient_input"])
         self.assertFalse(insufficient["fall_detected"])
 
+    def test_audio_backlog_processes_in_order_without_m3(self):
+        plan = runtime_inputs.audio_event_plan
+        self.assertEqual(plan(10_000, None, 12_000, 60_000), "full")       # 마지막 이벤트
+        self.assertEqual(plan(10_000, 15_000, 12_000, 60_000), "m4_only")  # 뒤에 밀린 이벤트 있음
+        self.assertEqual(plan(10_000, 10_000, 12_000, 60_000), "m4_only")  # 같은 ms 다음 이벤트
+        self.assertEqual(plan(10_000, 90_000, 80_000, 60_000), "drop")     # 70초 밀림
+        self.assertEqual(plan(10_000, None, 80_000, 60_000), "drop")
+        self.assertEqual(plan(10_000, None, 80_000, 0), "full")            # 0 = 버리지 않음
+
+    def test_audio_result_age_counts_from_processing_not_event(self):
+        import threading
+        import types
+
+        clock = {"t": 1000.0}
+        ns = _extract_functions(ROOT / "ai" / "main.py", {"_cache_audio_result", "_load_latest_audio_result"}, {
+            "_audio_result_cache": {}, "_audio_result_cache_lock": threading.Lock(),
+            "AUDIO_RESULT_MAX_AGE_MS": 30_000, "time": types.SimpleNamespace(monotonic=lambda: clock["t"]),
+        })
+        # RPi5처럼 이벤트 25초 뒤에 처리가 끝나도(ts_ms가 오래돼도) 처리 직후에는 판정에 쓰인다.
+        ns["_cache_audio_result"](1, {"ts_ms": 1, "speech_ko": {"emergency_phrase_detected": True}})
+        clock["t"] += 29.0
+        self.assertTrue(ns["_load_latest_audio_result"](1)["speech_ko"]["emergency_phrase_detected"])
+        clock["t"] += 2.0
+        self.assertIsNone(ns["_load_latest_audio_result"](1))
+        self.assertIsNone(ns["_load_latest_audio_result"](2))
+
 
 def _extract_functions(path: Path, names: set, namespace: dict) -> dict:
     """무거운 서비스 모듈을 import하지 않고 순수 함수만 뽑아 실행한다."""

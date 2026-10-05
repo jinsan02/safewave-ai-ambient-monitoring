@@ -15,6 +15,7 @@ from mqtt_helper import make_client, publish_json, topic
 from runtime_inputs import (
     BoardScoreAggregator,
     aggregate_m1_result,
+    audio_event_plan,
     build_m1_input,
     expired_m1_ticks,
     grid_slot,
@@ -54,7 +55,11 @@ MINUTE_AGG_TTL_SECONDS = int(os.getenv("MINUTE_AGG_TTL_SECONDS", "3600"))
 EXPERT_LATEST_TTL_SECONDS = int(os.getenv("EXPERT_LATEST_TTL_SECONDS", "3600"))
 M3_AUDIO_WINDOW_MS = int(os.getenv("M3_AUDIO_WINDOW_MS", "3000"))
 M4_AUDIO_WINDOW_MS = int(os.getenv("M4_AUDIO_WINDOW_MS", "5000"))
+# 오디오 결과는 처리가 끝난 시각부터 이 시간 동안 CSI 판정에 쓴다(이벤트 시각 기준이면 RPi5처럼
+# 처리가 20초 넘게 걸릴 때 긴급 음성 결과가 판정 전에 버려진다).
 AUDIO_RESULT_MAX_AGE_MS = int(os.getenv("AUDIO_RESULT_MAX_AGE_MS", "30000"))
+# 밀린 오디오 이벤트는 순서대로 처리하되(M3 생략), 이보다 오래 기다린 이벤트만 버린다.
+AUDIO_BACKLOG_MAX_WAIT_MS = int(os.getenv("AUDIO_BACKLOG_MAX_WAIT_MS", "60000"))
 SLM_MIN_INTERVAL_MS = int(os.getenv("SLM_MIN_INTERVAL_MS", "5000"))
 # 확정 규칙(낙상 K/N, 낙상+위험음, 생체신호 위기)은 M5 없이 ai:emergency에 1차 경보를 쓴다.
 RULE_ALERT_ENABLED = os.getenv("RULE_ALERT_ENABLED", "true").lower() in ("1", "true", "yes")
@@ -501,20 +506,18 @@ _audio_result_cache_lock = threading.Lock()
 
 def _cache_audio_result(node_id: int, payload: dict) -> None:
     with _audio_result_cache_lock:
-        _audio_result_cache[node_id] = payload
+        _audio_result_cache[node_id] = (time.monotonic(), payload)
 
 
-def _load_latest_audio_result(node_id: int, now_ms: int) -> dict | None:
-    """현재 프로세스가 처리한 같은 노드의 최근 오디오 결과만 반환한다."""
+def _load_latest_audio_result(node_id: int) -> dict | None:
+    """현재 프로세스가 처리한 같은 노드의 최근 오디오 결과만 반환한다.
+    나이는 처리가 끝난 시각부터 잰다(노드 시계·처리 지연과 무관)."""
     with _audio_result_cache_lock:
-        payload = _audio_result_cache.get(node_id)
-    if not payload:
+        cached = _audio_result_cache.get(node_id)
+    if not cached:
         return None
-    try:
-        age_ms = max(0, now_ms - int(payload.get("ts_ms", 0)))
-    except (TypeError, ValueError):
-        return None
-    return payload if age_ms <= AUDIO_RESULT_MAX_AGE_MS else None
+    cached_at, payload = cached
+    return payload if (time.monotonic() - cached_at) * 1000 <= AUDIO_RESULT_MAX_AGE_MS else None
 
 
 _audio_busy_since = 0.0  # 오디오 워커가 현재 건 처리를 시작한 monotonic 시각(0=대기)
@@ -548,16 +551,22 @@ def _audio_worker_loop(r, ai_engine) -> None:
             if not entries:
                 continue
             for _, messages in entries:
-                # 추론보다 입력이 빠르면 오래된 음성을 순서대로 재생하지 않고 최신 1건으로 병합한다.
+                # 추론보다 입력이 빠르면 밀린 이벤트를 건너뛰지 않고 순서대로 처리한다(긴급 음성 유실 방지).
+                # 뒤에 새 이벤트가 있으면 M3를 빼서 따라잡고, 너무 오래 밀린 것만 버린다.
                 msg_id, fields = messages[-1]
-                tail = r.xrevrange(AUDIO_STREAM, count=1)
-                if tail and tail[0][0] != msg_id \
-                        and _stream_id_ts_ms(tail[0][0]) >= _stream_id_ts_ms(msg_id):
-                    msg_id, fields = tail[0]
-                    _log(logging.INFO, "audio_backlog_coalesced", selected_id=str(msg_id))
-
                 last_id = msg_id
                 ts_ms = _stream_id_ts_ms(msg_id)
+                tail = r.xrevrange(AUDIO_STREAM, count=1)
+                tail_ms = (_stream_id_ts_ms(tail[0][0])
+                           if tail and tail[0][0] != msg_id else None)
+                plan = audio_event_plan(ts_ms, tail_ms, int(time.time() * 1000),
+                                        AUDIO_BACKLOG_MAX_WAIT_MS)
+                if plan == "drop":
+                    _log(logging.WARNING, "audio_backlog_dropped", event_id=str(msg_id),
+                         wait_ms=int(time.time() * 1000) - ts_ms)
+                    continue
+                if plan == "m4_only":
+                    _log(logging.INFO, "audio_backlog_m4_only", event_id=str(msg_id))
                 _audio_busy_since = time.monotonic()
 
                 meta = _json_loads(fields.get(b"data", b"")) or {}
@@ -587,8 +596,11 @@ def _audio_worker_loop(r, ai_engine) -> None:
                 elif m4:
                     m4_result = ai_engine._empty_output("speech_ko")
 
-                # Phase 2 중에는 M3를 생략해 M4·API·오디오 장치에 CPU 여유를 남긴다.
-                if m3 and _enabled.get("env_sound", True) and not phase2_active:
+                # 긴급 문장이면 M3를 기다리지 않고 바로 결과를 낸다(RPi5에서 M3 1회 약 6초).
+                # Phase 2 중·밀린 이벤트도 M3를 생략해 M4·API·오디오 장치에 CPU 여유를 남긴다.
+                voice_emergency = bool(m4_result.get("emergency_phrase_detected"))
+                skip_m3 = phase2_active or voice_emergency or plan == "m4_only"
+                if m3 and _enabled.get("env_sound", True) and not skip_m3:
                     try:
                         # M3(v34)는 dict로 받는다: sample_rate, raw_peak(sensing이 게인 보정 전에 잰
                         # peak, 무음 게이트용). VAD 이벤트(최대 6초) 안에서 어느 3초를 볼지는 M3가 고른다.
@@ -603,6 +615,8 @@ def _audio_worker_loop(r, ai_engine) -> None:
                     m3_result = ai_engine._empty_output("env_sound")
                     if phase2_active:
                         _log(logging.INFO, "audio_m3_skipped_phase2", node_id=node_id)
+                    elif voice_emergency:
+                        _log(logging.INFO, "audio_m3_skipped_voice_emergency", node_id=node_id)
 
                 payload = {
                     "ts_ms":       ts_ms,
@@ -1141,7 +1155,7 @@ if __name__ == "__main__":
                         expert_latency_ms["fall"] = 0.0
 
                     # audio:result 최신 1건 읽어 expert_results에 병합
-                    audio_from_stream = _load_latest_audio_result(node_id, ts_ms)
+                    audio_from_stream = _load_latest_audio_result(node_id)
                     if audio_from_stream:
                         expert_results["env_sound"] = audio_from_stream.get("env_sound") or expert_results.get("env_sound", {})
                         expert_results["speech_ko"] = audio_from_stream.get("speech_ko") or expert_results.get("speech_ko", {})

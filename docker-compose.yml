@@ -135,6 +135,7 @@ services:
       # standalone(현재) / corroborated(M1 단독으로는 경보 안 함) / off — ai-qwen과 같은 값
       - M1_ALERT_MODE=${M1_ALERT_MODE:-standalone}
       - AUDIO_RESULT_MAX_AGE_MS=${AUDIO_RESULT_MAX_AGE_MS:-30000}
+      - AUDIO_BACKLOG_MAX_WAIT_MS=${AUDIO_BACKLOG_MAX_WAIT_MS:-60000}
       # NumPy/Optimum 하위 BLAS·OpenMP의 숨은 코어 확장을 막는다.
       - OMP_NUM_THREADS=1
       - OMP_WAIT_POLICY=PASSIVE

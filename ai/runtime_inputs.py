@@ -242,3 +242,17 @@ class BoardScoreAggregator:
             "min_nodes": self.min_nodes,
             "nodes": nodes,
         }
+
+
+def audio_event_plan(event_ms: int, tail_ms: int | None, now_ms: int, max_wait_ms: int) -> str:
+    """오디오 이벤트 처리 방식: 'full'(M4+M3) / 'm4_only'(뒤에 밀린 이벤트가 있음) / 'drop'(너무 오래 밀림).
+
+    밀린 이벤트를 건너뛰면 그 안의 긴급 음성도 사라지므로 순서대로 처리하되, 뒤에 새 이벤트가
+    있으면 M3를 빼서 따라잡는다(마지막 이벤트만 M3까지). max_wait_ms보다 오래 기다린 것만 버린다.
+    tail_ms: 스트림 마지막 이벤트 시각(이 이벤트 자신이 마지막이면 None).
+    """
+    if max_wait_ms > 0 and now_ms - event_ms > max_wait_ms:
+        return "drop"
+    if tail_ms is not None and tail_ms >= event_ms:
+        return "m4_only"
+    return "full"
