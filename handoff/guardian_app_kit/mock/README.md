@@ -10,6 +10,7 @@
 | `notify_test_ok.json` / `notify_test_error.json` | `POST /notify/test` 200 / 500 |
 | `status.json` / `status_no_data.json` | `GET /status` (데이터 있음 / 없음) |
 | `history.json` | `GET /history` (rule·qwen·fallback 예시) |
+| `alert_detail.json` | `GET /alerts/{msg_id}` (acked_by·voice_ok 포함, 10-05) |
 | `nodes_health.json` | `GET /nodes/health` |
 | `system_health.json` / `system_health_503.json` | `GET /system/health` 200 / 503 |
 | `settings.json` | `GET /settings` |
@@ -22,6 +23,6 @@
 | `fcm_emergency_legacy.json` | `FCM_DATA_ONLY=false`(현재 기본) 응급 푸시 |
 | `fcm_emergency.json` | `FCM_DATA_ONLY=true`(앱 배포 후) 응급 푸시 |
 | `fcm_voice_ok.json`, `fcm_test.json` | 응답 확인, 테스트 |
-| `*_planned.json` | 아직 서버에 없는 예정 API·푸시(S2 확인 기능) |
+| `alert_ack.json`, `fcm_ack.json` | 경보 확인 API 응답·다른 보호자 확인 푸시(S2, 10-05 구현) |
 
 주의: `status.json`의 `experts.vital`, `experts.speech_ko.transcript_ko`는 형식 확인용이며 앱에서 표시하지 않는다.

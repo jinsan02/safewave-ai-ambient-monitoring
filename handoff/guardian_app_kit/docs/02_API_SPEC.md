@@ -30,7 +30,7 @@
 | `voice_ok` | `safety_alert` | `msg_id`, `node_id`, `ts_ms`, `emergency`("False") |
 | `heartbeat` | `safety_alert` | `nodes_online`, `nodes_expected` (서버 `HEARTBEAT_INTERVAL_SEC` > 0일 때) |
 | `test` | `safety_alert` | — |
-| `ack` | — | **예정(S2)**: `msg_id`, `device_id`, `action`, `ts_ms` |
+| `ack` | `safety_alert` | `msg_id`, `device_id`(확인한 보호자), `action`(seen·called), `ts_ms` — 다른 보호자가 확인했을 때. 확인한 본인에게는 가지 않는다(10-05 구현) |
 
 data 전용 형식에는 `title`, `body`가 data 안에 함께 온다(시스템 알림 형식에서는 notification에 있음).
 
@@ -107,15 +107,27 @@ MVP는 읽기만. `ai_enabled=false` 또는 `models.m1=false`면 홈에 "감시 
 `POST /notify/send`, `POST /notify/check`(임의 푸시 가능, 보호 예정), `GET /logs`(대용량), `POST /audio/events`,
 `POST /settings`(전체 교체, MVP 제외), `GET /system/resources`, `GET /system/redis-memory`, `GET /emergency/clip/{ts_ms}`(메타데이터만).
 
-## 5. 예정 엔드포인트 (서버 작업 — `04_SERVER_CHANGES.md`)
-앱은 인터페이스로 먼저 만들고, 404면 "준비 중"으로 처리한다.
+## 5. 경보 확인 (S2, 2026-10-05 구현)
 
-| 메서드·경로 | 요청 | 응답 | ID |
-|---|---|---|---|
-| `POST /alerts/{msg_id}/ack` | `{"device_id","action":"seen|called"}` | `{"ok":true,"acked_by":[...]}` | S2 (새 Redis 키 확인 필요) |
-| `GET /alerts/{msg_id}` | — | EmergencySummary + `acked_by`, `voice_ok` | S2 |
+### `POST /alerts/{msg_id}/ack`
+요청 `{"device_id":"<uuid>","action":"seen|called"}` → `{"ok":true,"msg_id","acked_by":[{"device_id","action","ts_ms"}]}`
+- `seen` = 경보를 봤음, `called` = 대상자·119에 전화함. 같은 기기에서 `called` 뒤의 `seen`은 무시된다(내려가지 않음). 같은 동작을 다시 보내도 처음 시각을 유지한다(멱등).
+- 처음 기록되거나 `seen`→`called`로 바뀔 때만 다른 보호자에게 `ack` 푸시를 보낸다.
+- `device_id`는 영문·숫자로 시작, `[A-Za-z0-9._:-]` 64자 이하. 그 외·잘못된 `action`은 422. `msg_id` 형식이 틀리면 400, 없는 경보는 404.
+- 기록은 1시간(TTL 3600) 뒤 사라진다. 그 뒤 확인 기록은 앱 로컬 기록을 쓴다.
 
-인증(S6) 적용 시 모든 요청에 `X-API-Key` 헤더. 값이 비면 헤더를 보내지 않는다.
+### `GET /alerts/{msg_id}`
+`/history` 항목 + `acked_by` + `voice_ok`. 없으면 404.
+- `voice_ok`: `true` = 대상자가 음성으로 괜찮다고 응답, `false` = 무응답·도움 요청, `null` = 음성 확인을 하지 않음(서버 `VOICE_ENABLED=false`) 또는 진행 중(경보 뒤 약 30초).
+
+### `/history` 항목에 `acked_by`
+모든 항목에 `acked_by` 배열이 붙는다(없으면 `[]`).
+
+### 아직 없는 것
+| 기능 | 상태 |
+|---|---|
+| 인증 `X-API-Key`(S6) | 결정 대기(D5). 지금은 인증 없음 → LAN 시연 전용 |
+| 미확인 재발송(S10) | S2 이후 예정 |
 
 ## 6. 오류 처리 규칙
 

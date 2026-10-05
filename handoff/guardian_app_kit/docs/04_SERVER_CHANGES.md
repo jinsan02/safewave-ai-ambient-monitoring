@@ -7,7 +7,7 @@
 |---|---|---|---|---|---|
 | **S0** | **필수** | 응급 푸시를 **data 전용 + `android.priority=high`**로 변경(제목·본문도 data에). 응답 확인·테스트도 data 전용으로 통일 | `api/notifier.py` `_send_fcm`, `send_risk_notification`, `send_voice_ok_notification` | 없음 | **완료** — `FCM_DATA_ONLY`(기본 false, 앱 배포일 true) |
 | **S1** | **필수** | data에 `type`, `msg_id`(ai:emergency 스트림 ID), `slm_mode` 추가. `voice_ok`에도 `msg_id` | `api/main.py` `_handle_single_emergency` | 없음 | **완료** |
-| S2 | MVP 권장 | `POST /alerts/{msg_id}/ack`, `GET /alerts/{msg_id}`, `/history` 항목에 `acked_by` | `api/main.py` | **새 키** `alert:ack:{msg_id}` Hash(`device_id`→`action:ts`), TTL 3600 | 확인 필요 |
+| S2 | MVP 권장 | `POST /alerts/{msg_id}/ack`, `GET /alerts/{msg_id}`, `/history` 항목에 `acked_by` | `api/main.py` | **새 키** `alert:ack:{msg_id}` Hash(`device_id`→`action:ts`, 음성 확인 결과 `_voice`), TTL 3600 | **완료**(10-05) — ack 푸시, `GET /alerts/{msg_id}`(voice_ok), `/history`의 `acked_by` |
 | S3 | MVP 권장 | 오탐·미탐 신고 → 기존 `mqtt:feedback:last`(TTL 3600) → M5 점수 ±0.08 보정(기존 로직) | `api/main.py` | 기존 키 | **완료** — `POST /alerts/{msg_id}/feedback`, 1시간 M5 보정, 규칙 경보 무관 |
 | S4 | P1 | `GET /app/summary`(기존 키 조합, transcript 제외) | `api/main.py` | 없음 | **완료** |
 | S5 | P1 | `DELETE /auth/register-token/{device_id}` | `api/main.py` | 기존 키 삭제 | **완료** |

@@ -103,6 +103,13 @@ def send_voice_ok_notification(token: str, node_id: Any, ts_ms: int, transcript:
     return _send_fcm(token, "대상자 응답 확인", body, payload, critical=False)
 
 
+def send_ack_notification(token: str, msg_id: str, device_id: str, action: str, ts_ms: int) -> str:
+    """다른 보호자가 경보를 확인(seen)·전화(called)했음을 알린다. 응급 채널을 쓰지 않는다."""
+    what = "전화했습니다" if action == "called" else "확인했습니다"
+    payload = {"type": "ack", "msg_id": msg_id, "device_id": device_id, "action": action, "ts_ms": ts_ms}
+    return _send_fcm(token, "다른 보호자 확인", f"다른 보호자가 경보를 {what}.", payload, critical=False)
+
+
 def send_heartbeat_notification(token: str, nodes_online: int, nodes_expected: int) -> str:
     """정기 정상 동작 신호. 앱은 이 신호가 끊기면 시스템 정지를 의심한다."""
     body = f"SafeWave가 정상 동작 중입니다 (센서 {nodes_online}/{nodes_expected})."

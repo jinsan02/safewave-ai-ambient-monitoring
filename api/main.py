@@ -23,6 +23,7 @@ import json
 import logging
 import math
 import os
+import re
 import shutil
 import time
 from typing import Any
@@ -39,6 +40,7 @@ from notifier import (
     FCM_READY,
     load_risk_threshold,
     router as notify_router,
+    send_ack_notification,
     send_risk_notification,
     send_heartbeat_notification,
     send_voice_ok_notification,
@@ -222,6 +224,11 @@ APP_EXPECTED_NODES = tuple(
 )
 # 보호자 신고를 M5 보정에 쓰는 기존 키(ai-experts MQTT 피드백과 같은 키·형식, TTL 3600).
 FEEDBACK_REDIS_KEY = os.getenv("MQTT_FEEDBACK_REDIS_KEY", "mqtt:feedback:last")
+# 보호자 경보 확인(S2). Hash: device_id → "action:ts_ms", 음성 확인 결과는 예약 필드 _voice → "intent:ts_ms".
+ACK_KEY_PREFIX = "alert:ack:"
+ALERT_ACK_TTL_SECONDS = min(int(os.getenv("ALERT_ACK_TTL_SECONDS", "3600")), 3600)
+_ACK_VOICE_FIELD = "_voice"
+_ACK_RANK = {"seen": 1, "called": 2}
 AUDIO_CLIP_KEY_PREFIX = "ai:clip:"
 AUDIO_CLIP_TTL_SECONDS = int(os.getenv("AUDIO_CLIP_TTL_SECONDS", "3600"))
 AUDIO_CLIP_POST_WAIT_MS = int(os.getenv("AUDIO_CLIP_POST_WAIT_MS", "15000"))
@@ -516,10 +523,12 @@ def _classify_phase2(transcript: str | None) -> str:
     return "call_emergency"
 
 
-async def _notify_all(redis_client, dedupe_prefix: str | None, send_fn, *send_args) -> int:
+async def _notify_all(redis_client, dedupe_prefix: str | None, send_fn, *send_args,
+                      exclude_device: str | None = None) -> int:
     """등록된 모든 기기에 FCM을 보낸다. 중복 방지 키 쓰기가 실패해도 발송은 한다.
 
     dedupe_prefix가 None이면 중복 방지 키를 쓰지 않는다(정기 신호 등).
+    exclude_device는 받지 않을 기기(예: 경보를 확인한 본인).
     """
     try:
         tokens = await _list_registered_tokens(redis_client)
@@ -528,6 +537,8 @@ async def _notify_all(redis_client, dedupe_prefix: str | None, send_fn, *send_ar
         return 0
     sent = 0
     for device_id, token in tokens:
+        if device_id == exclude_device:
+            continue
         claimed = True
         if dedupe_prefix is not None:
             try:
@@ -621,6 +632,15 @@ async def _handle_single_emergency(redis_client, msg_id: str, payload: dict):
         except RedisError as exc:
             _log(logging.ERROR, "phase2_redis_failed", node_id=node_id, error=str(exc))
             intent, transcript = "call_emergency", None
+        try:
+            # 앱의 GET /alerts/{msg_id}가 음성 확인 결과를 보이도록 경보 확인 Hash에 남긴다.
+            ack_key = f"{ACK_KEY_PREFIX}{msg_id}"
+            pipe = redis_client.pipeline()
+            pipe.hset(ack_key, _ACK_VOICE_FIELD, f"{intent}:{int(time.time() * 1000)}")
+            pipe.expire(ack_key, ALERT_ACK_TTL_SECONDS)
+            await pipe.execute()
+        except RedisError as exc:
+            _log(logging.WARNING, "phase2_result_write_failed", msg_id=msg_id, error=str(exc))
         if intent == "cancel_alarm":
             # 응급 채널이 아닌 일반 알림으로 "괜찮다고 응답"을 따로 알린다.
             await _notify_all(
@@ -926,6 +946,12 @@ async def get_history(n: int = 100, level: str = "warning", before: str | None =
             if len(result) >= n:
                 break
         upper = f"({entries[-1][0]}"
+    if result:
+        pipe = redis_client.pipeline()
+        for item in result:
+            pipe.hgetall(f"{ACK_KEY_PREFIX}{item['_id']}")
+        for item, raw in zip(result, await pipe.execute()):
+            item["acked_by"] = _parse_acks(raw)
     return result
 
 
@@ -998,6 +1024,86 @@ async def post_alert_feedback(msg_id: str, body: AlertFeedback):
     await redis_client.set(FEEDBACK_REDIS_KEY, json.dumps(entry, ensure_ascii=False), ex=3600)
     _log(logging.INFO, "alert_feedback", msg_id=msg_id, device_id=body.device_id, feedback=body.feedback)
     return {"ok": True, "msg_id": msg_id, "feedback": body.feedback}
+
+
+_MSG_ID_RE = re.compile(r"^\d{1,20}-\d{1,20}$")
+
+
+class AlertAck(BaseModel):
+    # 첫 글자는 영문·숫자(예약 필드 _voice와 겹치지 않게)
+    device_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
+    action: str = Field(pattern="^(seen|called)$")
+
+
+def _merge_ack(existing: str | None, action: str, ts_ms: int) -> tuple[str, bool]:
+    """같은 기기의 확인 기록을 합친다. called(전화)는 seen(확인)으로 내려가지 않는다. 반환 (값, 바뀜)."""
+    if existing:
+        old_action = existing.split(":", 1)[0]
+        if _ACK_RANK.get(old_action, 0) >= _ACK_RANK[action]:
+            return existing, False
+    return f"{action}:{ts_ms}", True
+
+
+def _parse_acks(raw: dict | None) -> list[dict]:
+    """경보 확인 Hash → [{device_id, action, ts_ms}] (확인 시각순). 예약 필드·깨진 값은 건너뛴다."""
+    acks = []
+    for device_id, value in (raw or {}).items():
+        if device_id.startswith("_"):
+            continue
+        action, _, ts = str(value).partition(":")
+        if action in _ACK_RANK and ts.isdigit():
+            acks.append({"device_id": device_id, "action": action, "ts_ms": int(ts)})
+    return sorted(acks, key=lambda a: a["ts_ms"])
+
+
+def _voice_result(raw: dict | None) -> bool | None:
+    """음성 확인 결과: True=괜찮다고 응답, False=무응답·도움 요청, None=음성 확인 안 함(꺼짐·진행 중)."""
+    intent = str((raw or {}).get(_ACK_VOICE_FIELD, "")).split(":", 1)[0]
+    return {"cancel_alarm": True, "call_emergency": False}.get(intent)
+
+
+async def _load_alert(redis_client, msg_id: str) -> dict | None:
+    entries = await redis_client.xrange(EMERGENCY_STREAM, min=msg_id, max=msg_id, count=1)
+    if not entries:
+        return None
+    return _normalize_emergency(_parse_result_payload(entries[0][1].get("data", "")), entries[0][0])
+
+
+@app.post("/alerts/{msg_id}/ack")
+async def post_alert_ack(msg_id: str, body: AlertAck):
+    """보호자가 경보를 확인(seen)·전화(called)했음을 기록하고 다른 보호자에게 알린다."""
+    if not _MSG_ID_RE.match(msg_id):
+        return JSONResponse({"error": "invalid msg_id"}, status_code=400)
+    redis_client = await _ensure_redis()
+    if await _load_alert(redis_client, msg_id) is None:
+        return JSONResponse({"error": "alert not found"}, status_code=404)
+    key = f"{ACK_KEY_PREFIX}{msg_id}"
+    now_ms = int(time.time() * 1000)
+    value, changed = _merge_ack(await redis_client.hget(key, body.device_id), body.action, now_ms)
+    if changed:
+        pipe = redis_client.pipeline()
+        pipe.hset(key, body.device_id, value)
+        pipe.expire(key, ALERT_ACK_TTL_SECONDS)
+        await pipe.execute()
+        _log(logging.INFO, "alert_ack", msg_id=msg_id, device_id=body.device_id, action=body.action)
+        await _notify_all(redis_client, None, send_ack_notification, msg_id, body.device_id,
+                          body.action, now_ms, exclude_device=body.device_id)
+    return {"ok": True, "msg_id": msg_id, "acked_by": _parse_acks(await redis_client.hgetall(key))}
+
+
+@app.get("/alerts/{msg_id}")
+async def get_alert(msg_id: str):
+    """경보 1건 + 확인한 보호자 + 음성 확인 결과."""
+    if not _MSG_ID_RE.match(msg_id):
+        return JSONResponse({"error": "invalid msg_id"}, status_code=400)
+    redis_client = await _ensure_redis()
+    alert = await _load_alert(redis_client, msg_id)
+    if alert is None:
+        return JSONResponse({"error": "alert not found"}, status_code=404)
+    raw = await redis_client.hgetall(f"{ACK_KEY_PREFIX}{msg_id}")
+    alert["acked_by"] = _parse_acks(raw)
+    alert["voice_ok"] = _voice_result(raw)
+    return alert
 
 
 def _compose_app_summary(latest: dict | None, latest_id: str | None, nodes: dict, settings: dict,

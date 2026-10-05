@@ -1,0 +1,17 @@
+{
+  "ts_ms": 1789650175827,
+  "node_id": 3,
+  "risk_score": 0.85,
+  "risk_level": "critical",
+  "emergency": true,
+  "summary": "낙상 확정(M1 3/5)",
+  "slm_mode": "rule",
+  "qwen_reason": "낙상 확정(M1 3/5)",
+  "_id": "1789650175827-0",
+  "_ts": 1789650175.827,
+  "acked_by": [
+    {"device_id": "3f2b8c1e-5a7d-4e2b-9c11-7a0d2e6b4f90", "action": "seen", "ts_ms": 1789650190000},
+    {"device_id": "a91c0d7e-22b4-4f6a-8e3d-1b5c9f0e7a22", "action": "called", "ts_ms": 1789650201000}
+  ],
+  "voice_ok": false
+}

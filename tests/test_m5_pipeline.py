@@ -727,6 +727,37 @@ class GuardianAppContractTests(unittest.TestCase):
         self.assertIsNone(empty["risk_level"])
         self.assertEqual(empty["nodes_online"], 0)
 
+    def test_alert_ack_merge_parse_and_voice_result(self):
+        ns = _extract_functions(
+            ROOT / "api" / "main.py", {"_merge_ack", "_parse_acks", "_voice_result"},
+            {"_ACK_RANK": {"seen": 1, "called": 2}, "_ACK_VOICE_FIELD": "_voice"},
+        )
+        merge = ns["_merge_ack"]
+        self.assertEqual(merge(None, "seen", 5), ("seen:5", True))
+        self.assertEqual(merge("seen:5", "called", 9), ("called:9", True))
+        self.assertEqual(merge("called:9", "seen", 12), ("called:9", False))   # 전화 → 확인으로 내려가지 않음
+        self.assertEqual(merge("seen:5", "seen", 7), ("seen:5", False))        # 처음 확인 시각 유지
+
+        raw = {"b": "called:20", "a": "seen:10", "_voice": "cancel_alarm:15", "c": "broken"}
+        acks = ns["_parse_acks"](raw)
+        self.assertEqual([a["device_id"] for a in acks], ["a", "b"])
+        self.assertEqual(acks[1], {"device_id": "b", "action": "called", "ts_ms": 20})
+        self.assertEqual(ns["_parse_acks"](None), [])
+
+        voice = ns["_voice_result"]
+        self.assertTrue(voice(raw))
+        self.assertFalse(voice({"_voice": "call_emergency:1"}))
+        self.assertIsNone(voice({}))
+
+    def test_ack_push_is_not_emergency_channel(self):
+        ns, sent = self._notifier()
+        _extract_functions(ROOT / "api" / "notifier.py", {"send_ack_notification"}, ns)
+        ns["send_ack_notification"]("tok", "1-0", "dev-a", "called", 7)
+        args, kwargs = sent[-1]
+        self.assertEqual({k: args[3][k] for k in ("type", "msg_id", "device_id", "action")},
+                         {"type": "ack", "msg_id": "1-0", "device_id": "dev-a", "action": "called"})
+        self.assertFalse(kwargs["critical"])
+
 
 class M4VoiceEmergencyTests(unittest.TestCase):
     """M4 환각 필터·긴급 문장 유사 매칭(09-24)과 규칙 게이트·판정표 ④."""
