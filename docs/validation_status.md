@@ -106,6 +106,21 @@ Afternoon additions (same day, raw data in the ignored `reports/rpi5-20260917/`,
 - The local M1 warm-up now uses `(1, M1_MAX_NODES, 64, 100)`; this is a code change awaiting RPi5
   startup verification.
 
+## 2026-10-05 three-environment validation (laptop GPU / laptop CPU / RPi5)
+
+Raw logs are kept outside Git in `reports/laptop/val_20261005/` (laptop) and RPi5 `~/safewave/reports/rpi5-20261005/`. Code `5ce24da`; the RPi5 audio-path re-check used an overlay of `3552027`. Same evaluation samples on every device.
+
+| Item | RPi5 result (device evidence, not in Git) | Boundary |
+|---|---|---|
+| M3 v34 (FP32) | Fall clips 46/50 (all misses in `bathroom_door_closed`), false-alarm examples 5/16, inference p50 6.0 s | Recorded clips, not live room audio |
+| M4 INT8 STT | 50-clip subset CER 8.7%, keyword 84%, p50 5.9 s | Subset of the 2,398-clip set |
+| M5 Qwen2.5-1.5B Q5 | 30 random cases (M2 off, rpi5 prompt): 16 exact, 0 under-triage, p50 10.8 s | Synthetic cases, rubric labels |
+| Voice-emergency alert to FCM | Inject→send 16.9 s before `3552027`, 5.5 s after; backlog case still alerted | One device, one phrase; app acknowledgement never received |
+| N_pose board M1 | 5 nodes at 50 Hz, board inference 14 ms; 5-min run: 0 alerts, but only 1–14% of windows pass coverage ≥ 0.9 | No fall performed; detection rate unmeasured |
+| Boundary checks | 18/18 | Rule logic only |
+
+The laptop GPU/CPU numbers in the same folder are reference baselines and must not be copied into `benchmark_template.md`.
+
 ## Research outcome
 
 The paper **“WiFi CSI와 음향 데이터의 다중 모달 융합을 통한 독거노인 낙상 감지 시스템 설계 방향 고찰”**
