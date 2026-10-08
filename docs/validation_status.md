@@ -1,6 +1,6 @@
 # SafeWave validation status
 
-Last audited: 2026-09-17 (observations below; see "2026-09-17 device observations")
+Last audited: 2026-10-08 (documents re-checked against code `fc4430e`; device runs on 2026-09-17 and 2026-10-05)
 Previous full audit: 2026-09-02 at `324ae4354761b1caa13c260e532c067d5efd7e41` (`develop`)
 
 ## How to read this page
@@ -11,6 +11,8 @@ This page separates implementation from evidence. Status labels mean:
 - **Automated test**: a repeatable test script exists; it is not sensor/model accuracy evidence.
 - **Simulator**: synthetic or injected inputs exercised the path.
 - **Device evidence**: a raw log tied to a Raspberry Pi 5 run exists in the repository.
+- **RPi5 measured (raw log outside Git)**: the run was made on the Raspberry Pi 5 and is summarized here, but its raw
+  logs live only in ignored local folders (`reports/…`). It cannot be re-checked from a fresh clone, so it is weaker than device evidence.
 - **Data needed**: accuracy/error needs labelled sensor or audio data.
 - **Planned**: design or configuration exists without completion evidence.
 
@@ -19,19 +21,19 @@ clinical validation.
 
 ## Evidence matrix
 
-| Area | Implemented | Automated test | Simulator | RPi5 device evidence in Git | Data needed / planned | Current claim boundary |
-|---|---|---|---|---|---|---|
-| Docker Compose services | Yes | Compose configuration can be validated | Dummy injection supported | **No raw run log** | RPi5 full-stack run | Architecture and configuration are implemented; RPi5 completion is unverified here. |
-| CSI UDP ingestion / Redis | Yes | Packet and integration paths exist | `dummy_inject.py` | **No raw run log in Git** | Live ESP32 capture | Wire/interface behavior can be reproduced without claiming sensing accuracy. |
-| M1 interface | Yes, input `(1, M1_MAX_NODES, 64, 100)` and fall-score output; runtime uses 100Hz zero-fill, trained-node tail gate, and K=3/N=5 event aggregation | Runtime-input and risk-gate tests cover plumbing | Synthetic CSI | **No post-change accuracy log in this repo** | Labelled multi-person fall/non-fall CSI and RPi5 live capture | The export script in this repo creates an untrained simplified network. The integrated trained 3-node model and its accuracy evidence live in the separate pose handoff; this repository has not validated post-change RPi5 detection. |
-| M2 interface | Yes, HR/RR output with ONNX or FFT fallback | Boundary/pipeline tests cover plumbing | Synthetic signals | **No paired reference log** | CSI paired with reference HR/RR | The export script creates an untrained network. No HR/RR MAE or clinical accuracy is established. |
-| M3 interface | Partial | `test_m3_m4_experts.py` exists | Synthetic/injected audio | **No labelled device evaluation** | Correct feature extraction and labelled household audio | AST produces a generic AudioSet top class; the seven-class label is selected by a heuristic. Runtime pads/reshapes raw waveform instead of applying the expected log-Mel feature extractor, so AST semantics and seven-class accuracy are unverified. |
-| M4 Korean STT | Yes when Whisper artifacts and dependencies load | Expert test exists | Injected/upstream text path | **No RPi5 WER log** | Representative Korean speech with transcripts | Export/runtime integration exists; no WER or real-room robustness result is established. |
-| M5 risk decision | Yes, GGUF/ONNX backends and rule gate | Rule and pipeline tests exist | Synthetic scenario sets | **No RPi5 benchmark report** | Device latency and real-event outcomes | Qwen-LMOps evaluation figures are model/prompt evaluation, not SafeWave clinical or sensor accuracy. |
-| API / WebSocket / MQTT | Yes | Integration paths exist | Dummy streams | **No sustained RPi5 report** | Load/stability run | Endpoint and message contracts are implemented. Operational availability is unverified. |
-| Phase 2 TTS/STT/FCM | Yes | Logic paths exist | Can be injected | **No complete device evidence in Git** | Speaker, microphone, network and FCM credentials | Workflow is implemented; real-home completion/reliability is unverified. |
-| Dashboard | Yes | No browser E2E suite found | Uses injected/live streams | **No RPi5 usability evidence** | Device/browser test | UI implementation is demonstrable; usability and operational performance are unverified. |
-| RPi5 CPU/thread tuning | Configuration implemented | No reproducible benchmark test | N/A | Commit history records a pre-change observation, but **no post-change raw log/report is tracked** | Rerun `benchmark_template.md` on RPi5 | Treat thread counts and CPU allocation as tuning choices, not a verified reduction. |
+| Area | Implemented | Automated test | Simulator | RPi5 device evidence in Git | RPi5 measured (raw log outside Git) | Data needed / planned | Current claim boundary |
+|---|---|---|---|---|---|---|---|
+| Docker Compose services | Yes | Compose configuration can be validated | Dummy injection supported | **No raw run log** | 2026-09-17 and 2026-10-05 full-stack runs | RPi5 full-stack run | Architecture and configuration are implemented; RPi5 completion is unverified here. |
+| CSI UDP ingestion / Redis | Yes | Packet and integration paths exist | `dummy_inject.py` | **No raw run log in Git** | 2026-10-05: 5 N_pose nodes at 50 Hz, 0% loss over 60 s | Live ESP32 capture | Wire/interface behavior can be reproduced without claiming sensing accuracy. |
+| M1 interface | Yes. Since 2026-10-05 the laptop and RPi5 deployments use N_pose board inference (`M1_SOURCE=board`: CSR! scores → `m1:score` → per-node K/N on the hub); the Compose default stays `onnx`. Hub ONNX path (`M1_SOURCE=onnx`): input `(1, M1_MAX_NODES, 64, 100)` and fall-score output; runtime uses 100Hz zero-fill, trained-node tail gate, and K=3/N=5 event aggregation | Runtime-input and risk-gate tests cover plumbing | Synthetic CSI | **No post-change accuracy log in this repo** | 2026-10-05: board path, 5-min idle run (see below) | Labelled multi-person fall/non-fall CSI and RPi5 live capture | The export script in this repo creates an untrained simplified network. The integrated trained 3-node model and its accuracy evidence live in the separate pose handoff; this repository has not validated post-change RPi5 detection. |
+| M2 interface | Yes, HR/RR output with ONNX or FFT fallback; **retired by the team, off by default** (`models.m2=false`) | Boundary/pipeline tests cover plumbing | Synthetic signals | **No paired reference log** | — (M2 retired, off by default) | CSI paired with reference HR/RR | The export script creates an untrained network. No HR/RR MAE or clinical accuracy is established. |
+| M3 interface | Yes — `v34_homepos` 6-class ONNX (`silence/speech/impact/noise/alarm/unknown`) with gain normalisation and Kaldi log-mel inside the graph; silence gate on pre-gain `raw_peak`, `impact_alert` at `probs[impact] ≥ 0.6` | `test_m3_m4_experts.py` exists | Synthetic/injected audio | **No labelled device evaluation in Git** | 2026-10-05: 50 recorded falls + 16 false-alarm clips | Labelled live-room household audio | Recorded-clip results only (falls 46/50 on RPi5, laptop identical). Live-room accuracy and false-alarm rate are unverified. The pre-2026-09-23 description (7 labels chosen by a heuristic, AudioSet AST without log-Mel) is kept in the history section below and no longer applies. |
+| M4 Korean STT | Yes when Whisper artifacts and dependencies load | Expert test exists | Injected/upstream text path | **No RPi5 WER log** | 2026-09-17: 28 clips; 2026-10-05: 50-clip subset | Representative Korean speech with transcripts | Export/runtime integration exists; no WER or real-room robustness result is established. |
+| M5 risk decision | Yes, GGUF/ONNX backends and rule gate | Rule and pipeline tests exist | Synthetic scenario sets | **No RPi5 benchmark report** | 2026-10-05: 30 synthetic cases, latency | Device latency and real-event outcomes | Qwen-LMOps evaluation figures are model/prompt evaluation, not SafeWave clinical or sensor accuracy. |
+| API / WebSocket / MQTT | Yes | Integration paths exist | Dummy streams | **No sustained RPi5 report** | 2026-10-05: alert → FCM send on one device | Load/stability run | Endpoint and message contracts are implemented. Operational availability is unverified. |
+| Phase 2 TTS/STT/FCM | Yes | Logic paths exist | Can be injected | **No complete device evidence in Git** | 2026-10-05: FCM send only (voice check off) | Speaker, microphone, network and FCM credentials | Workflow is implemented; real-home completion/reliability is unverified. |
+| Dashboard | Yes | No browser E2E suite found | Uses injected/live streams | **No RPi5 usability evidence** | — | Device/browser test | UI implementation is demonstrable; usability and operational performance are unverified. |
+| RPi5 CPU/thread tuning | Configuration implemented | No reproducible benchmark test | N/A | Commit history records a pre-change observation, but **no post-change raw log/report is tracked** | 2026-10-05 resource snapshot (memory, swap, temperature) | Rerun `benchmark_template.md` on RPi5 | Treat thread counts and CPU allocation as tuning choices, not a verified reduction. |
 
 ## Model artifacts and reproducibility
 
@@ -41,8 +43,8 @@ but a fresh GitHub clone does not receive them.
 | Model | Local laptop state | Public-clone state | Interpretation |
 |---|---|---|---|
 | M1 | ONNX file present | absent | File presence proves loadability only. Export uses random initialization and no trained checkpoint. |
-| M2 | ONNX file present | absent | File presence proves loadability only. Export uses random initialization and no trained checkpoint. |
-| M3 | AST ONNX files present | absent | Pretrained AST export artifact; seven-class SafeWave accuracy is unmeasured. |
+| M2 | ONNX file present | absent | **Retired by the team; off by default.** File presence proves loadability only. Export uses random initialization and no trained checkpoint. |
+| M3 | `ast_onnx/v34_homepos.onnx` present (laptop and RPi5) | absent | Teammate's fine-tuned 6-class model with in-graph preprocessing; install/verify with `scripts/setup_m3_ast_onnx.py`. Recorded-clip results only. |
 | M4 | Whisper ONNX encoder/decoder files present | absent | Export/runtime artifact; Korean WER and RPi5 latency are unmeasured. |
 | M5 | Qwen 0.5B ONNX and 1.5B GGUF Q5 files present | absent | Default runtime targets 1.5B GGUF; `export_m5_qwen_onnx.py` is a legacy 0.5B exporter and does not create the default GGUF artifact. |
 
@@ -108,18 +110,26 @@ Afternoon additions (same day, raw data in the ignored `reports/rpi5-20260917/`,
 
 ## 2026-10-05 three-environment validation (laptop GPU / laptop CPU / RPi5)
 
-Raw logs are kept outside Git in `reports/laptop/val_20261005/` (laptop) and RPi5 `~/safewave/reports/rpi5-20261005/`. Code `5ce24da`; the RPi5 audio-path re-check used an overlay of `3552027`. Same evaluation samples on every device.
+These are RPi5 measurements, but under the definitions above they are **not device evidence**: raw logs are kept outside Git in `reports/laptop/val_20261005/` (laptop copy, including the RPi5 results) and RPi5 `~/safewave/reports/rpi5-20261005/`. Code `5ce24da`; the RPi5 audio-path re-check used an overlay of `3552027`. Same evaluation samples on every device.
 
-| Item | RPi5 result (device evidence, not in Git) | Boundary |
+| Item | RPi5 measured (raw log outside Git) | Boundary |
 |---|---|---|
 | M3 v34 (FP32) | Fall clips 46/50 (all misses in `bathroom_door_closed`), false-alarm examples 5/16, inference p50 6.0 s | Recorded clips, not live room audio |
 | M4 INT8 STT | 50-clip subset CER 8.7%, keyword 84%, p50 5.9 s | Subset of the 2,398-clip set |
 | M5 Qwen2.5-1.5B Q5 | 30 random cases (M2 off, rpi5 prompt): 16 exact, 0 under-triage, p50 10.8 s | Synthetic cases, rubric labels |
-| Voice-emergency alert to FCM | Inject→send 16.9 s before `3552027`, 5.5 s after; backlog case still alerted | One device, one phrase; app acknowledgement never received |
+| Voice emergency: inject → alert record (`ai:emergency`) | 16.8 s before `3552027`, 5.4 s after; 5.3 s when two more sounds were queued right after | Injected recording, one phrase |
+| Voice emergency: inject → FCM send attempt | 16.9 s before, 5.5 s after (alert → send 91 / 106 ms); not measured in the queued case | Send time = per-device dedupe key written, not phone delivery; one device; app acknowledgement never received |
 | N_pose board M1 | 5 nodes at 50 Hz, board inference 14 ms; 5-min run: 0 alerts, but only 1–14% of windows pass coverage ≥ 0.9 | No fall performed; detection rate unmeasured |
 | Boundary checks | 18/18 | Rule logic only |
 
 The laptop GPU/CPU numbers in the same folder are reference baselines and must not be copied into `benchmark_template.md`.
+
+## Superseded descriptions (kept for history)
+
+- **M3 before 2026-09-23** (audit of 2026-09-02): the runtime used a generic AST ONNX that returned an AudioSet top class;
+  a seven-class label (`silence/speech/music/impact/noise/alarm/unknown`) was chosen by a waveform heuristic and only mixed
+  with the AST confidence; the raw waveform was padded/reshaped instead of passing through a log-Mel extractor, so AST
+  semantics and seven-class accuracy were unverified. The `v34_homepos` merge on 2026-09-23 replaced this path.
 
 ## Research outcome
 
@@ -140,7 +150,7 @@ Reproducible from source without sensors or model artifacts:
 Requires hardware, external artifacts, credentials, or labelled data:
 
 - live ESP32 CSI and microphone behavior;
-- M1/M2 accuracy and error metrics;
+- M1 accuracy (M2 is retired);
 - M3 class accuracy and M4 WER;
 - M5 and full-stack Raspberry Pi 5 latency, memory, thermal, and stability results;
 - TTS playback, FCM delivery, and real-home operation.

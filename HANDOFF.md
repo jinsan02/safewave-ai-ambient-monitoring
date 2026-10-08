@@ -73,7 +73,7 @@
 |---|---|---|
 | M1 (보드) | 각 노드 펌웨어 안 | **10-05부터 운영 경로.** N_pose v1(WiFall 사전학습 s1, int8, 보드 추론 14 ms). 허브는 `m1:score`로 판정만(`M1_SOURCE=board`) |
 | M1 (허브 ONNX, 예전 경로) | `m1_wifi_pose_onnx/` | `M1_SOURCE=onnx`일 때만. 김태연 인계(3노드 학습 → 입력 `(1,5,64,100)`, 출력 `fall_score`, 그래프 내 sigmoid, 임계 0.80). 이전 1노드 모델 `..._1node_20260802/`(RPi5), `..._stub_backup_20260917/`(노트북) |
-| M2 | `m2_frenel_vital_onnx/` | 미학습 스텁(심박 118 고정). **기본 off** |
+| M2 | `m2_frenel_vital_onnx/` | **폐기**(팀 결정). 미학습 스텁(심박 118 고정), 기본 off, 다시 켜지 않음 |
 | M3 | `ast_onnx/v34_homepos.onnx` | 소민섭 v34 6-class(전처리 그래프 내장, sha256 `d06265e9…b615`). 받기·검증 `scripts/setup_m3_ast_onnx.py`. 옛 모델 백업은 09-24 폴더 정리 때 휴지통으로 이동. RPi5 설치 완료(10-05, FP32 — INT8 아님) |
 | M4 | `whisper_onnx_int8_ft_svc/` (기본) | 이대경 INT8의 서비스용 복사본(`generation_config.json`만 교체, 가중치 하드링크). 원본 `whisper_onnx_int8_ft/`, 이전 fp32 `whisper_onnx/` |
 | M5 | `qwen_15b_gguf_q5/` + `qwen_15b/` | GGUF Q5_K_M 1.23GB + 토크나이저 |

@@ -17,7 +17,7 @@ ai:result ──▶ ai-qwen (M5) ──▶ ai:emergency ──▶ api (FastAPI/W
 | 서비스 | 경로 | 역할 |
 |---|---|---|
 | sensing | `sensing/main.py` | UDP 수신(788B CSI!, N_pose CSI2·CSR!) → `csi:raw`·`m1:score`, 노드 헬스 |
-| ai-experts | `ai/main.py`, `ai/experts/` | M1 낙상, M2 바이탈, M3 환경음, M4 한국어 STT |
+| ai-experts | `ai/main.py`, `ai/experts/` | M1 낙상(N_pose 보드 점수 판정 또는 허브 ONNX), M3 환경음, M4 한국어 STT. M2 바이탈은 **폐기**(코드만 남음, 기본 꺼짐) |
 | ai-qwen | `ai/qwen_service.py`, `ai/logic/` | M5 통합 위험도 (Qwen2.5-1.5B GGUF) |
 | api | `api/main.py` | REST/WS, 설정, 알림, Phase 2 |
 | db / mqtt | Redis / Mosquitto | 메시지 버스 |
@@ -29,7 +29,7 @@ ai:result ──▶ ai-qwen (M5) ──▶ ai:emergency ──▶ api (FastAPI/W
 - **새 Redis 키에는 반드시 EXPIRE(≤3600초)를 붙인다.** 키 이름·TTL·스트림 구조를 바꿀 때는 먼저 사람에게 확인한다.
 - **CSI는 100Hz, 788바이트, `struct.Struct("<4sBBHIIhH192f")`.** `seq_num`은 uint32.
   ESP32가 IIR 필터를 수행하므로 RPi5에서 추가 필터링하지 않는다.
-- **M2 입력은 시간 시리즈.** `data_resp`/`data_heart`는 64채널 공간 스냅샷이며, `ai/main.py`의 노드별 deque로 누적해 쓴다.
+- **M2는 폐기됐다(기본 `models.m2=false`, 다시 켜지 않는다).** 코드를 건드릴 때 참고: M2 입력은 시간 시리즈이며 `data_resp`/`data_heart`는 64채널 공간 스냅샷이라 `ai/main.py`의 노드별 deque로 누적해 쓴다.
 - **M1~M4 추론은 ONNX Runtime만 쓴다.** PyTorch/TF 런타임 금지. 예외: M5(ai-qwen 컨테이너)는 llama.cpp GGUF 허용.
 - **언어는 Python만.** JS/TS/Node를 새로 도입하지 않는다 (`monitor.html`의 기존 인라인 스크립트 수정은 허용).
 - **서비스 경계를 지킨다.** 서비스 간 직접 import 금지, Redis·MQTT로만 통신.

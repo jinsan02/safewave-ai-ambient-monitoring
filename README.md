@@ -6,10 +6,10 @@
 
 > **검증 범위 고지**
 > 이 저장소는 센싱·추론·알림 인터페이스를 통합한 시스템 프로토타입입니다. Raspberry Pi 5용
-> 빌드와 자원 설정은 구현되어 있고, 2026-10-05에 RPi5에서 평가 데이터 기반 측정을 1회 했습니다(요약은
-> `docs/validation_status.md`, 원시 로그는 Git 제외). 실제 방 낙상 감지율, 생체신호 오차, 임상 안전성,
-> 실거주 환경 성능은 검증되지 않았습니다. M2(생체신호)는 폐기되어 기본 꺼짐입니다.
-> 상세 근거와 미검증 항목은 [`docs/validation_status.md`](docs/validation_status.md), 기여 범위는
+> 빌드와 자원 설정은 구현되어 있습니다. 2026-09-17·10-05에 **RPi5에서 실제로 측정**했지만(녹음·평가 데이터 기준),
+> **원시 로그는 Git에 없고** 요약만 [`docs/validation_status.md`](docs/validation_status.md)에 있습니다.
+> 실거주 환경의 낙상 감지율·오경보율, 생체신호 오차, 임상 안전성은 검증되지 않았습니다. M2(생체신호)는 폐기되어 기본 꺼짐입니다.
+> 상세 근거와 미검증 항목은 `docs/validation_status.md`, 개인·팀 기여 범위는
 > [`CONTRIBUTIONS.md`](CONTRIBUTIONS.md)를 확인하세요.
 
 M4 신규 검증용 인계본: [이대경의 ONNX INT8 모델 및 실행 안내](m4_whisper/README.md).
@@ -19,13 +19,13 @@ M4 신규 검증용 인계본: [이대경의 ONNX INT8 모델 및 실행 안내]
 
 ## 시스템 개요
 
-WiFi CSI와 마이크 음향을 수집해 낙상 위험·생체신호·환경음·한국어 음성을 분석하도록 설계하고,
-MQTT와 FCM 알림 경로로 연결한 프로토타입입니다. 각 출력은 의료 판정이 아니라 시스템 내부의
+WiFi CSI와 마이크 음향을 수집해 낙상 위험·환경음·한국어 음성을 분석하고
+MQTT와 FCM 알림 경로로 연결한 프로토타입입니다. 처음에는 생체신호(M2)도 설계했지만 팀 결정으로 폐기했습니다(코드는 남아 있고 기본 꺼짐). 각 출력은 의료 판정이 아니라 시스템 내부의
 위험 추정값입니다.
 
 <p align="center"><img src="docs/img/architecture.svg" alt="SafeWave-AI 전체 아키텍처: ESP32-S3·마이크 → sensing → Redis Streams → ai-experts(M1~M4)·ai-qwen(M5) → api 경보 워커 → FCM·TTS, MQTT·Home Assistant" width="100%"></p>
 
-> 10-05부터 낙상(M1)은 N_pose 펌웨어가 각 ESP32에서 직접 추론합니다. 보드는 원본 CSI(CSI2, 50 Hz)와 추론 결과(CSR!, 5 Hz)를 같은 UDP 5005로 보내고,
+> 10-05부터 낙상(M1)은 N_pose 펌웨어가 각 ESP32에서 직접 추론합니다. 보드는 원본 CSI(CSI2, 50 Hz)와 추론 결과(CSR!, 5 Hz)를 같은 UDP 5005로 보내고
 > sensing이 추론 결과를 `m1:score` 스트림에 쌓으면 ai-experts가 `M1_SOURCE=board`일 때 노드별 K/N으로 판정합니다(그림은 허브 ONNX 경로 기준).
 
 ## 재현 가능 범위
@@ -40,7 +40,7 @@ MQTT와 FCM 알림 경로로 연결한 프로토타입입니다. 각 출력은 �
 
 - `volumes/models/`의 M1~M5 모델 파일: Git에 포함되지 않음
 - ESP32-S3와 마이크를 사용한 실제 센싱 및 Raspberry Pi 5 성능 측정
-- 학습 체크포인트를 사용한 M1/M2, 라벨 데이터 기반 M3/M4 정확도 평가
+- 학습 모델을 사용한 M1(현재 N_pose 보드 추론), 라벨 데이터 기반 M3/M4 정확도 평가 (M2는 폐기)
 - 스피커·FCM 자격증명·네트워크를 포함한 Phase 2 실기기 검증
 
 현재 노트북에는 로컬 모델 파일이 있으나 공개 저장소 재현성과는 별개입니다. 특히 M1/M2 export
@@ -50,6 +50,9 @@ MQTT와 FCM 알림 경로로 연결한 프로토타입입니다. 각 출력은 �
 ---
 
 ## 서비스 구성
+
+<details>
+<summary><b>컨테이너 · 빌드 경로 · 포트 · 역할</b></summary>
 
 | 컨테이너 | 이미지 / 빌드 | 포트 | 역할 |
 |---|---|---|---|
@@ -62,6 +65,8 @@ MQTT와 FCM 알림 경로로 연결한 프로토타입입니다. 각 출력은 �
 | `rp5-api` | `./api` | 8000 | FastAPI REST + WebSocket |
 | `rp5-tts-worker` | `./api` (tts_worker.py) | — | TTS 음성 알림 생성 (프로파일: `audio`) |
 | `rp5-ha` | home-assistant:stable | 8123 | Home Assistant 대시보드 |
+
+</details>
 
 <details>
 <summary><b>AI 서비스 빌드 타깃</b></summary>
@@ -105,13 +110,16 @@ critical + 음성 확인(판정표 ④). 생활 소음 4시간 오경보 시간�
 
 | 백엔드 | 모델 | 외부 qwen-llmops 평가 기록 | SafeWave에서 확인된 범위 |
 |---|---|---|---|
-| `gguf` (기본) | `qwen_15b_gguf_q5` | Track B raw strict 0.966 · grounded 0.985 / 1000 합성 케이스 | 런타임·가드레일 통합. RPi5(2스레드, rpi5 프로필) 추론 p50 10.8 s, 무작위 30건 정확 16·위험 과소 0 (10-05) |
+| `gguf` (기본) | `qwen_15b_gguf_q5` | Track B raw strict 0.966 · grounded 0.985 / 1000 합성 케이스 | 런타임·가드레일 통합. RPi5 실측(10-05, 원시 로그 Git 제외): 2스레드·rpi5 프로필 추론 p50 10.8 s, 무작위 30건 정확 16·위험 과소 0 |
 | `15b` | `qwen_15b` (ONNX fp32) | Track B raw 1.000 | 토크나이저만 로컬에 있고 fp32 ONNX 가중치는 없음 |
 | `05b` | `qwen_05b` (ONNX) | 과거 문서 exact 71%; 현재 로컬 ignored report는 45/100 | 레거시 롤백 경로. 결과 계보 재확인 필요 |
 
 위 수치는 별도 `qwen-llmops`의 합성/정책 평가 기록이며 SafeWave의 낙상·생체신호·임상 성능을
-뜻하지 않습니다. 이 저장소의 로컬 결과 파일은 Git에서 제외되어 있고, RPi5 원시 벤치마크도
-없으므로 “RPi5 배포 검증 완료”로 표현하지 않습니다.
+뜻하지 않습니다. RPi5 실측 결과는 요약만 있고 원시 로그는 Git에서 제외되어 있으므로
+“RPi5 배포 검증 완료”로 표현하지 않습니다.
+
+<details>
+<summary><b>M5 프로필 설정 · 합성 판정표 평가 · 지연 조건</b></summary>
 
 <p align="center"><img src="docs/img/m5_profiles.svg" alt="M5 프롬프트 프로필 비교: 판정표 준수율 M2 켬 78/98 → 96/98, M2 꺼짐 77/102 → 97/102, CPU p50 1.38 → 3.60 s" width="100%"></p>
 
@@ -123,60 +131,74 @@ critical + 음성 확인(판정표 ④). 생활 소음 4시간 오경보 시간�
 위기 생체신호·낙상 확정이 위험음·긴급키워드와 겹치면 최소 critical, 올린 근거는 `qwen_reason`에 붙는다. 자세한 내용은
 `handoff/laptop-20260923/M5_NOTES_NOJINSAN.md` 7·8절. 평가: `python scripts/eval_qwen_accuracy.py --impl gguf [--random 150 --seed 2024]`.
 
+</details>
+
 <details>
 <summary><b>M5 프롬프트·가드레일·시계열 에스컬레이션</b></summary>
 
-프롬프트·가드레일(`vital_override`, `hallucination_guard`)은 `logic/qwen_15b.py`가 원본이고,
+프롬프트·가드레일(`vital_override`, `hallucination_guard`)은 `logic/qwen_15b.py`가 원본이고
 `qwen_gguf.py`는 생성부만 llama.cpp로 교체한 상속 클래스다. `emergency_score.py` 룰 게이트에
 시계열 에스컬레이션(지속 경고 누적·점진 악화 → M5 임계 0.6 floor)이 포함되며,
 시계열 소스는 `agg:minute:*` 분 집계다 (없으면 스냅샷 전용 — 하위호환).
 </details>
 
 <details>
-<summary><b>M3 환경음 라벨 · 타이밍 필드 · 오디오 파이프라인</b></summary>
+<summary><b>M3 환경음 라벨 · 출력 키 · 타이밍 필드 · 오디오 파이프라인 (v34, 2026-09-23~)</b></summary>
 
-### M3 환경음 라벨 (7종)
+### M3 환경음 라벨 (6종, `v34_homepos`)
 
 | 라벨 | 의미 | 실내 예시 |
 |---|---|---|
-| `silence` | 무음 | 조용함, 충격 후 침묵 |
+| `silence` | 무음 | 조용함, 충격 후 침묵. `raw_peak < M3_SILENCE_GATE(0.005)`면 모델 결과와 관계없이 silence |
 | `speech` | 사람 음성 | 대화, 비명, 신음, "도와줘" |
-| `music` | 음악 | TV 음악, 라디오 |
-| `impact` | 충격음 | 낙상, 물건 낙하 |
+| `impact` | 충격음 | 낙상, 물건 낙하. `probs[impact] ≥ M3_IMPACT_THRESHOLD(0.6)`면 `impact_alert` |
 | `noise` | 잡음 | 가전, 환경 배경음 |
 | `alarm` | 경보음 | 화재경보, 비프, 사이렌 |
-| `unknown` | 알 수 없음 | 위 6종에 해당하지 않는 소리 |
+| `unknown` | 알 수 없음 | 위 5종에 해당하지 않는 소리 |
 
-출력 키: `env_sound_label`, `env_sound_confidence`, `env_sound_source` (`onnx` / `heuristic` / `no-audio`).
-현재 7종 라벨은 파형 휴리스틱이 선택합니다. AST ONNX는 AudioSet의 일반 class index와 confidence를
-반환하고, 그 confidence를 7종 라벨 confidence에 혼합합니다. 따라서 AST가 7종을 학습·검증한
-모델이라는 뜻은 아닙니다. 또한 현재 런타임은 raw waveform을 AST 입력 크기로 pad/reshape할 뿐
-정식 log-Mel feature extractor를 적용하지 않으므로, AST 출력의 의미도 검증 전 상태입니다.
+전처리(게인 정규화 + Kaldi log-mel filterbank)는 ONNX 그래프 안에 들어 있어 런타임은 16 kHz mono 파형과 `raw_peak`만 넘깁니다.
+VAD 이벤트(최대 6초)에서 분석할 3초는 `M3_WINDOW_MODE`(`peak` 기본 = 충격 중심, `latest` = 마지막 3초)로 고릅니다.
+모델 파일이 없을 때만 파형 휴리스틱으로 대체합니다(`env_sound_source="heuristic"`).
 
-**타이밍 필드 (백엔드 연동):**
+출력 키(`ai/experts/m3_ast_base.py`): `env_sound_label`, `env_sound_confidence`, `env_sound_source`(`onnx` / `heuristic` / `no-audio`),
+`impact_prob`, `impact_alert`, `silence_gated`, `raw_peak`, `env_sound_probs`(6종 확률), `env_sound_model`.
+
+**타이밍 필드 (`ai:m3:latest` 기록 시 추가):**
 
 | 필드 | 위치 | 의미 |
 |------|------|------|
-| `ts_ms` | 스냅샷 최상위 | **CSI 트리거 시각** (Unix ms) |
-| `audio_ts_ms` | `experts.env_sound` | **M3 분석 오디오 구간 끝 시각** |
-| `audio_ts_start_ms` | `experts.env_sound` | 분석 구간 시작 추정 (`audio_ts_ms - duration`) |
-| `audio_duration_ms` | `experts.env_sound` | 병합 waveform 길이 (ms) |
-| `audio_window_ms` | `experts.env_sound` | M3 윈도우 설정 (`M3_AUDIO_WINDOW_MS`, 기본 3000) |
+| `ts_ms` | 스냅샷 최상위 | **CSI 패킷 시각** (Unix ms) |
+| `audio_ts_ms` | `experts.env_sound` | **오디오 이벤트 시각**(`audio:events` 스트림 ID) |
+| `audio_ts_start_ms` | `experts.env_sound` | 이벤트 시작 추정 (`audio_ts_ms - duration`) |
+| `audio_duration_ms` | `experts.env_sound` | 이벤트 길이 (ms) |
 
-> "몇 시에 소리 났는지"는 `experts.env_sound.audio_ts_ms` 또는 `audio_ts_start_ms`를 사용하세요.  
-> 최상위 `ts_ms`는 CSI 기준으로 수백 ms~수 초 차이날 수 있습니다.
+> "몇 시에 소리 났는지"는 `experts.env_sound.audio_ts_ms` 또는 `audio_ts_start_ms`를 사용하세요.
+> 최상위 `ts_ms`는 CSI 기준이라 오디오 처리 시간만큼(노트북 약 1 s, RPi5 수 초~20 s) 차이 날 수 있습니다.
 
 **오디오 파이프라인 요약:**
 
 ```
 마이크/VAD 또는 POST /audio/events
   → Redis audio:events
-  → CSI 트리거 시 최근 이벤트 병합 (M3_AUDIO_WINDOW_MS)
-  → ONNX AST 추론 → 7종 라벨
-  → ai:result / ai:m3:latest / monitor.html
+  → ai-experts 오디오 워커: M4(STT) → M3(환경음)
+       · 긴급 문장이면 M3 생략, 밀린 이벤트는 순서대로 처리(뒤에 밀린 게 있으면 M3 생략)
+  → Redis audio:result + 프로세스 내 캐시(처리 완료 후 AUDIO_RESULT_MAX_AGE_MS 동안 유효)
+  → CSI 루프가 같은 노드의 결과를 판정에 병합 → ai:result / ai:m3:latest·ai:m4:latest / monitor.html
 ```
 
-### M3 환경음 (AST 6-class 파인튜닝 ONNX)
+M3/M4 지연은 `ai:result.expert_latency_ms`가 아니라 `audio:result` 스트림 ID 시각 − payload `ts_ms`로 잽니다.
+</details>
+
+<details>
+<summary><b>이력: v34 병합 전 M3 설명 (~2026-09-22, 현재 코드와 다름)</b></summary>
+
+v34_homepos 병합(2026-09-23) 전에는 아래처럼 동작했습니다. 지금 코드에는 해당하지 않으며 기록으로만 남깁니다.
+
+- 라벨 7종: `silence`, `speech`, `music`, `impact`, `noise`, `alarm`, `unknown`(현재는 `music` 없음).
+- 7종 라벨은 파형 휴리스틱이 골랐고, 일반 AST ONNX는 AudioSet class index와 confidence를 반환해 그 confidence만 혼합했습니다.
+  즉 AST가 7종을 학습·검증한 모델이 아니었습니다.
+- 런타임은 raw waveform을 AST 입력 크기로 pad/reshape만 했고 log-Mel 특징 추출을 적용하지 않아, AST 출력 의미도 검증 전이었습니다.
+- 오디오는 CSI 트리거 때 최근 이벤트를 `M3_AUDIO_WINDOW_MS`(3000)로 병합해 추론했고, 출력에 `audio_window_ms`가 있었습니다.
 </details>
 
 ---
@@ -186,7 +208,7 @@ critical + 음성 확인(판정표 ④). 생활 소음 4시간 오경보 시간�
 <p align="center"><img src="docs/img/alert_flow.svg" alt="응급 알림 흐름: ai:emergency critical → 90초 락 → FCM 즉시 발송 → VOICE_ENABLED일 때 TTS 음성 확인 → M4 STT 응답 15초 대기 → 안전 키워드면 후속 warning" width="100%"></p>
 
 `ai:emergency`는 두 곳에서 기록됩니다. ai-experts가 확정 규칙(M1 낙상 3/5 확정, 낙상+충격·경보음,
-생체신호 위기)을 만나면 M5를 기다리지 않고 `slm_mode="rule"` critical 항목을 바로 쓰고, M5(ai-qwen)는
+생체신호 위기 — M2 폐기로 현재는 발생하지 않음)을 만나면 M5를 기다리지 않고 `slm_mode="rule"` critical 항목을 바로 쓰고 M5(ai-qwen)는
 나머지 임계 초과 상황을 판단해 씁니다. `api/main.py`의 `_alert_worker`는 critical 항목을 받으면
 **먼저 FCM을 보내고**, `VOICE_ENABLED=true`일 때만 음성 확인을 이어서 진행합니다.
 
@@ -204,13 +226,21 @@ ai:emergency (critical, rule 또는 M5)
         (notify:followup:{msg_id}:{device}), 그 외·무응답은 추가 알림 없음
 ```
 
-API가 재시작되면 최근 `ALERT_REPLAY_MS`(기본 30s) 구간의 경보를 다시 읽고, 이미 보낸 경보는 중복 방지 키로 건너뜁니다.
+API가 재시작되면 최근 `ALERT_REPLAY_MS`(기본 30s) 구간의 경보를 다시 읽고 이미 보낸 경보는 중복 방지 키로 건너뜁니다.
 
-보호자가 앱에서 확인 버튼을 누르면 `POST /alerts/{msg_id}/ack`로 `alert:ack:{msg_id}`에 기록되고, 다른 등록 기기에 `type=ack` 푸시가 갑니다. `GET /alerts/{msg_id}`는 경보 상세와 `acked_by`·`voice_ok`를 돌려줍니다.
+보호자가 앱에서 확인 버튼을 누르면 `POST /alerts/{msg_id}/ack`로 `alert:ack:{msg_id}`에 기록되고 다른 등록 기기에 `type=ack` 푸시가 갑니다. `GET /alerts/{msg_id}`는 경보 상세와 `acked_by`·`voice_ok`를 돌려줍니다.
 
-긴급 음성("도와주세요" 등)은 오디오 워커가 M4에서 긴급 문장을 확인하면 M3를 건너뛰고 바로 결과를 내므로, RPi5에서도 주입→경보가 약 5 s입니다(10-05 측정). 처리가 밀려도 이벤트를 건너뛰지 않고 순서대로 처리합니다(뒤에 밀린 이벤트가 있으면 M3 생략).
+긴급 음성("도와주세요" 등)은 오디오 워커가 M4에서 긴급 문장을 확인하면 M3를 건너뛰고 바로 결과를 냅니다. 처리가 밀려도 이벤트를 건너뛰지 않고 순서대로 처리합니다(뒤에 밀린 이벤트가 있으면 M3 생략).
 
-각 응급 이벤트는 `asyncio.create_task`로 비동기 처리되어 다음 이벤트의 큐 처리를 막지 않습니다.
+| RPi5 실측 (10-05, 원시 로그 Git 제외) | 주입 → 경보 기록(`ai:emergency`) | 주입 → FCM 발송 시도 | 비고 |
+|---|---:|---:|---|
+| 보완 전 (`5ce24da`) | 16.8 s | 16.9 s | 경보 → 발송 91 ms |
+| 보완 후 (`3552027` 덧씌우기) | 5.4 s | 5.5 s | 경보 → 발송 106 ms |
+| 보완 후, 직후 소리 2건이 밀린 경우 | 5.3 s | 측정 안 함 | 긴급 이벤트를 건너뛰지 않음 |
+
+발송 시각은 기기별 중복 방지 키(`notify:sent:*`)가 생긴 시각이라 폰 도착 시각은 아닙니다. 기기 1대·문장 1개 시험이고, 앱 확인(ack)은 아직 한 번도 들어오지 않았습니다.
+
+`asyncio.create_task`로 각 응급 이벤트를 비동기 처리하므로 다음 이벤트의 큐 처리를 막지 않습니다.
 </details>
 
 ---
@@ -305,9 +335,9 @@ Home Assistant MQTT 통합 설정은 `docs/api-db-spec.html` 참조.
 <details>
 <summary><b>대시보드 (monitor.html)</b></summary>
 
-- **실시간 위험도 카드**: 낙상(M1), 생체신호(M2), 환경음(M3), 한국어 음성(M4), M5 통합 판단
+- **실시간 위험도 카드**: 낙상(M1), 환경음(M3), 한국어 음성(M4), M5 통합 판단. 생체신호(M2) 카드는 M2가 꺼져 있으면 숨겨진다(폐기, 기본 꺼짐)
 - **SLM 판단 이유 배너**: Qwen 모델의 위험 판단 근거 텍스트 표시
-- **10분 추이 차트**: 위험도 / 심박 / 호흡 시계열
+- **10분 추이 차트**: 위험도 / 심박 / 호흡 시계열 (M2 폐기로 심박·호흡은 값이 없음)
 - **1시간 위험도 차트**: SLM 호출 마커 포함
 - **마이크 패널**: 브라우저 마이크 녹음 → `POST /audio/events` 즉시 전송 (M3/M4 즉시 테스트)
 - **모델 토글**: M1~M5 개별 on/off (`/settings`의 `models`)
@@ -392,10 +422,10 @@ AUDIO_CHANNELS=1
 | `M1_ALERT_MODE` | `standalone`(M1 단독 경보, 기본) / `corroborated`(보강 규칙만) / `off`. ai-experts·ai-qwen 같은 값 |
 | `AUDIO_RESULT_MAX_AGE_MS` | 오디오 결과를 처리 완료 후 판정에 쓰는 시간 (기본 30000) |
 | `AUDIO_BACKLOG_MAX_WAIT_MS` | 밀린 오디오 이벤트를 버리는 대기 한도 (기본 60000) |
-| `M2_CSI_WINDOW_FRAMES` | M2 시간축 누적 프레임 수 (기본 300 = 3초 @ 100Hz). 호흡 완전 해상도는 1000프레임(10초) 권장 |
+| `M2_CSI_WINDOW_FRAMES` | (폐기된 M2용) M2 시간축 누적 프레임 수 (기본 300 = 3초 @ 100Hz). 호흡 완전 해상도는 1000프레임(10초) 권장 |
 
-현재 RPi5 기본 설정에서는 검증되지 않은 M2 스텁이 반복 경고를 만들지 않도록 `models.m2=false`로
-시작한다. Redis의 `sys:settings`에 이전 설정이 남아 있으면 그 값을 우선하므로 `/settings`에서 확인한다.
+M2는 팀 결정으로 폐기되었고 미학습 스텁이 반복 경고를 만들지 않도록 기본 설정이 `models.m2=false`다(API·ai-experts·대시보드 공통).
+다시 켜지 않는다. Redis의 `sys:settings`에 이전 설정이 남아 있으면 그 값을 우선하므로 `/settings`에서 확인한다.
 
 ### 3. 볼륨 및 모델 준비
 
@@ -411,13 +441,13 @@ mkdir api\auth -ErrorAction SilentlyContinue
 ```powershell
 pip install torch transformers onnx onnxruntime onnxscript
 python scripts/export_m1_wifi_pose_onnx.py
-python scripts/export_m2_frenel_vital_onnx.py
+python scripts/export_m2_frenel_vital_onnx.py   # M2 폐기 — 참고용
 python scripts/export_m3_ast_onnx.py
 python scripts/export_m4_whisper_onnx.py
 python scripts/export_m5_qwen_onnx.py
 ```
 
-`volumes/models/`는 Git에 포함되지 않습니다. M1/M2 스크립트는 현재 학습 체크포인트를 받지 않고
+`volumes/models/`는 Git에 포함되지 않습니다. M1/M2 export 스크립트(M2는 폐기)는 현재 학습 체크포인트를 받지 않고
 무작위 초기화 네트워크의 구조·ONNX 입출력만 검증합니다. M3/M4는 외부 사전학습 모델을 내려받아
 export하며 정확도 평가는 별도입니다. `export_m5_qwen_onnx.py`는 레거시 Qwen 0.5B ONNX용으로,
 기본 M5인 Qwen2.5-1.5B GGUF Q5를 생성하지 않습니다. 새 환경에서는 모델 출처·라이선스·해시와
@@ -588,13 +618,13 @@ SafeWave/1학기 캡스톤의 연구 방향과 연결된 논문
 
 ## 변경 이력
 
-<details open>
+<details>
 <summary><b>v0.4.0 — 2026-10-05 — N_pose 보드 추론 연동 · 3환경 검증 · 긴급 음성 경보 보완</b></summary>
 
 - M1: N_pose 펌웨어(김태연) 연동. sensing이 CSI2(280B 50 Hz)·CSR!(32B 5 Hz)를 받고, 보드 추론 결과는 새 스트림 `m1:score`.
   `M1_SOURCE=board`면 노드별 K/N(0.8·3/5, coverage ≥ 0.9) → 허브 판정, `M1_ALERT_MODE`로 경보 범위 선택. WiFall 검증 세트로 허브 규칙 비교(`handoff/M1_WIFALL_VAL_20261005.md`)
 - API: 보호자 경보 확인(S2) — `POST /alerts/{msg_id}/ack`, `GET /alerts/{msg_id}`, 이력 `acked_by`, 다른 기기에 확인 푸시. Firebase 실기기 푸시 확인
-- ai: 긴급 음성 경보 지연·유실 수정(`3552027`) — 긴급 문장이면 M3 생략, 밀린 오디오 순서대로 처리, 결과 나이는 처리 완료 기준. RPi5 주입→경보 16.8 s → 5.4 s
+- ai: 긴급 음성 경보 지연·유실 수정(`3552027`) — 긴급 문장이면 M3 생략, 밀린 오디오 순서대로 처리, 결과 나이는 처리 완료 기준. RPi5 주입→경보 기록 16.8 s → 5.4 s, 주입→FCM 발송 시도 16.9 s → 5.5 s
 - 검증: 노트북 GPU·CPU·RPi5에서 같은 평가 데이터로 M3·M4·M5·경계값·앱 푸시 측정(요약 `docs/validation_status.md`, `HANDOFF.md` 4-3절). RPi5 M1 보드 판정 5분 실측
 - scripts: `dev/npose_quality.py`, `dev/validation_recorder.py`(보드 점수 열), `dev/m3_env_eval.py`, `dev/push_e2e.py`, `sim_esp32.py --format npose`
 - 단위 테스트 53개
