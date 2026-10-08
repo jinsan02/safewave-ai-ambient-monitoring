@@ -75,8 +75,12 @@ MQTT와 FCM 알림 경로로 연결한 프로토타입입니다. 처음에는 �
 
 | 타깃 | 베이스 이미지 | 사용 환경 |
 |---|---|---|
-| `gpu-runtime` (기본) | nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 | 개발 머신 (RTX GPU) |
-| `cpu-runtime` | python:3.12-slim-bookworm | Raspberry Pi 5, CPU 전용 |
+| `cpu-runtime` | python:3.12-slim-bookworm | Raspberry Pi 5, CPU 전용 (ai-experts) |
+| `gguf-runtime` | `cpu-runtime` + llama.cpp | ai-qwen 기본(`AI_QWEN_DOCKER_TARGET`), RPi5 M5 |
+| `gpu-runtime` | nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04 | 개발 머신 (RTX GPU), ai-experts의 Compose 기본(`AI_DOCKER_TARGET`) |
+| `gguf-gpu-runtime` | `gpu-runtime` + llama.cpp CUDA 빌드(`gguf-cuda-build`: 12.8.1-cudnn-devel) | 개발 머신 GPU M5 |
+
+RPi5는 `.env`에서 `AI_DOCKER_TARGET=cpu-runtime`으로 지정합니다.
 </details>
 
 ---
@@ -158,7 +162,7 @@ critical + 음성 확인(판정표 ④). 생활 소음 4시간 오경보 시간�
 
 전처리(게인 정규화 + Kaldi log-mel filterbank)는 ONNX 그래프 안에 들어 있어 런타임은 16 kHz mono 파형과 `raw_peak`만 넘깁니다.
 VAD 이벤트(최대 6초)에서 분석할 3초는 `M3_WINDOW_MODE`(`peak` 기본 = 충격 중심, `latest` = 마지막 3초)로 고릅니다.
-모델 파일이 없을 때만 파형 휴리스틱으로 대체합니다(`env_sound_source="heuristic"`).
+모델 파일이 없거나 ONNX 로드·추론이 실패하면 파형 휴리스틱으로 대체합니다(`env_sound_source="heuristic"`, 로그 `[m3] onnx 로드 실패` / `[m3] onnx 추론 실패`).
 
 출력 키(`ai/experts/m3_ast_base.py`): `env_sound_label`, `env_sound_confidence`, `env_sound_source`(`onnx` / `heuristic` / `no-audio`),
 `impact_prob`, `impact_alert`, `silence_gated`, `raw_peak`, `env_sound_probs`(6종 확률), `env_sound_model`.
