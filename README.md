@@ -16,41 +16,13 @@ M4 신규 검증용 인계본: [이대경의 ONNX INT8 모델 및 실행 안내]
 
 ---
 
-## 목차
-
-- [시스템 개요](#시스템-개요)
-- [재현 가능 범위](#재현-가능-범위)
-- [서비스 구성](#서비스-구성)
-- [모델 라인업](#모델-라인업)
-- [Redis 키 맵](#redis-키-맵)
-- [MQTT 토픽 구조](#mqtt-토픽-구조)
-- [API 엔드포인트](#api-엔드포인트)
-- [대시보드 (monitor.html)](#대시보드-monitorhtml)
-- [시작하기](#시작하기)
-- [유용한 명령어](#유용한-명령어)
-- [프로젝트 구조](#프로젝트-구조)
-- [문제 해결](#문제-해결)
-- [변경 이력](#변경-이력)
-
----
-
 ## 시스템 개요
 
 WiFi CSI와 마이크 음향을 수집해 낙상 위험·생체신호·환경음·한국어 음성을 분석하도록 설계하고,
 MQTT와 FCM 알림 경로로 연결한 프로토타입입니다. 각 출력은 의료 판정이 아니라 시스템 내부의
 위험 추정값입니다.
 
-```
-ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶ ai-experts (M1~M4)
-마이크 (오디오) ─────────────▶ audio-sensing ──▶ Redis audio:events ──▶ ai-experts
-                                                              │
-                                        ai:result ◀──────────┤
-                                        ai:emergency ◀────────┤──▶ ai-qwen (M5/Qwen)
-                                              │               │
-                                        api (FastAPI) ◀───────┘
-                                        MQTT (Mosquitto) ◀────┘
-                                        Home Assistant ◀──MQTT──┘
-```
+<p align="center"><img src="docs/img/architecture.svg" alt="SafeWave-AI 전체 아키텍처: ESP32-S3·마이크 → sensing → Redis Streams → ai-experts(M1~M4)·ai-qwen(M5) → api 경보 워커 → FCM·TTS, MQTT·Home Assistant" width="100%"></p>
 
 ## 재현 가능 범위
 
@@ -87,7 +59,8 @@ ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶
 | `rp5-tts-worker` | `./api` (tts_worker.py) | — | TTS 음성 알림 생성 (프로파일: `audio`) |
 | `rp5-ha` | home-assistant:stable | 8123 | Home Assistant 대시보드 |
 
-### AI 서비스 빌드 타깃
+<details>
+<summary><b>AI 서비스 빌드 타깃</b></summary>
 
 `ai/Dockerfile`은 멀티 스테이지로 구성됩니다:
 
@@ -95,6 +68,7 @@ ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶
 |---|---|---|
 | `gpu-runtime` (기본) | nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 | 개발 머신 (RTX GPU) |
 | `cpu-runtime` | python:3.12-slim-bookworm | Raspberry Pi 5, CPU 전용 |
+</details>
 
 ---
 
@@ -108,6 +82,9 @@ ESP32-S3 (CSI) ──UDP:5005──▶ sensing ──▶ Redis csi:raw ──▶
 | M4 | `experts/m4_whisper_small.py` | 오디오 PCM (최근 5s) | 한국어 STT |
 | M5 | `logic/qwen_gguf.py` — Qwen2.5-1.5B GGUF Q5_K_M (llama.cpp, 기본 배포 목표본) | 상태 한 줄 + [1h추세] 시계열 요약 | 통합 위험도 판단 |
 
+<details>
+<summary><b>M3 환경음 · M4 후처리 상세</b></summary>
+
 M3 환경음(v34_homepos, 소민섭): 입력 16 kHz mono 3초, 출력 6종 `silence/speech/impact/noise/alarm/unknown`. 무음 게이트 `raw_peak < M3_SILENCE_GATE(0.005)` → silence, 낙상 충격 `probs[impact] ≥ M3_IMPACT_THRESHOLD(0.6)` → `impact_alert`. `raw_peak`은 audio-sensing이 게인 보정 전에 잰 값을 이벤트 메타로 싣는다. 설치·검증: `python scripts/setup_m3_ast_onnx.py --src <dir>`, 자세한 규격은 `docs/m3-env-sound-onnx.md`.
 
 M4 후처리(09-24, 통합 래퍼): Whisper가 무음·잡음에도 문장("MBC 뉴스 ○○○입니다" 등)을 만들어 '말 없음' 확률·토큰
@@ -115,12 +92,15 @@ M4 후처리(09-24, 통합 래퍼): Whisper가 무음·잡음에도 문장("MBC 
 발음 기준 자모 유사도로 찾는다(`emergency_phrase_detected`). 확인되면 규칙 게이트 `voice_emergency_bypass` → 규칙 경보
 critical + 음성 확인(판정표 ④). 생활 소음 4시간 오경보 시간당 0.25회, 도움 요청 300/300. 자세한 내용은
 `handoff/laptop-20260923/TO_LEEDAEGYEONG_M4.md` 5절.
+</details>
 
 ### M5 백엔드 (`SLM_BACKEND` env)
 
+<p align="center"><img src="docs/img/m5_flow.svg" alt="M5 판단 흐름: 게이트 0.6 이상 → 프롬프트 프로필(rpi5·laptop) → Qwen2.5-1.5B Q5_K_M → 판정표 하한 → 등급 우선 → ai:emergency, 확정 규칙 경보는 M5 없이 critical" width="100%"></p>
+
 | 백엔드 | 모델 | 외부 qwen-llmops 평가 기록 | SafeWave에서 확인된 범위 |
 |---|---|---|---|
-| `gguf` (기본) | `qwen_15b_gguf_q5` | Track B raw 0.985 / 1000 합성 케이스 | 런타임·가드레일 통합. RPi5 지연은 미측정 |
+| `gguf` (기본) | `qwen_15b_gguf_q5` | Track B raw strict 0.966 · grounded 0.985 / 1000 합성 케이스 | 런타임·가드레일 통합. RPi5 지연은 미측정 |
 | `15b` | `qwen_15b` (ONNX fp32) | Track B raw 1.000 | 토크나이저만 로컬에 있고 fp32 ONNX 가중치는 없음 |
 | `05b` | `qwen_05b` (ONNX) | 과거 문서 exact 71%; 현재 로컬 ignored report는 45/100 | 레거시 롤백 경로. 결과 계보 재확인 필요 |
 
@@ -128,10 +108,7 @@ critical + 음성 확인(판정표 ④). 생활 소음 4시간 오경보 시간�
 뜻하지 않습니다. 이 저장소의 로컬 결과 파일은 Git에서 제외되어 있고, RPi5 원시 벤치마크도
 없으므로 “RPi5 배포 검증 완료”로 표현하지 않습니다.
 
-프롬프트·가드레일(`vital_override`, `hallucination_guard`)은 `logic/qwen_15b.py`가 원본이고,
-`qwen_gguf.py`는 생성부만 llama.cpp로 교체한 상속 클래스다. `emergency_score.py` 룰 게이트에
-시계열 에스컬레이션(지속 경고 누적·점진 악화 → M5 임계 0.6 floor)이 포함되며,
-시계열 소스는 `agg:minute:*` 분 집계다 (없으면 스냅샷 전용 — 하위호환).
+<p align="center"><img src="docs/img/m5_profiles.svg" alt="M5 프롬프트 프로필 비교: 판정표 준수율 M2 켬 78/98 → 96/98, M2 꺼짐 77/102 → 97/102, CPU p50 1.38 → 3.60 s" width="100%"></p>
 
 프롬프트 프로필(`SLM_PROMPT_PROFILE`): `rpi5`(기본, 약 740토큰)와 `laptop`(판정표·게이트 발동 규칙·고정 예시 21개
 + 입력과 비슷한 판정표 라벨 예시 3개, 약 3,170토큰, `QWEN_GGUF_CACHE_MB=256` 권장). 노트북 held-out 평가(1.5B Q5 고정,
@@ -140,6 +117,18 @@ critical + 음성 확인(판정표 ④). 생활 소음 4시간 오경보 시간�
 판정표 하한(`logic/risk_policy.rubric_level`)은 두 프로필 공통: 게이트 ≥ 0.6이면 최소 warning,
 위기 생체신호·낙상 확정이 위험음·긴급키워드와 겹치면 최소 critical, 올린 근거는 `qwen_reason`에 붙는다. 자세한 내용은
 `handoff/laptop-20260923/M5_NOTES_NOJINSAN.md` 7·8절. 평가: `python scripts/eval_qwen_accuracy.py --impl gguf [--random 150 --seed 2024]`.
+
+<details>
+<summary><b>M5 프롬프트·가드레일·시계열 에스컬레이션</b></summary>
+
+프롬프트·가드레일(`vital_override`, `hallucination_guard`)은 `logic/qwen_15b.py`가 원본이고,
+`qwen_gguf.py`는 생성부만 llama.cpp로 교체한 상속 클래스다. `emergency_score.py` 룰 게이트에
+시계열 에스컬레이션(지속 경고 누적·점진 악화 → M5 임계 0.6 floor)이 포함되며,
+시계열 소스는 `agg:minute:*` 분 집계다 (없으면 스냅샷 전용 — 하위호환).
+</details>
+
+<details>
+<summary><b>M3 환경음 라벨 · 타이밍 필드 · 오디오 파이프라인</b></summary>
 
 ### M3 환경음 라벨 (7종)
 
@@ -183,8 +172,44 @@ critical + 음성 확인(판정표 ④). 생활 소음 4시간 오경보 시간�
 ```
 
 ### M3 환경음 (AST 6-class 파인튜닝 ONNX)
+</details>
 
-## Redis 키 맵
+---
+
+## 응급 알림 흐름 (Phase 2 Active Verification)
+
+<p align="center"><img src="docs/img/alert_flow.svg" alt="응급 알림 흐름: ai:emergency critical → 90초 락 → FCM 즉시 발송 → VOICE_ENABLED일 때 TTS 음성 확인 → M4 STT 응답 15초 대기 → 안전 키워드면 후속 warning" width="100%"></p>
+
+`ai:emergency`는 두 곳에서 기록됩니다. ai-experts가 확정 규칙(M1 낙상 3/5 확정, 낙상+충격·경보음,
+생체신호 위기)을 만나면 M5를 기다리지 않고 `slm_mode="rule"` critical 항목을 바로 쓰고, M5(ai-qwen)는
+나머지 임계 초과 상황을 판단해 씁니다. `api/main.py`의 `_alert_worker`는 critical 항목을 받으면
+**먼저 FCM을 보내고**, `VOICE_ENABLED=true`일 때만 음성 확인을 이어서 진행합니다.
+
+<details>
+<summary><b>경보 처리 순서 · 재시작 시 재생</b></summary>
+
+```
+ai:emergency (critical, rule 또는 M5)
+  → phase2:active:N 락 (90s, 같은 노드 중복 경보·M5 재호출 억제)
+  → FCM critical 알림 즉시 발송 (notify:sent:{msg_id}:{device})
+  → VOICE_ENABLED=true일 때만:
+      TTS 발화 큐 적재 (tts:speak:queue) → tts_worker.py "괜찮으세요?" 재생 → user:voice_response:N
+      → 재생 종료 이후 녹음된 STT(M4) 응답만 대기 (VOICE_RESPONSE_TIMEOUT_SEC, 기본 15s)
+      → 안전 키워드("괜찮","아니야","없어" 등) → 후속 warning 알림 "대상자 음성 응답 확인됨"
+        (notify:followup:{msg_id}:{device}), 그 외·무응답은 추가 알림 없음
+```
+
+API가 재시작되면 최근 `ALERT_REPLAY_MS`(기본 30s) 구간의 경보를 다시 읽고, 이미 보낸 경보는 중복 방지 키로 건너뜁니다.
+
+각 응급 이벤트는 `asyncio.create_task`로 비동기 처리되어 다음 이벤트의 큐 처리를 막지 않습니다.
+</details>
+
+---
+
+## 인터페이스
+
+<details>
+<summary><b>Redis 키 맵</b></summary>
 
 | 키 | 타입 | TTL / 크기 | 설명 |
 |---|---|---|---|
@@ -205,10 +230,10 @@ critical + 음성 확인(판정표 ④). 생활 소음 4시간 오경보 시간�
 | `notify:followup:{msg_id}:{device_id}` | String | TTL 3600s | 음성 확인 후속 알림 중복 방지 키 |
 
 모든 데이터는 메모리에만 유지되며, 컨테이너 재시작 시 이력이 복구되지 않습니다.
+</details>
 
----
-
-## MQTT 토픽 구조
+<details>
+<summary><b>MQTT 토픽 구조</b></summary>
 
 베이스 토픽: `safewave` (`.env`의 `MQTT_BASE_TOPIC` 변경 가능)
 
@@ -219,34 +244,10 @@ critical + 음성 확인(판정표 ④). 생활 소음 4시간 오경보 시간�
 | `safewave/feedback` | 구독자 → ai | 피드백 (Redis에 저장) |
 
 Home Assistant MQTT 통합 설정은 `docs/api-db-spec.html` 참조.
+</details>
 
----
-
-## 응급 알림 흐름 (Phase 2 Active Verification)
-
-`ai:emergency`는 두 곳에서 기록됩니다. ai-experts가 확정 규칙(M1 낙상 3/5 확정, 낙상+충격·경보음,
-생체신호 위기)을 만나면 M5를 기다리지 않고 `slm_mode="rule"` critical 항목을 바로 쓰고, M5(ai-qwen)는
-나머지 임계 초과 상황을 판단해 씁니다. `api/main.py`의 `_alert_worker`는 critical 항목을 받으면
-**먼저 FCM을 보내고**, `VOICE_ENABLED=true`일 때만 음성 확인을 이어서 진행합니다.
-
-```
-ai:emergency (critical, rule 또는 M5)
-  → phase2:active:N 락 (90s, 같은 노드 중복 경보·M5 재호출 억제)
-  → FCM critical 알림 즉시 발송 (notify:sent:{msg_id}:{device})
-  → VOICE_ENABLED=true일 때만:
-      TTS 발화 큐 적재 (tts:speak:queue) → tts_worker.py "괜찮으세요?" 재생 → user:voice_response:N
-      → 재생 종료 이후 녹음된 STT(M4) 응답만 대기 (VOICE_RESPONSE_TIMEOUT_SEC, 기본 15s)
-      → 안전 키워드("괜찮","아니야","없어" 등) → 후속 warning 알림 "대상자 음성 응답 확인됨"
-        (notify:followup:{msg_id}:{device}), 그 외·무응답은 추가 알림 없음
-```
-
-API가 재시작되면 최근 `ALERT_REPLAY_MS`(기본 30s) 구간의 경보를 다시 읽고, 이미 보낸 경보는 중복 방지 키로 건너뜁니다.
-
-각 응급 이벤트는 `asyncio.create_task`로 비동기 처리되어 다음 이벤트의 큐 처리를 막지 않습니다.
-
----
-
-## API 엔드포인트
+<details>
+<summary><b>API 엔드포인트</b></summary>
 
 **모니터링:**
 
@@ -275,10 +276,10 @@ API가 재시작되면 최근 `ALERT_REPLAY_MS`(기본 30s) 구간의 경보를 
 | POST | `/audio/events` | 오디오 이벤트 수동 주입 (마이크 테스트) |
 
 전체 스키마: `http://localhost:8000/docs` 또는 `docs/api-db-spec.html` 참조.
+</details>
 
----
-
-## 대시보드 (monitor.html)
+<details>
+<summary><b>대시보드 (monitor.html)</b></summary>
 
 - **실시간 위험도 카드**: 낙상(M1), 생체신호(M2), 환경음(M3), 한국어 음성(M4), M5 통합 판단
 - **SLM 판단 이유 배너**: Qwen 모델의 위험 판단 근거 텍스트 표시
@@ -304,18 +305,18 @@ http://127.0.0.1:8081/monitor.html?api=http://<RPi5-IP>:8000
 ```
 
 RPi5 주소는 DHCP로 바뀔 수 있습니다. 현재 값은 `HANDOFF.md`를 확인하세요.
+</details>
 
 ---
 
-## 필수 요구사항
+## 실행
+
+<details>
+<summary><b>필수 요구사항 · 클론 · .env · 모델 준비 · 실행 · 더미 데이터</b></summary>
 
 - Docker Desktop 4.x+ (Compose v2 포함)
 - Git
 - (선택) NVIDIA GPU + CUDA 드라이버 — GPU 가속 모드 사용 시
-
----
-
-## 시작하기
 
 ### 1. 클론
 
@@ -440,10 +441,10 @@ docker run --rm --network rp5_rp5-network `
   python:3.12-slim `
   sh -c "pip install redis -q && python /scripts/dummy_inject.py"
 ```
+</details>
 
----
-
-## 유용한 명령어
+<details>
+<summary><b>유용한 명령어</b></summary>
 
 ```bash
 # 로그 확인
@@ -462,10 +463,10 @@ docker compose exec db redis-cli INFO memory
 curl http://localhost:8000/status
 curl http://localhost:8000/nodes/health
 ```
+</details>
 
----
-
-## 프로젝트 구조
+<details>
+<summary><b>프로젝트 구조</b></summary>
 
 ```
 rp5/
@@ -483,7 +484,10 @@ rp5/
 │   ├── mqtt_helper.py          # MQTT 연결/발행 헬퍼
 │   ├── experts/                # M1-M4 전문가 모듈
 │   ├── logic/
-│   │   ├── qwen_05b.py         # M5 Qwen SLM (decoder_with_past KV 캐시)
+│   │   ├── qwen_15b.py         # M5 프롬프트·가드레일 원본 (Qwen2.5-1.5B)
+│   │   ├── qwen_gguf.py        # M5 기본 백엔드 — llama.cpp GGUF Q5_K_M (qwen_15b 상속)
+│   │   ├── risk_policy.py      # 판정표 rubric_level (판정표 하한)
+│   │   ├── qwen_05b.py         # M5 레거시 0.5B ONNX 롤백 경로 (decoder_with_past KV 캐시)
 │   │   └── emergency_score.py  # 위험도 도메인 가중치 계산
 │   ├── utils/                  # get_ort_providers, TurboQuant
 │   └── Dockerfile              # cpu-runtime / gpu-runtime 멀티 스테이지
@@ -517,10 +521,10 @@ rp5/
     └── models/                 # 모델 파일 (Git 제외)
         └── ast_onnx/           # M3 환경음 AST 6-class ONNX
 ```
+</details>
 
----
-
-## 문제 해결
+<details>
+<summary><b>문제 해결</b></summary>
 
 | 증상 | 원인 | 해결 |
 |---|---|---|
@@ -536,13 +540,14 @@ rp5/
 | 마이크 권한 오류 | HTTPS/file:// 접근 | `http://127.0.0.1:8081/monitor.html` 사용 |
 | dummy_inject.py 경로 오류 | Git Bash 경로 변환 | `MSYS_NO_PATHCONV=1` 접두어 사용 |
 | `python: not found` (ai-qwen) | Ubuntu 22.04 python3만 존재 | `command: ["python3", ...]` 사용 (이미 적용) |
+</details>
 
 ---
 
 ## 연구 성과
 
 SafeWave/1학기 캡스톤의 연구 방향과 연결된 논문
-**「WiFi CSI와 음향 데이터의 다중 모달 융합을 통한 독거노인 낙상 감지 시스템 설계 방향 고찰」**이
+「**WiFi CSI와 음향 데이터의 다중 모달 융합을 통한 독거노인 낙상 감지 시스템 설계 방향 고찰**」이
 2026 한국디지털콘텐츠학회 하계종합학술대회 대학생 논문경진대회 동상을 받았습니다
 (2026-07-03, 한국디지털콘텐츠학회).
 
@@ -553,7 +558,8 @@ SafeWave/1학기 캡스톤의 연구 방향과 연결된 논문
 
 ## 변경 이력
 
-### v0.3.0 — 2026-09-17 — 팀 모델 병합 (M1·M2 김태연, M4 이대경) · RPi5 기본값 측정
+<details>
+<summary><b>v0.3.0 — 2026-09-17 — 팀 모델 병합 (M1·M2 김태연, M4 이대경) · RPi5 기본값 측정</b></summary>
 
 - 팀 인계 병합: M1·M2 김태연 (PR #3, `handoff/m1-m2-20260916/`), M4 이대경 Whisper 파인튜닝 ONNX INT8 (PR #4, `m4_whisper/`)
 - M1: 인계 모델(3노드 학습, 5채널 0 패딩, 그래프 내 sigmoid) 기준으로 `fall_detected` 임계값 `M1_FALL_THRESHOLD` 기본 0.80.
@@ -568,8 +574,10 @@ SafeWave/1학기 캡스톤의 연구 방향과 연결된 논문
 - API: `GET /system/resources` 신규, `/nodes/health`에 RSSI 추가. 대시보드에 시스템 자원·ESP32 노드 통신 패널 추가
 - scripts: `bench_rpi5.py`(부하·지연 측정), `bench_startup.py`(기동 준비 시간), `eval_m4_stt.py`(M4 고정 세트 평가)
 - 문서: `HANDOFF.md`(현재 작업 인계), `AGENTS.md`(Codex용 지침) 추가
+</details>
 
-### v0.2.0 — 2026-07-21 — M5 Qwen2.5-1.5B GGUF 통합 (qwen-llmops 이식)
+<details>
+<summary><b>v0.2.0 — 2026-07-21 — M5 Qwen2.5-1.5B GGUF 통합 (qwen-llmops 이식)</b></summary>
 
 **M5 모델 교체 (0.5B ONNX → 1.5B GGUF Q5_K_M):**
 - [qwen-llmops](https://github.com/jinsan02/qwen-llmops)의 배포 후보를 이식
@@ -591,8 +599,10 @@ SafeWave/1학기 캡스톤의 연구 방향과 연결된 논문
 
 **모델 아티팩트:**
 - `volumes/models/qwen_15b_gguf_q5/` + `qwen_15b/` 토크나이저 — Git 제외, 별도 준비 필요
+</details>
 
-### v0.1.1 — 2026-06-16
+<details>
+<summary><b>v0.1.1 — 2026-06-16</b></summary>
 
 **`emergency_score.py` 위험도 산식 고도화:**
 - 복합 위험 보정 차등화: 2도메인 동시 이상 ×1.20 / 3도메인 ×1.35 / 4도메인 ×1.50 (기존 일괄 ×1.2)
@@ -636,8 +646,10 @@ SafeWave/1학기 캡스톤의 연구 방향과 연결된 논문
 - `analyze_csi.py` / `analyze_csi_by_node.py` / `analyze_nodes.py` — ESP32 실측 CSI 로그 분석 도구
 
 ---
+</details>
 
-### v0.1.0 — 첫 시뮬레이션 파이프라인 확인
+<details>
+<summary><b>v0.1.0 — 첫 시뮬레이션 파이프라인 확인</b></summary>
 
 **AI 서비스 분리:**
 - `rp5-ai` 단일 컨테이너 → `rp5-ai-experts` (M1~M4) + `rp5-ai-qwen` (M5/Qwen) 분리
@@ -674,8 +686,10 @@ SafeWave/1학기 캡스톤의 연구 방향과 연결된 논문
 - `ai-qwen` 컨테이너 `python: not found` — Ubuntu 22.04 호환 `python3` 명시
 
 ---
+</details>
 
-### ver.0.0.4 (병합됨)
+<details>
+<summary><b>ver.0.0.4 (병합됨)</b></summary>
 
 **펌웨어 연동 — ESP32-S3 wire contract 확정:**
 - 펌웨어 레포(`safewave-ai-ambient-monitoring-firmware`) 분석으로 788B 고정 UDP 패킷 구조 확정
@@ -692,8 +706,10 @@ SafeWave/1학기 캡스톤의 연구 방향과 연결된 논문
 - `scripts/gen_sos_coeffs.py` 신규
 
 ---
+</details>
 
-### ver.0.0.3
+<details>
+<summary><b>ver.0.0.3</b></summary>
 
 **AI 엔진:**
 - `ai/logic/emergency_score.py` 신규 — 도메인 가중치 기반 위험도 계산 분리 (fall 40% / vital 30% / sound 15% / speech 15%)
@@ -711,8 +727,10 @@ SafeWave/1학기 캡스톤의 연구 방향과 연결된 논문
 - `scripts/dummy_inject.py` — ESP32 없이 더미 CSI + 오디오 이벤트 주입
 - `scripts/slm_chat_cli.py` / `slm_chat_demo.py` — M5 SLM 대화형 테스트 도구
 - `scripts/tts_worker.py` — MQTT 구독 기반 TTS 음성 알림 워커
+</details>
 
-### ver.0.0.2
+<details>
+<summary><b>ver.0.0.2</b></summary>
 
 **신규 서비스:**
 - `mqtt` — eclipse-mosquitto:2 MQTT 브로커 추가 (포트 1883)
@@ -739,11 +757,14 @@ SafeWave/1학기 캡스톤의 연구 방향과 연결된 논문
 - `docker-compose.gpu.yml` — GPU 리소스 예약 오버라이드
 - `mosquitto.conf` — MQTT 브로커 설정
 - `ai/mqtt_helper.py` — MQTT 연결/발행 헬퍼
+</details>
 
-### ver.0.0.1
+<details>
+<summary><b>ver.0.0.1</b></summary>
 
 - M1~M5 인터페이스 라인업 구성. M1/M2는 학습 모델이 아니라 단순화 export 스텁이며,
   M3~M5 외부 모델 아티팩트는 Git에 포함되지 않음
 - Docker Compose 기반 초기 스택 구성 (db / sensing / ai / api)
 - GPU/CPU 겸용 ONNX 런타임 구성
 - `/status` no-data 처리 안정화
+</details>
