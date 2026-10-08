@@ -2,12 +2,13 @@
 
 독거인 안전 모니터링 시스템 — Raspberry Pi 5 + Docker Compose 기반
 
-**현재 릴리즈: v0.3.0** (2026-09-17, 팀 모델 병합 진행 중)
+**현재 릴리즈: v0.4.0** (2026-10-05, N_pose 보드 추론 연동 · 노트북 GPU/CPU·RPi5 3환경 검증 · 긴급 음성 경보 경로 보완)
 
 > **검증 범위 고지**
 > 이 저장소는 센싱·추론·알림 인터페이스를 통합한 시스템 프로토타입입니다. Raspberry Pi 5용
-> 빌드와 자원 설정은 구현되어 있지만, 현재 Git에는 완성된 RPi5 벤치마크나 원시 로그가 없습니다.
-> 낙상 정확도, 생체신호 오차, STT 정확도, 임상 안전성, 실거주 환경 성능도 검증되지 않았습니다.
+> 빌드와 자원 설정은 구현되어 있고, 2026-10-05에 RPi5에서 평가 데이터 기반 측정을 1회 했습니다(요약은
+> `docs/validation_status.md`, 원시 로그는 Git 제외). 실제 방 낙상 감지율, 생체신호 오차, 임상 안전성,
+> 실거주 환경 성능은 검증되지 않았습니다. M2(생체신호)는 폐기되어 기본 꺼짐입니다.
 > 상세 근거와 미검증 항목은 [`docs/validation_status.md`](docs/validation_status.md), 기여 범위는
 > [`CONTRIBUTIONS.md`](CONTRIBUTIONS.md)를 확인하세요.
 
@@ -23,6 +24,9 @@ MQTT와 FCM 알림 경로로 연결한 프로토타입입니다. 각 출력은 �
 위험 추정값입니다.
 
 <p align="center"><img src="docs/img/architecture.svg" alt="SafeWave-AI 전체 아키텍처: ESP32-S3·마이크 → sensing → Redis Streams → ai-experts(M1~M4)·ai-qwen(M5) → api 경보 워커 → FCM·TTS, MQTT·Home Assistant" width="100%"></p>
+
+> 10-05부터 낙상(M1)은 N_pose 펌웨어가 각 ESP32에서 직접 추론합니다. 보드는 원본 CSI(CSI2, 50 Hz)와 추론 결과(CSR!, 5 Hz)를 같은 UDP 5005로 보내고,
+> sensing이 추론 결과를 `m1:score` 스트림에 쌓으면 ai-experts가 `M1_SOURCE=board`일 때 노드별 K/N으로 판정합니다(그림은 허브 ONNX 경로 기준).
 
 ## 재현 가능 범위
 
@@ -76,8 +80,9 @@ MQTT와 FCM 알림 경로로 연결한 프로토타입입니다. 각 출력은 �
 
 | ID | 파일 | 입력 | 출력 |
 |---|---|---|---|
-| M1 | `experts/m1_wifi_pose.py` | CSI `(1, M1_MAX_NODES, 64, 100)` — 기본 5노드. 1노드 학습 모델은 `.env`에 `M1_MAX_NODES=1` | 낙상 위험 점수 (0–1, 모델 그래프 안에서 sigmoid). `fall_detected` 임계값 `M1_FALL_THRESHOLD` 기본 0.80 |
-| M2 | `experts/m2_frenel_vital.py` | CSI 시간 시리즈 (N,) @ 100Hz — per-node deque | 생체신호 점수 (HR, RR) |
+| M1 (보드, 10-05~) | N_pose 펌웨어(김태연) — 각 ESP32가 자기 2초 창을 int8 모델로 추론 | 보드 CSI 50 Hz | CSR! 패킷 5 Hz(점수·coverage) → `m1:score` → `M1_SOURCE=board`면 허브가 노드별 K/N 판정 |
+| M1 (허브 ONNX) | `experts/m1_wifi_pose.py` | CSI `(1, M1_MAX_NODES, 64, 100)` — 기본 5노드. 1노드 학습 모델은 `.env`에 `M1_MAX_NODES=1` | 낙상 위험 점수 (0–1, 모델 그래프 안에서 sigmoid). `fall_detected` 임계값 `M1_FALL_THRESHOLD` 기본 0.80. `M1_SOURCE=onnx`(Compose 기본)일 때 |
+| M2 (폐기) | `experts/m2_frenel_vital.py` | CSI 시간 시리즈 (N,) @ 100Hz — per-node deque | 생체신호 점수 (HR, RR). 미학습 스텁, **기본 꺼짐** |
 | M3 | `experts/m3_ast_base.py` | 오디오 PCM 16kHz mono 3초 | 환경음 6종 분류 + `impact_prob`/`impact_alert` (v34_homepos ONNX, 전처리 그래프 내장) |
 | M4 | `experts/m4_whisper_small.py` | 오디오 PCM (최근 5s) | 한국어 STT |
 | M5 | `logic/qwen_gguf.py` — Qwen2.5-1.5B GGUF Q5_K_M (llama.cpp, 기본 배포 목표본) | 상태 한 줄 + [1h추세] 시계열 요약 | 통합 위험도 판단 |
@@ -100,7 +105,7 @@ critical + 음성 확인(판정표 ④). 생활 소음 4시간 오경보 시간�
 
 | 백엔드 | 모델 | 외부 qwen-llmops 평가 기록 | SafeWave에서 확인된 범위 |
 |---|---|---|---|
-| `gguf` (기본) | `qwen_15b_gguf_q5` | Track B raw strict 0.966 · grounded 0.985 / 1000 합성 케이스 | 런타임·가드레일 통합. RPi5 지연은 미측정 |
+| `gguf` (기본) | `qwen_15b_gguf_q5` | Track B raw strict 0.966 · grounded 0.985 / 1000 합성 케이스 | 런타임·가드레일 통합. RPi5(2스레드, rpi5 프로필) 추론 p50 10.8 s, 무작위 30건 정확 16·위험 과소 0 (10-05) |
 | `15b` | `qwen_15b` (ONNX fp32) | Track B raw 1.000 | 토크나이저만 로컬에 있고 fp32 ONNX 가중치는 없음 |
 | `05b` | `qwen_05b` (ONNX) | 과거 문서 exact 71%; 현재 로컬 ignored report는 45/100 | 레거시 롤백 경로. 결과 계보 재확인 필요 |
 
@@ -201,6 +206,10 @@ ai:emergency (critical, rule 또는 M5)
 
 API가 재시작되면 최근 `ALERT_REPLAY_MS`(기본 30s) 구간의 경보를 다시 읽고, 이미 보낸 경보는 중복 방지 키로 건너뜁니다.
 
+보호자가 앱에서 확인 버튼을 누르면 `POST /alerts/{msg_id}/ack`로 `alert:ack:{msg_id}`에 기록되고, 다른 등록 기기에 `type=ack` 푸시가 갑니다. `GET /alerts/{msg_id}`는 경보 상세와 `acked_by`·`voice_ok`를 돌려줍니다.
+
+긴급 음성("도와주세요" 등)은 오디오 워커가 M4에서 긴급 문장을 확인하면 M3를 건너뛰고 바로 결과를 내므로, RPi5에서도 주입→경보가 약 5 s입니다(10-05 측정). 처리가 밀려도 이벤트를 건너뛰지 않고 순서대로 처리합니다(뒤에 밀린 이벤트가 있으면 M3 생략).
+
 각 응급 이벤트는 `asyncio.create_task`로 비동기 처리되어 다음 이벤트의 큐 처리를 막지 않습니다.
 </details>
 
@@ -213,7 +222,8 @@ API가 재시작되면 최근 `ALERT_REPLAY_MS`(기본 30s) 구간의 경보를 
 
 | 키 | 타입 | TTL / 크기 | 설명 |
 |---|---|---|---|
-| `csi:raw` | Stream | MAXLEN 36,000 | CSI 원시 스트림 (100 Hz, 788B 패킷) |
+| `csi:raw` | Stream | MAXLEN 36,000 | CSI 원시 스트림 (788B 100 Hz 또는 N_pose CSI2 280B 50 Hz — `fresh`·`sig_mode`·`frame_peak` 포함) |
+| `m1:score` | Stream | MAXLEN 18,000, EXPIRE 3600s | N_pose 보드 M1 추론 결과(CSR!) — 추론 1회 = 1항목(score·logit·coverage·flags) |
 | `audio:events` | Stream | MAXLEN 120 | VAD 트리거 오디오 이벤트 |
 | `ai:result` | Stream | MAXLEN 18,000 | 추론 통합 스냅샷 |
 | `ai:emergency` | Stream | MAXLEN 3,600 | warning/critical 이벤트 |
@@ -227,6 +237,8 @@ API가 재시작되면 최근 `ALERT_REPLAY_MS`(기본 30s) 구간의 경보를 
 | `tts:speak:queue` | List | — | TTS 발화 요청 큐 (`tts_worker.py` BLPOP 소비) |
 | `user:voice_response:N` | String | TTL 5s | TTS 재생 완료 신호 (노드별, Phase 2 응급 확인 트리거) |
 | `notify:sent:{msg_id}:{device_id}` | String | TTL 3600s | FCM 중복 발송 방지 dedupe 키 |
+| `alert:ack:{msg_id}` | Hash | TTL 3600s | 보호자 경보 확인 기록(기기별 seen/called, 예약 필드 `_voice` = 음성 확인 결과) |
+| `phase2:active:{node}` | String | TTL 90s | 경보 처리 중 락(같은 노드 중복 경보·M5 재호출 억제) |
 | `notify:followup:{msg_id}:{device_id}` | String | TTL 3600s | 음성 확인 후속 알림 중복 방지 키 |
 
 모든 데이터는 메모리에만 유지되며, 컨테이너 재시작 시 이력이 복구되지 않습니다.
@@ -269,11 +281,23 @@ Home Assistant MQTT 통합 설정은 `docs/api-db-spec.html` 참조.
 |---|---|---|
 | GET/POST | `/settings` | 위험도 임계값, 활성 노드 등 |
 | POST | `/auth/register-token` | FCM 토큰 등록 |
+| DELETE | `/auth/register-token/{device_id}` | FCM 토큰 삭제 |
 | GET | `/auth/tokens` | 등록 토큰 목록 |
 | POST | `/notify/test` | FCM 테스트 전송 |
 | POST | `/notify/send` | FCM 수동 전송 |
 | POST | `/notify/check` | FCM 결과 확인 |
 | POST | `/audio/events` | 오디오 이벤트 수동 주입 (마이크 테스트) |
+
+**보호자 앱:**
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| GET | `/app/summary` | 홈 요약(위험도, 데이터 지연, 온라인 노드 수, `monitoring.m1`, 최근 경보) |
+| POST | `/alerts/{msg_id}/ack` | 경보 확인 `{device_id, action: seen\|called}` |
+| GET | `/alerts/{msg_id}` | 경보 상세 + `acked_by` + `voice_ok` |
+| POST | `/alerts/{msg_id}/feedback` | 오탐·미탐 신고 |
+
+앱 연동 문서: `handoff/guardian_app_kit/` (`TO_APP_20261005.md`, `TO_APP_20261006.md`).
 
 전체 스키마: `http://localhost:8000/docs` 또는 `docs/api-db-spec.html` 참조.
 </details>
@@ -363,6 +387,11 @@ AUDIO_CHANNELS=1
 | `AUDIO_STALL_EXIT_SEC` | 오디오 워커가 한 건을 이 시간 넘게 처리하거나 죽으면 ai-experts 종료 후 재시작 (기본 180s) |
 | `TTS_SYNTH_TIMEOUT_SEC` / `TTS_PLAY_TIMEOUT_SEC` | TTS 합성·재생 상한 (기본 10s / 20s) |
 | `VAD_THRESHOLD_DB` | VAD 임계값(dBFS). `-55` ~ `-60`이면 원거리 소리에 민감 |
+| `M1_SOURCE` | `onnx`(허브 ONNX, Compose 기본) / `board`(N_pose 보드 점수 `m1:score`로 허브 판정) |
+| `M1_BOARD_THRESHOLD` / `M1_BOARD_K` / `M1_BOARD_N` / `M1_BOARD_MIN_NODES` / `M1_BOARD_MIN_COVERAGE` | 보드 판정 규칙 (기본 0.80 · 3 · 5 · 1 · 0.9). 재시작만으로 변경 |
+| `M1_ALERT_MODE` | `standalone`(M1 단독 경보, 기본) / `corroborated`(보강 규칙만) / `off`. ai-experts·ai-qwen 같은 값 |
+| `AUDIO_RESULT_MAX_AGE_MS` | 오디오 결과를 처리 완료 후 판정에 쓰는 시간 (기본 30000) |
+| `AUDIO_BACKLOG_MAX_WAIT_MS` | 밀린 오디오 이벤트를 버리는 대기 한도 (기본 60000) |
 | `M2_CSI_WINDOW_FRAMES` | M2 시간축 누적 프레임 수 (기본 300 = 3초 @ 100Hz). 호흡 완전 해상도는 1000프레임(10초) 권장 |
 
 현재 RPi5 기본 설정에서는 검증되지 않은 M2 스텁이 반복 경고를 만들지 않도록 `models.m2=false`로
@@ -482,11 +511,12 @@ rp5/
 │   ├── main.py                 # 추론 메인 루프 (M1~M4, MQTT 발행)
 │   ├── qwen_service.py         # M5 Qwen 독립 서비스 (ai-qwen 컨테이너)
 │   ├── mqtt_helper.py          # MQTT 연결/발행 헬퍼
+│   ├── runtime_inputs.py       # M1 입력·투표, 보드 점수 집계(BoardScoreAggregator), 오디오 처리 계획
 │   ├── experts/                # M1-M4 전문가 모듈
 │   ├── logic/
 │   │   ├── qwen_15b.py         # M5 프롬프트·가드레일 원본 (Qwen2.5-1.5B)
 │   │   ├── qwen_gguf.py        # M5 기본 백엔드 — llama.cpp GGUF Q5_K_M (qwen_15b 상속)
-│   │   ├── risk_policy.py      # 판정표 rubric_level (판정표 하한)
+│   │   ├── risk_policy.py      # 판정표 rubric_level (판정표 하한), 규칙 경보 사유
 │   │   ├── qwen_05b.py         # M5 레거시 0.5B ONNX 롤백 경로 (decoder_with_past KV 캐시)
 │   │   └── emergency_score.py  # 위험도 도메인 가중치 계산
 │   ├── utils/                  # get_ort_providers, TurboQuant
@@ -557,6 +587,19 @@ SafeWave/1학기 캡스톤의 연구 방향과 연결된 논문
 ---
 
 ## 변경 이력
+
+<details open>
+<summary><b>v0.4.0 — 2026-10-05 — N_pose 보드 추론 연동 · 3환경 검증 · 긴급 음성 경보 보완</b></summary>
+
+- M1: N_pose 펌웨어(김태연) 연동. sensing이 CSI2(280B 50 Hz)·CSR!(32B 5 Hz)를 받고, 보드 추론 결과는 새 스트림 `m1:score`.
+  `M1_SOURCE=board`면 노드별 K/N(0.8·3/5, coverage ≥ 0.9) → 허브 판정, `M1_ALERT_MODE`로 경보 범위 선택. WiFall 검증 세트로 허브 규칙 비교(`handoff/M1_WIFALL_VAL_20261005.md`)
+- API: 보호자 경보 확인(S2) — `POST /alerts/{msg_id}/ack`, `GET /alerts/{msg_id}`, 이력 `acked_by`, 다른 기기에 확인 푸시. Firebase 실기기 푸시 확인
+- ai: 긴급 음성 경보 지연·유실 수정(`3552027`) — 긴급 문장이면 M3 생략, 밀린 오디오 순서대로 처리, 결과 나이는 처리 완료 기준. RPi5 주입→경보 16.8 s → 5.4 s
+- 검증: 노트북 GPU·CPU·RPi5에서 같은 평가 데이터로 M3·M4·M5·경계값·앱 푸시 측정(요약 `docs/validation_status.md`, `HANDOFF.md` 4-3절). RPi5 M1 보드 판정 5분 실측
+- scripts: `dev/npose_quality.py`, `dev/validation_recorder.py`(보드 점수 열), `dev/m3_env_eval.py`, `dev/push_e2e.py`, `sim_esp32.py --format npose`
+- 단위 테스트 53개
+
+</details>
 
 <details>
 <summary><b>v0.3.0 — 2026-09-17 — 팀 모델 병합 (M1·M2 김태연, M4 이대경) · RPi5 기본값 측정</b></summary>
