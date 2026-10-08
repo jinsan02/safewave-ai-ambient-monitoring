@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-12 0 1024 434" width="1024" height="434" role="img" aria-label="ai:result 스냅샷이 게이트 0.6 이상이면 프롬프트 프로필(rpi5 또는 laptop)로 Qwen2.5-1.5B Q5_K_M을 부르고, 판정표 하한과 등급 우선을 거쳐 ai:emergency에 쓴다. 확정 규칙 경보는 M5 없이 critical로 바로 쓴다">
+<title>M5 판단 흐름 — 프롬프트 프로필과 판정표 하한</title>
+<style>
+  text { font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; fill: #1f2328; }
+  .ink { fill: #1f2328; } .sub { fill: #59636e; } .muted { fill: #818b98; } .lbl { fill: #59636e; }
+  .grid { stroke: #eaeef2; stroke-width: 1; } .base { stroke: #afb8c1; stroke-width: 1; }
+  .s1 { fill: #2a78d6; } .s2 { fill: #eb6834; } .s3 { fill: #1baf7a; } .s4 { fill: #eda100; }
+  .s5 { fill: #e87ba4; } .s6 { fill: #008300; } .s7 { fill: #4a3aa7; } .s8 { fill: #e34948; }
+  .dim { fill: #d0d7de; } .dim2 { fill: #8c959f; }
+  .box  { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1.2; }
+  .em   { fill: #e3eefb; stroke: #2a78d6; stroke-width: 1.6; }
+  .mute { fill: #ffffff; stroke: #d0d7de; stroke-width: 1.2; }
+  .k-auto { fill: #e0f5ec; stroke: #1baf7a; stroke-width: 1.4; }
+  .k-man  { fill: #fdf3d8; stroke: #eda100; stroke-width: 1.4; }
+  .k-todo { fill: none; stroke: #8c959f; stroke-width: 1.2; stroke-dasharray: 5 4; }
+  .grp { fill: none; stroke: #d0d7de; stroke-width: 1; stroke-dasharray: 3 3; }
+  .ln { stroke: #6e7781; stroke-width: 1.4; fill: none; } .ah { fill: #6e7781; }
+  .ln-em { stroke: #2a78d6; stroke-width: 2; fill: none; } .ah-em { fill: #2a78d6; }
+  .dash { stroke-dasharray: 5 4; }
+  @media (prefers-color-scheme: dark) {
+    text, .ink { fill: #e6edf3; } .sub, .lbl { fill: #9198a1; } .muted { fill: #8b949e; }
+    .grid { stroke: #262c36; } .base { stroke: #59636e; }
+    .s1 { fill: #3987e5; } .s2 { fill: #d95926; } .s3 { fill: #199e70; } .s4 { fill: #c98500; }
+    .s5 { fill: #d55181; } .s6 { fill: #008300; } .s7 { fill: #9085e9; } .s8 { fill: #e66767; }
+    .dim { fill: #3d444d; } .dim2 { fill: #6e7681; }
+    .box  { fill: #161b22; stroke: #3d444d; }
+    .em   { fill: #0f2340; stroke: #3987e5; }
+    .mute { fill: #0d1117; stroke: #3d444d; }
+    .k-auto { fill: #0c2a1f; stroke: #199e70; } .k-man { fill: #2e2408; stroke: #c98500; } .k-todo { stroke: #6e7681; }
+    .grp { stroke: #3d444d; }
+    .ln { stroke: #8b949e; } .ah { fill: #8b949e; } .ln-em { stroke: #3987e5; } .ah-em { fill: #3987e5; }
+  }
+</style>
+<text x="0" y="24" font-size="18" font-weight="600" class="ink">M5 판단 흐름 — 프롬프트 프로필과 판정표 하한</text><text x="0" y="48" font-size="14" class="sub">확정 규칙은 M5를 기다리지 않는다 · 모델이 판정표보다 낮게 내면 하한이 올리고 근거를 남긴다 · 파란 상자 = 09-24 이후 바뀐 부분</text>
+<g transform="translate(0,64)">
+<rect class="box" x="0" y="36" width="170" height="64" rx="8"/>
+<text x="85" y="63" font-size="14" text-anchor="middle" font-weight="600" class="ink">ai:result 스냅샷</text>
+<text x="85" y="82" font-size="13" text-anchor="middle" class="sub">M1~M4 + 1h 시계열</text>
+<polygon class="box" points="300,26 370,68 300,110 230,68"/>
+<text x="300" y="64" font-size="13" text-anchor="middle" font-weight="600" class="ink">게이트</text>
+<text x="300" y="82" font-size="13" text-anchor="middle" font-weight="600" class="ink">≥ 0.6 ?</text>
+<polyline class="ln" points="170,68 221,68"/>
+<polygon class="ah" points="230,68 221,63 221,73"/>
+<rect class="em" x="420" y="14" width="300" height="108" rx="8"/>
+<text x="570" y="44" font-size="14" text-anchor="middle" font-weight="600" class="ink">프롬프트 프로필 · SLM_PROMPT_PROFILE</text>
+<text x="570" y="63" font-size="13" text-anchor="middle" class="sub">rpi5 (기본) · 약 740토큰</text>
+<text x="570" y="82" font-size="13" text-anchor="middle" class="sub">laptop · 판정표 + 예시 21 + 유사 예시 3</text>
+<text x="570" y="101" font-size="13" text-anchor="middle" class="sub">약 3,170토큰</text>
+<polyline class="ln-em" points="370,68 411,68"/>
+<polygon class="ah-em" points="420,68 411,63 411,73"/>
+<text x="395" y="60" font-size="12.5" class="lbl" text-anchor="middle">예</text>
+<rect class="box" x="780" y="36" width="220" height="64" rx="8"/>
+<text x="890" y="63" font-size="14" text-anchor="middle" font-weight="600" class="ink">Qwen2.5-1.5B</text>
+<text x="890" y="82" font-size="13" text-anchor="middle" class="sub">GGUF Q5_K_M · llama.cpp</text>
+<polyline class="ln-em" points="720,68 771,68"/>
+<polygon class="ah-em" points="780,68 771,63 771,73"/>
+<rect class="mute" x="245" y="160" width="110" height="40" rx="8"/>
+<text x="300" y="184.5" font-size="14" text-anchor="middle" font-weight="600" class="ink">M5 생략</text>
+<polyline class="ln" points="300,110 300,151"/>
+<polygon class="ah" points="300,160 305,151 295,151"/>
+<text x="308" y="128" font-size="12.5" class="lbl">아니오</text>
+<rect class="em" x="720" y="160" width="280" height="76" rx="8"/>
+<text x="860" y="183.5" font-size="14" text-anchor="middle" font-weight="600" class="ink">판정표 하한 · rubric_level</text>
+<text x="860" y="202.5" font-size="13" text-anchor="middle" class="sub">게이트 ≥ 0.6 → 최소 warning</text>
+<text x="860" y="221.5" font-size="13" text-anchor="middle" class="sub">판정표 ①②③ → 최소 critical</text>
+<polyline class="ln-em" points="890,100 890,151"/>
+<polygon class="ah-em" points="890,160 895,151 885,151"/>
+<text x="898" y="132" font-size="12.5" class="lbl">reason · 등급 · 점수</text>
+<rect class="em" x="430" y="168" width="230" height="60" rx="8"/>
+<text x="545" y="193" font-size="14" text-anchor="middle" font-weight="600" class="ink">등급 우선</text>
+<text x="545" y="212" font-size="13" text-anchor="middle" class="sub">점수를 등급 구간에 맞춤 · laptop</text>
+<polyline class="ln-em" points="720,198 669,198"/>
+<polygon class="ah-em" points="660,198 669,203 669,193"/>
+<rect class="box" x="0" y="168" width="200" height="64" rx="8"/>
+<text x="100" y="195" font-size="14" text-anchor="middle" font-weight="600" class="ink">ai:emergency</text>
+<text x="100" y="214" font-size="13" text-anchor="middle" class="sub">올린 근거는 qwen_reason</text>
+<polyline class="ln-em" points="430,220 209,220"/>
+<polygon class="ah-em" points="200,220 209,225 209,215"/>
+<rect class="box" x="0" y="280" width="330" height="56" rx="8"/>
+<text x="165" y="303" font-size="14" text-anchor="middle" font-weight="600" class="ink">확정 규칙 경보 · ai-experts</text>
+<text x="165" y="322" font-size="13" text-anchor="middle" class="sub">낙상 3/5 · 낙상+충격·경보음 · 생체 위기</text>
+<polyline class="ln" points="100,280 100,241"/>
+<polygon class="ah" points="100,232 95,241 105,241"/>
+<text x="108" y="262" font-size="12.5" class="lbl">M5 없이 critical</text>
+<text x="430" y="300" font-size="13" class="lbl">두 프로필 모두 판정표 하한을 쓴다. 유사 예시와 등급 우선은 laptop 프로필에만 있다.</text>
+<text x="430" y="322" font-size="13" class="lbl">판정표 ① 위기 생체신호 + 낙상 확정·위험음·긴급키워드</text>
+<text x="430" y="344" font-size="13" class="lbl">② 낙상 확정 + 위험음·긴급키워드 ③ 게이트 critical</text>
+</g>
+</svg>

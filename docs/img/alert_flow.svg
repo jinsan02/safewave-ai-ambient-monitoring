@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-12 0 1024 302" width="1024" height="302" role="img" aria-label="ai:emergency critical 항목이 오면 노드별 90초 락을 걸고 FCM을 즉시 보낸 뒤, VOICE_ENABLED일 때만 TTS로 괜찮으세요를 재생하고 15초 동안 M4 STT 응답을 기다려 안전 키워드면 후속 warning 알림을 보낸다">
+<title>응급 알림 흐름 — 먼저 알리고, 그다음 묻는다</title>
+<style>
+  text { font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; fill: #1f2328; }
+  .ink { fill: #1f2328; } .sub { fill: #59636e; } .muted { fill: #818b98; } .lbl { fill: #59636e; }
+  .grid { stroke: #eaeef2; stroke-width: 1; } .base { stroke: #afb8c1; stroke-width: 1; }
+  .s1 { fill: #2a78d6; } .s2 { fill: #eb6834; } .s3 { fill: #1baf7a; } .s4 { fill: #eda100; }
+  .s5 { fill: #e87ba4; } .s6 { fill: #008300; } .s7 { fill: #4a3aa7; } .s8 { fill: #e34948; }
+  .dim { fill: #d0d7de; } .dim2 { fill: #8c959f; }
+  .box  { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1.2; }
+  .em   { fill: #e3eefb; stroke: #2a78d6; stroke-width: 1.6; }
+  .mute { fill: #ffffff; stroke: #d0d7de; stroke-width: 1.2; }
+  .k-auto { fill: #e0f5ec; stroke: #1baf7a; stroke-width: 1.4; }
+  .k-man  { fill: #fdf3d8; stroke: #eda100; stroke-width: 1.4; }
+  .k-todo { fill: none; stroke: #8c959f; stroke-width: 1.2; stroke-dasharray: 5 4; }
+  .grp { fill: none; stroke: #d0d7de; stroke-width: 1; stroke-dasharray: 3 3; }
+  .ln { stroke: #6e7781; stroke-width: 1.4; fill: none; } .ah { fill: #6e7781; }
+  .ln-em { stroke: #2a78d6; stroke-width: 2; fill: none; } .ah-em { fill: #2a78d6; }
+  .dash { stroke-dasharray: 5 4; }
+  @media (prefers-color-scheme: dark) {
+    text, .ink { fill: #e6edf3; } .sub, .lbl { fill: #9198a1; } .muted { fill: #8b949e; }
+    .grid { stroke: #262c36; } .base { stroke: #59636e; }
+    .s1 { fill: #3987e5; } .s2 { fill: #d95926; } .s3 { fill: #199e70; } .s4 { fill: #c98500; }
+    .s5 { fill: #d55181; } .s6 { fill: #008300; } .s7 { fill: #9085e9; } .s8 { fill: #e66767; }
+    .dim { fill: #3d444d; } .dim2 { fill: #6e7681; }
+    .box  { fill: #161b22; stroke: #3d444d; }
+    .em   { fill: #0f2340; stroke: #3987e5; }
+    .mute { fill: #0d1117; stroke: #3d444d; }
+    .k-auto { fill: #0c2a1f; stroke: #199e70; } .k-man { fill: #2e2408; stroke: #c98500; } .k-todo { stroke: #6e7681; }
+    .grp { stroke: #3d444d; }
+    .ln { stroke: #8b949e; } .ah { fill: #8b949e; } .ln-em { stroke: #3987e5; } .ah-em { fill: #3987e5; }
+  }
+</style>
+<text x="0" y="24" font-size="18" font-weight="600" class="ink">응급 알림 흐름 — 먼저 알리고, 그다음 묻는다</text><text x="0" y="48" font-size="14" class="sub">critical 경보는 FCM을 즉시 보내고, VOICE_ENABLED일 때만 음성으로 대상자 응답을 확인한다</text>
+<g transform="translate(0,64)">
+<rect class="box" x="0" y="30" width="160" height="64" rx="8"/>
+<text x="80" y="57" font-size="14" text-anchor="middle" font-weight="600" class="ink">ai:emergency</text>
+<text x="80" y="76" font-size="13" text-anchor="middle" class="sub">critical · rule/M5</text>
+<rect class="box" x="210" y="30" width="160" height="64" rx="8"/>
+<text x="290" y="57" font-size="14" text-anchor="middle" font-weight="600" class="ink">phase2 락 90s</text>
+<text x="290" y="76" font-size="13" text-anchor="middle" class="sub">중복 경보 · M5 억제</text>
+<rect class="em" x="420" y="30" width="160" height="64" rx="8"/>
+<text x="500" y="57" font-size="14" text-anchor="middle" font-weight="600" class="ink">FCM 즉시 발송</text>
+<text x="500" y="76" font-size="13" text-anchor="middle" class="sub">notify:sent 중복 방지</text>
+<rect class="box" x="630" y="30" width="160" height="64" rx="8"/>
+<text x="710" y="57" font-size="14" text-anchor="middle" font-weight="600" class="ink">TTS "괜찮으세요?"</text>
+<text x="710" y="76" font-size="13" text-anchor="middle" class="sub">tts:speak:queue</text>
+<rect class="box" x="840" y="30" width="160" height="64" rx="8"/>
+<text x="920" y="57" font-size="14" text-anchor="middle" font-weight="600" class="ink">M4 STT 응답 대기</text>
+<text x="920" y="76" font-size="13" text-anchor="middle" class="sub">기본 15s</text>
+<polyline class="ln" points="160,62 201,62"/>
+<polygon class="ah" points="210,62 201,57 201,67"/>
+<polyline class="ln" points="370,62 411,62"/>
+<polygon class="ah" points="420,62 411,57 411,67"/>
+<polyline class="ln dash" points="580,62 621,62"/>
+<polygon class="ah" points="630,62 621,57 621,67"/>
+<text x="605" y="20" font-size="12.5" class="lbl" text-anchor="middle">VOICE_ENABLED일 때만</text>
+<polyline class="ln" points="790,62 831,62"/>
+<polygon class="ah" points="840,62 831,57 831,67"/>
+<rect class="box" x="620" y="140" width="220" height="56" rx="8"/>
+<text x="730" y="163" font-size="14" text-anchor="middle" font-weight="600" class="ink">후속 warning 알림</text>
+<text x="730" y="182" font-size="13" text-anchor="middle" class="sub">"대상자 음성 응답 확인됨"</text>
+<rect class="box" x="870" y="140" width="130" height="56" rx="8"/>
+<text x="935" y="163" font-size="14" text-anchor="middle" font-weight="600" class="ink">추가 알림 없음</text>
+<text x="935" y="182" font-size="13" text-anchor="middle" class="sub">그 외 · 무응답</text>
+<polyline class="ln" points="880,94 880,118 730,118 730,131"/>
+<polygon class="ah" points="730,140 735,131 725,131"/>
+<text x="800" y="112" font-size="12.5" class="lbl" text-anchor="middle">안전 키워드</text>
+<polyline class="ln" points="950,94 950,131"/>
+<polygon class="ah" points="950,140 955,131 945,131"/>
+<text x="0" y="160" font-size="13" class="lbl">API 재시작 시 최근 30s 경보를 다시 읽고</text>
+<text x="0" y="180" font-size="13" class="lbl">이미 보낸 경보는 중복 방지 키로 건너뛴다.</text>
+</g>
+</svg>

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-12 0 1024 274" width="1024" height="274" role="img" aria-label="M5 프롬프트 프로필 비교 — 판정표 준수율과 지연: rpi5 · 짧은 프롬프트 준수율 · M2 켬 (98건) 78/98 · 80%, 준수율 · M2 꺼짐 (102건) 77/102 · 75.5%, p50 지연 · CPU 8스레드 (s) 1.38 s; laptop · 유사 예시 준수율 · M2 켬 (98건) 96/98 · 98%, 준수율 · M2 꺼짐 (102건) 97/102 · 95.1%, p50 지연 · CPU 8스레드 (s) 3.60 s">
+<title>M5 프롬프트 프로필 비교 — 판정표 준수율과 지연</title>
+<style>
+  text { font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; fill: #1f2328; }
+  .ink { fill: #1f2328; } .sub { fill: #59636e; } .muted { fill: #818b98; } .lbl { fill: #59636e; }
+  .grid { stroke: #eaeef2; stroke-width: 1; } .base { stroke: #afb8c1; stroke-width: 1; }
+  .s1 { fill: #2a78d6; } .s2 { fill: #eb6834; } .s3 { fill: #1baf7a; } .s4 { fill: #eda100; }
+  .s5 { fill: #e87ba4; } .s6 { fill: #008300; } .s7 { fill: #4a3aa7; } .s8 { fill: #e34948; }
+  .dim { fill: #d0d7de; } .dim2 { fill: #8c959f; }
+  .box  { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1.2; }
+  .em   { fill: #e3eefb; stroke: #2a78d6; stroke-width: 1.6; }
+  .mute { fill: #ffffff; stroke: #d0d7de; stroke-width: 1.2; }
+  .k-auto { fill: #e0f5ec; stroke: #1baf7a; stroke-width: 1.4; }
+  .k-man  { fill: #fdf3d8; stroke: #eda100; stroke-width: 1.4; }
+  .k-todo { fill: none; stroke: #8c959f; stroke-width: 1.2; stroke-dasharray: 5 4; }
+  .grp { fill: none; stroke: #d0d7de; stroke-width: 1; stroke-dasharray: 3 3; }
+  .ln { stroke: #6e7781; stroke-width: 1.4; fill: none; } .ah { fill: #6e7781; }
+  .ln-em { stroke: #2a78d6; stroke-width: 2; fill: none; } .ah-em { fill: #2a78d6; }
+  .dash { stroke-dasharray: 5 4; }
+  @media (prefers-color-scheme: dark) {
+    text, .ink { fill: #e6edf3; } .sub, .lbl { fill: #9198a1; } .muted { fill: #8b949e; }
+    .grid { stroke: #262c36; } .base { stroke: #59636e; }
+    .s1 { fill: #3987e5; } .s2 { fill: #d95926; } .s3 { fill: #199e70; } .s4 { fill: #c98500; }
+    .s5 { fill: #d55181; } .s6 { fill: #008300; } .s7 { fill: #9085e9; } .s8 { fill: #e66767; }
+    .dim { fill: #3d444d; } .dim2 { fill: #6e7681; }
+    .box  { fill: #161b22; stroke: #3d444d; }
+    .em   { fill: #0f2340; stroke: #3987e5; }
+    .mute { fill: #0d1117; stroke: #3d444d; }
+    .k-auto { fill: #0c2a1f; stroke: #199e70; } .k-man { fill: #2e2408; stroke: #c98500; } .k-todo { stroke: #6e7681; }
+    .grp { stroke: #3d444d; }
+    .ln { stroke: #8b949e; } .ah { fill: #8b949e; } .ln-em { stroke: #3987e5; } .ah-em { fill: #3987e5; }
+  }
+</style>
+<text x="0" y="24" font-size="18" font-weight="600" class="ink">M5 프롬프트 프로필 비교 — 판정표 준수율과 지연</text><text x="0" y="48" font-size="14" class="sub">노트북 held-out · Qwen2.5-1.5B Q5 고정 · 운영 구간(게이트 ≥ 0.6)만 · 판정표를 얼마나 따르나이지 실제 낙상 판정 정확도가 아니다</text>
+<g transform="translate(0,64)">
+<text x="0" y="50" class="ink" font-size="14" font-weight="400">rpi5 · 짧은 프롬프트</text><text x="0" y="67" class="muted" font-size="12">약 740토큰 · 기본값</text><text x="0" y="94" class="ink" font-size="14" font-weight="600">laptop · 유사 예시</text><text x="0" y="111" class="muted" font-size="12">약 3,170토큰</text><text x="190" y="18" class="sub" font-size="13" font-weight="600">준수율 · M2 켬 (98건)</text><line class="grid" x1="190" y1="30" x2="190" y2="118"/><text x="190" y="136" class="muted" font-size="12" text-anchor="middle">0</text><line class="grid" x1="257.6666666666667" y1="30" x2="257.6666666666667" y2="118"/><text x="257.6666666666667" y="136" class="muted" font-size="12" text-anchor="middle">50</text><line class="grid" x1="325.33333333333337" y1="30" x2="325.33333333333337" y2="118"/><text x="325.33333333333337" y="136" class="muted" font-size="12" text-anchor="middle">100</text><line class="base" x1="190" y1="30" x2="190" y2="118"/><path class="dim" d="M190,43 H293.7142857142857 Q297.7142857142857,43 297.7142857142857,47 V57 Q297.7142857142857,61 293.7142857142857,61 H190 Z"/><text x="305.7142857142857" y="57" class="sub" font-size="13" font-weight="400">78/98 · 80%</text><path class="s1" d="M190,87 H318.57142857142856 Q322.57142857142856,87 322.57142857142856,91 V101 Q322.57142857142856,105 318.57142857142856,105 H190 Z"/><text x="330.57142857142856" y="101" class="ink" font-size="13" font-weight="600">96/98 · 98%</text><text x="471.33333333333337" y="18" class="sub" font-size="13" font-weight="600">준수율 · M2 꺼짐 (102건)</text><line class="grid" x1="471.33333333333337" y1="30" x2="471.33333333333337" y2="118"/><text x="471.33333333333337" y="136" class="muted" font-size="12" text-anchor="middle">0</text><line class="grid" x1="539" y1="30" x2="539" y2="118"/><text x="539" y="136" class="muted" font-size="12" text-anchor="middle">50</text><line class="grid" x1="606.6666666666667" y1="30" x2="606.6666666666667" y2="118"/><text x="606.6666666666667" y="136" class="muted" font-size="12" text-anchor="middle">100</text><line class="base" x1="471.33333333333337" y1="30" x2="471.33333333333337" y2="118"/><path class="dim" d="M471.33333333333337,43 H569.51 Q573.51,43 573.51,47 V57 Q573.51,61 569.51,61 H471.33333333333337 Z"/><text x="581.51" y="57" class="sub" font-size="13" font-weight="400">77/102 · 75.5%</text><path class="s1" d="M471.33333333333337,87 H596.0353333333334 Q600.0353333333334,87 600.0353333333334,91 V101 Q600.0353333333334,105 596.0353333333334,105 H471.33333333333337 Z"/><text x="608.0353333333334" y="101" class="ink" font-size="13" font-weight="600">97/102 · 95.1%</text><text x="752.6666666666667" y="18" class="sub" font-size="13" font-weight="600">p50 지연 · CPU 8스레드 (s)</text><line class="grid" x1="752.6666666666667" y1="30" x2="752.6666666666667" y2="118"/><text x="752.6666666666667" y="136" class="muted" font-size="12" text-anchor="middle">0</text><line class="grid" x1="820.3333333333334" y1="30" x2="820.3333333333334" y2="118"/><text x="820.3333333333334" y="136" class="muted" font-size="12" text-anchor="middle">2</text><line class="grid" x1="888.0000000000001" y1="30" x2="888.0000000000001" y2="118"/><text x="888.0000000000001" y="136" class="muted" font-size="12" text-anchor="middle">4</text><line class="base" x1="752.6666666666667" y1="30" x2="752.6666666666667" y2="118"/><path class="dim" d="M752.6666666666667,43 H795.3566666666668 Q799.3566666666668,43 799.3566666666668,47 V57 Q799.3566666666668,61 795.3566666666668,61 H752.6666666666667 Z"/><text x="807.3566666666668" y="57" class="sub" font-size="13" font-weight="400">1.38 s</text><path class="s1" d="M752.6666666666667,87 H870.4666666666667 Q874.4666666666667,87 874.4666666666667,91 V101 Q874.4666666666667,105 870.4666666666667,105 H752.6666666666667 Z"/><text x="882.4666666666667" y="101" class="ink" font-size="13" font-weight="600">3.60 s</text><text x="0" y="168" class="muted" font-size="13">M2 켬: seed 4047 · M2 꺼짐(심박·호흡 미측정): seed 5051 — 둘 다 조정에 쓰지 않은 seed. 과소(critical→낮춤) 0건, 남은 오답은 과대.</text><text x="0" y="188" class="muted" font-size="13">GPU p50은 0.73 → 0.93 s. 유사 예시 약 450토큰은 입력마다 바뀌어 캐시되지 않아 CPU 지연이 늘었다. RPi5 기본값은 rpi5 프로필.</text>
+</g>
+</svg>
