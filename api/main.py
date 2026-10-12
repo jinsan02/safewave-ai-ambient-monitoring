@@ -988,6 +988,91 @@ async def get_minute_charts(minutes: int = 10):
     return sorted(chart, key=lambda item: item["ts"])
 
 
+AUDIO_RESULT_STREAM = "audio:result"
+
+
+@app.get("/monitor/recent")
+async def get_monitor_recent(n: int = 20):
+    """녹화용 모니터 화면 — 최근 오디오 결과·경보와 처리 지연(읽기 전용).
+
+    오디오 지연 = audio:result 스트림 ID 시각 − 이벤트 ts_ms(M3·M4 처리 완료까지).
+    경보 지연 = ai:emergency 스트림 ID 시각 − 스냅샷 ts_ms. 발송 시각 = notify:sent 키를 쓴 시각
+    (남은 TTL로 역산, 폰 도착 시각이 아님).
+    """
+    n = max(1, min(n, 100))
+    redis_client = await _ensure_redis()
+    now_ms = int(time.time() * 1000)
+
+    audio = []
+    for msg_id, fields in await redis_client.xrevrange(AUDIO_RESULT_STREAM, count=n):
+        p = _parse_result_payload(fields.get("data", ""))
+        done_ms = _stream_id_ts_ms(msg_id)
+        ts_ms = int(p.get("ts_ms") or done_ms)
+        m3, m4 = p.get("env_sound") or {}, p.get("speech_ko") or {}
+        audio.append({
+            "id": msg_id, "ts_ms": ts_ms, "done_ms": done_ms, "latency_ms": done_ms - ts_ms,
+            "duration_ms": p.get("duration_ms"), "peak_db": p.get("peak_db"),
+            "m3_label": m3.get("env_sound_label"), "m3_conf": m3.get("env_sound_confidence"),
+            "m3_source": m3.get("env_sound_source"),
+            "m4_text": m4.get("transcript_ko", ""), "m4_keywords": m4.get("keywords") or [],
+            "m4_phrase": m4.get("emergency_phrase_detected"),
+        })
+
+    alerts = []
+    for msg_id, fields in await redis_client.xrevrange(EMERGENCY_STREAM, count=n):
+        p = _parse_result_payload(fields.get("data", ""))
+        written_ms = _stream_id_ts_ms(msg_id)
+        ts_ms = int(p.get("ts_ms") or written_ms)
+        sent_ms = []
+        async for key in redis_client.scan_iter(match=f"notify:sent:{msg_id}:*", count=100):
+            pttl = await redis_client.pttl(key)
+            if pttl and pttl > 0:
+                sent_ms.append(now_ms - (ALERT_DEDUP_TTL_SECONDS * 1000 - pttl))
+        alerts.append({
+            "id": msg_id, "ts_ms": ts_ms, "written_ms": written_ms, "latency_ms": written_ms - ts_ms,
+            "node_id": p.get("node_id"), "risk_level": p.get("risk_level"), "risk_score": p.get("risk_score"),
+            "slm_mode": p.get("slm_mode"), "slm_invoked": p.get("slm_invoked"),
+            "summary": p.get("summary") or p.get("qwen_reason") or "",
+            "sent_devices": len(sent_ms),
+            "sent_latency_ms": (min(sent_ms) - ts_ms) if sent_ms else None,
+        })
+    return {"now_ms": now_ms, "audio": audio, "alerts": alerts,
+            "held": await _held_alerts(redis_client, now_ms)}
+
+
+MONITOR_HOLD_MS = int(os.getenv("MONITOR_HOLD_MS", "300000"))
+_LEVEL_RANK = {"normal": 0, "warning": 1, "critical": 2}
+
+
+async def _held_alerts(redis_client, now_ms: int) -> list[dict]:
+    """노드별로 유지 중인 경고·응급(대시보드 표시용, 읽기 전용).
+
+    노드의 가장 최근 ai:emergency(규칙 경보 또는 M5 판단)가 warning/critical이면 유지한다.
+    M5는 판정표 하한 때문에 normal을 쓰지 않으므로, 하한 전 모델 등급(slm_model_level)이 normal이면 해제로 본다.
+    해제: 보호자 확인(ack) · 음성 확인 '괜찮다' · 그 뒤 M5가 normal로 판단 · MONITOR_HOLD_MS 경과.
+    """
+    entries = await redis_client.xrevrange(EMERGENCY_STREAM, min=f"{now_ms - MONITOR_HOLD_MS}-0", count=500)
+    latest: dict[int, tuple[str, dict]] = {}
+    for msg_id, fields in entries:                 # 최신순 → 노드별 첫 항목이 가장 최근 판단
+        p = _parse_result_payload(fields.get("data", ""))
+        node = int(p.get("node_id") or 0)
+        latest.setdefault(node, (msg_id, p))
+    held = []
+    for node, (msg_id, p) in sorted(latest.items()):
+        level = p.get("risk_level", "normal")
+        if _LEVEL_RANK.get(level, 0) == 0 or p.get("slm_model_level") == "normal":
+            continue                               # M5가 정상이라고 판단(판정표 하한 전 모델 등급) → 해제
+        raw = await redis_client.hgetall(f"{ACK_KEY_PREFIX}{msg_id}")
+        if _parse_acks(raw) or _voice_result(raw) is True:
+            continue                               # 보호자 확인 또는 대상자 '괜찮다' → 해제
+        since = _stream_id_ts_ms(msg_id)
+        held.append({"node_id": node, "risk_level": level, "msg_id": msg_id, "since_ms": since,
+                     "until_ms": since + MONITOR_HOLD_MS, "slm_mode": p.get("slm_mode"),
+                     "risk_score": p.get("risk_score"),
+                     "summary": p.get("summary") or p.get("qwen_reason") or ""})
+    return sorted(held, key=lambda h: (-_LEVEL_RANK.get(h["risk_level"], 0), -h["since_ms"]))
+
+
 @app.post("/auth/register-token")
 async def register_fcm_token(body: TokenRegistration):
     redis_client = await _ensure_redis()

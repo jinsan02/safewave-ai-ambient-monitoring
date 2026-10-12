@@ -70,7 +70,7 @@
     @keyframes flash-border { 0%,100%{border-color:#ff5252} 50%{border-color:#ff9090} }
     .reason-title { font-size:12px; color:#a79ad8; margin-bottom:6px; text-transform: uppercase; letter-spacing: 0.7px; }
     .reason-text { font-size:13px; color:#ece8ff; line-height:1.4; }
-    .breakdown-panel { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:12px; }
+    .breakdown-panel { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px; }
     .bk-box { background:#1e2130; border-radius:8px; padding:10px 12px; border-top:3px solid #2a2d3a; }
     .bk-box.bk-high { border-top-color:#ffb300; }
     .bk-box.bk-critical { border-top-color:#ff5252; }
@@ -78,14 +78,25 @@
     .bk-score { font-size:18px; font-weight:bold; color:#e0e0e0; }
     .bk-bar { height:4px; background:#2a2d3a; border-radius:2px; margin-top:6px; }
     .bk-fill { height:100%; border-radius:2px; transition: width 0.3s; }
+    .sync-clock { position: fixed; top: 10px; right: 16px; z-index: 10; background:#000; color:#fff; border:2px solid #4fc3f7;
+                  border-radius:10px; padding:6px 14px; font-family: Consolas, monospace; text-align:right; }
+    .sync-clock .t { font-size:34px; font-weight:bold; letter-spacing:1px; }
+    .sync-clock .d { font-size:12px; color:#9aa3b2; }
+    .board-nodes { display:grid; grid-template-columns:repeat(auto-fit, minmax(92px, 1fr)); gap:6px; margin-top:8px; }
+    .bn { background:#252838; border-radius:6px; padding:5px 7px; font-size:11px; color:#9aa3b2; line-height:1.45; border-left:3px solid #5a3030; }
+    .bn.usable { border-left-color:#69f0ae; }
+    .bn.alarm { border-left-color:#ff5252; background:#3a1c1c; }
+    .bn b { color:#e0e0e0; font-size:14px; }
     #experts { display: grid; grid-template-columns: repeat(2,1fr); gap: 10px; }
     .exp-box { background: #252838; border-radius: 8px; padding: 12px; font-size: 13px; }
     .exp-label { color: #888; font-size: 11px; margin-bottom: 4px; }
   </style>
 </head>
 <body>
+  <!-- 영상 동기화용: 폰 녹화 시작 때 이 시계를 찍어 두면 화면 녹화·기록 CSV(host_iso)와 시각을 맞출 수 있다 -->
+  <div class="sync-clock"><div class="t" id="sync-clock-t">--:--:--.---</div><div class="d" id="sync-clock-d">—</div></div>
   <h1>SafeWave-AI 실내 모니터링</h1>
-  <p class="subtitle">ESP32-S3 CSI → AI 추론 실시간 대시보드</p>
+  <p class="subtitle">ESP32-S3 보드 낙상 추론(M1) · 환경음(M3) · 음성(M4) → 통합 판단(M5) 실시간 대시보드</p>
 
   <div class="conn-bar">
     <span id="status-dot" class="off"></span>
@@ -104,8 +115,7 @@
 
   <div class="model-toggle-panel" id="model-toggle-panel">
     <div class="model-toggle-row">
-      <label class="model-toggle" id="tgl-m1"><input type="checkbox" data-model="m1" checked />M1 낙상</label>
-      <label class="model-toggle" id="tgl-m2"><input type="checkbox" data-model="m2" checked />M2 바이탈</label>
+      <label class="model-toggle" id="tgl-m1"><input type="checkbox" data-model="m1" checked />M1 낙상(보드)</label>
       <label class="model-toggle" id="tgl-m3"><input type="checkbox" data-model="m3" checked />M3 환경음</label>
       <label class="model-toggle" id="tgl-m4"><input type="checkbox" data-model="m4" checked />M4 STT</label>
       <label class="model-toggle" id="tgl-m5"><input type="checkbox" data-model="m5" checked />M5 Qwen</label>
@@ -151,7 +161,7 @@
   </div>
 
   <div class="chart-panel" id="chart-panel">
-    <div class="chart-title">최근 10분 추이 (위험도/심박/호흡)</div>
+    <div class="chart-title">최근 10분 추이 (위험도 / M5 호출)</div>
     <div class="chart-wrap"><canvas id="minute-chart"></canvas></div>
   </div>
 
@@ -167,14 +177,10 @@
       <div class="card-sub"><span class="badge" id="risk-badge">대기 중</span></div>
     </div>
     <div class="card" id="card-fall">
-      <div class="card-title">낙상 감지 (M1)</div>
+      <div class="card-title">낙상 감지 (M1 · ESP32 보드 추론)</div>
       <div class="card-value" id="fall-val">—</div>
       <div class="card-sub" id="fall-sub">score: —</div>
-    </div>
-    <div class="card" id="card-vital">
-      <div class="card-title">바이탈 사인 (M2)</div>
-      <div class="card-value" id="heart-val">— bpm</div>
-      <div class="card-sub" id="breath-val">호흡: — /min</div>
+      <div class="board-nodes" id="fall-nodes"></div>
     </div>
     <div class="card" id="card-activity">
       <div class="card-title">환경음 분석 (M3)</div>
@@ -191,14 +197,9 @@
   <h3 style="color:#aaa; font-size:14px; margin-bottom:8px;">실시간 로그</h3>
   <div class="breakdown-panel" id="breakdown-panel">
     <div class="bk-box" id="bk-fall">
-      <div class="bk-label">낙상 M1</div>
+      <div class="bk-label">낙상 M1(보드)</div>
       <div class="bk-score" id="bk-fall-score">—</div>
       <div class="bk-bar"><div class="bk-fill" id="bk-fall-fill" style="width:0%;background:#4fc3f7"></div></div>
-    </div>
-    <div class="bk-box" id="bk-vital">
-      <div class="bk-label">바이탈 M2</div>
-      <div class="bk-score" id="bk-vital-score">—</div>
-      <div class="bk-bar"><div class="bk-fill" id="bk-vital-fill" style="width:0%;background:#69f0ae"></div></div>
     </div>
     <div class="bk-box" id="bk-sound">
       <div class="bk-label">환경음 M3</div>
@@ -263,7 +264,6 @@
     // POST /settings는 full-replace라 반드시 GET→merge→POST로 다른 필드를 보존한다.
     const MODEL_CARD_IDS = {
       m1: ['card-fall', 'bk-fall'],
-      m2: ['card-vital', 'bk-vital'],
       m3: ['card-activity', 'bk-sound'],
       m4: ['card-occ', 'bk-speech'],
       m5: ['reason-banner'],
@@ -332,6 +332,22 @@
     let hourChart = null;
     let _lastAudioLogMs = 0;
     let _lastAudioKey = '';
+    let latestBoardNodes = {};          // 마지막 스냅샷의 노드별 보드 점수(ex.fall.nodes)
+    const BOARD_MIN_COVERAGE = 0.9;     // 표시용 — ai-experts M1_BOARD_MIN_COVERAGE 기본값과 같게 둔다
+
+    // ── 영상 동기화 시계 (이 PC 시계, ms) ─────────────────────────────
+    function clockText(d) {
+      const p = (v, n = 2) => String(v).padStart(n, '0');
+      return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
+    }
+    function tickClock() {
+      const d = new Date();
+      document.getElementById('sync-clock-t').textContent = clockText(d);
+      document.getElementById('sync-clock-d').textContent =
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} · epoch ${d.getTime()}`;
+      requestAnimationFrame(tickClock);
+    }
+    requestAnimationFrame(tickClock);
 
     const micStartBtn = document.getElementById('mic-start');
     const micStopBtn = document.getElementById('mic-stop');
@@ -343,7 +359,6 @@
     if (SPEECH_ONLY) {
       document.getElementById('card-risk').classList.add('hidden');
       document.getElementById('card-fall').classList.add('hidden');
-      document.getElementById('card-vital').classList.add('hidden');
       document.getElementById('card-activity').classList.add('hidden');
       document.querySelector('.subtitle').textContent = '음성인식(M4) 실시간 확인 모드';
       document.querySelector('h3').textContent = '실시간 STT 로그';
@@ -362,22 +377,6 @@
               backgroundColor: 'rgba(255,179,0,0.15)',
               tension: 0.25,
               yAxisID: 'yRisk',
-            },
-            {
-              label: 'HR',
-              data: [],
-              borderColor: '#4fc3f7',
-              backgroundColor: 'rgba(79,195,247,0.15)',
-              tension: 0.25,
-              yAxisID: 'yVital',
-            },
-            {
-              label: 'RR',
-              data: [],
-              borderColor: '#69f0ae',
-              backgroundColor: 'rgba(105,240,174,0.15)',
-              tension: 0.25,
-              yAxisID: 'yVital',
             },
             {
               label: 'SLM',
@@ -407,11 +406,6 @@
               max: 1,
               ticks: { color: '#ffcc80' },
               grid: { color: '#2a2d3a' }
-            },
-            yVital: {
-              position: 'right',
-              ticks: { color: '#90caf9' },
-              grid: { drawOnChartArea: false }
             }
           }
         }
@@ -468,9 +462,7 @@
         const labels = rows.map((row) => new Date((row.ts || 0) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
         minuteChart.data.labels = labels;
         minuteChart.data.datasets[0].data = rows.map((row) => row.risk_score_avg ?? null);
-        minuteChart.data.datasets[1].data = rows.map((row) => row.heart_rate_avg ?? null);
-        minuteChart.data.datasets[2].data = rows.map((row) => row.breathing_rate_avg ?? null);
-        minuteChart.data.datasets[3].data = rows.map((row) => (row.slm_invoked_count > 0 ? row.risk_score_avg : null));
+        minuteChart.data.datasets[1].data = rows.map((row) => (row.slm_invoked_count > 0 ? row.risk_score_avg : null));
         minuteChart.update();
       } catch (_) {}
     }
@@ -649,20 +641,24 @@
       badge.className = 'badge ' + level;
       document.getElementById('card-risk').className = 'card ' + level;
 
-      // 낙상
+      // 낙상 (M1_SOURCE=board: 노드별 보드 점수 K/N, onnx: 허브 추론)
       if (ex.fall) {
+        const board = ex.fall.infer_source === 'board';
         document.getElementById('fall-val').textContent = ex.fall.fall_detected ? '🚨 감지됨' : '✅ 없음';
         document.getElementById('fall-sub').textContent = ex.fall.insufficient_input
-          ? '입력 부족 (노드 1·2·3 창 대기)'
+          ? (board ? '보드 점수 없음 (1초 안에 들어온 노드 없음)' : '입력 부족 (노드 창 대기)')
           : 'score: ' + (ex.fall.fall_score||0).toFixed(2)
-            + ' · 투표 ' + (ex.fall.fall_votes ?? '-') + '/' + (ex.fall.fall_vote_samples ?? '-');
+            + ' · 투표 ' + (ex.fall.fall_votes ?? '-') + '/' + (ex.fall.fall_vote_samples ?? '-')
+            + ' (필요 ' + (ex.fall.fall_vote_required ?? '-') + ')'
+            + (board ? ' · 경보 노드 ' + (ex.fall.alarm_nodes || []).length + '/' + (ex.fall.min_nodes ?? 1) : '');
         document.getElementById('card-fall').className = 'card ' + (ex.fall.fall_detected ? 'critical' : 'normal');
-      }
-
-      // 바이탈
-      if (ex.vital) {
-        document.getElementById('heart-val').textContent = (ex.vital.heart_rate||0).toFixed(0) + ' bpm';
-        document.getElementById('breath-val').textContent = '호흡: ' + (ex.vital.breathing_rate||0).toFixed(0) + ' /min';
+        latestBoardNodes = board ? (ex.fall.nodes || {}) : {};
+        document.getElementById('fall-nodes').innerHTML = Object.entries(latestBoardNodes).map(([n, s]) => {
+          const usable = s.window_full && !s.random && s.coverage >= BOARD_MIN_COVERAGE;
+          const cls = s.alarm ? 'alarm' : usable ? 'usable' : '';
+          return `<div class="bn ${cls}">노드 ${n} <b>${(s.score ?? 0).toFixed(2)}</b><br>`
+            + `cov ${(s.coverage ?? 0).toFixed(2)} · ${s.votes}/${s.samples}<br>${usable ? '판정 가능' : '판정 불가'}</div>`;
+        }).join('');
       }
 
       // 환경음(M3)
@@ -693,7 +689,6 @@
         else if (score >= 0.4) box.classList.add('bk-high');
       }
       setBk('fall',   bd.fall);
-      setBk('vital',  bd.vital);
       setBk('sound',  bd.sound);
       setBk('speech', bd.speech);
 
@@ -710,9 +705,9 @@
 
       // ── 로그 ──────────────────────────────────────────────
       const log = document.getElementById('log');
-      const t = new Date().toLocaleTimeString();
+      const t = clockText(new Date());
 
-      // M1/M2: 매 메시지 (초당 1회 서버 push 기준)
+      // M1: 매 메시지 (초당 1회 서버 push 기준)
       const csiLine = document.createElement('div');
       csiLine.className = 'log-line ' + level;
       if (SPEECH_ONLY) {
@@ -720,7 +715,11 @@
         const sttText  = ex.speech_ko?.transcript_ko || '(없음)';
         csiLine.textContent = `[${t}] stt_score=${sttScore}  text=${sttText}`;
       } else {
-        csiLine.textContent = `[${t}] ${level.toUpperCase()}  risk=${score}  fall=${ex.fall?.fall_detected}  HR=${(ex.vital?.heart_rate||0).toFixed(0)}bpm  RR=${(ex.vital?.breathing_rate||0).toFixed(0)}/min`;
+        const nodeScores = Object.entries(latestBoardNodes)
+          .map(([n, s]) => `${n}:${(s.score ?? 0).toFixed(2)}/${(s.coverage ?? 0).toFixed(2)}`).join(' ');
+        csiLine.textContent = `[${t}] ${level.toUpperCase()}  risk=${score}  fall=${ex.fall?.fall_detected}`
+          + `  votes=${ex.fall?.fall_votes ?? '-'}/${ex.fall?.fall_vote_samples ?? '-'}`
+          + (nodeScores ? `  node(score/cov) ${nodeScores}` : '');
       }
       log.prepend(csiLine);
 
@@ -843,7 +842,8 @@
             <div class="node-kv">구간 손실 <b>${winLoss !== null && on ? winLoss.toFixed(1) + '%' : '—'}</b>
               · 누적 <b>${cumLoss.toFixed(2)}%</b><br>RSSI <b>${rssi}</b>
               · 마지막 수신 <b>${n.age_s !== null ? n.age_s.toFixed(2) + 's' : '—'}</b><br>
-              수신 <b>${n.rx.toLocaleString()}</b> · 손실 <b>${n.lost.toLocaleString()}</b></div>
+              수신 <b>${n.rx.toLocaleString()}</b> · 손실 <b>${n.lost.toLocaleString()}</b>
+              ${latestBoardNodes[k.split('_')[1]] ? `<br>창 새 프레임(cov) <b>${(latestBoardNodes[k.split('_')[1]].coverage * 100).toFixed(0)}%</b>` : ''}</div>
           </div>`;
         }).join('');
         document.getElementById('node-row').innerHTML = html;

@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SafeWave 실측 기록</title>
+<!--
+  녹화용 한 화면 모니터 — 노트북 CPU / RPi5 실측을 같은 화면으로 녹화해 비교한다.
+  사용: monitor_rec.html?api=http://<호스트>:8000&env=노트북 CPU&label=낙상1
+  세션 통계는 페이지를 연 뒤부터 센다(새로고침 = 초기화). 서버 데이터는 읽기만 한다.
+-->
+<style>
+  :root { --bg:#0b0d12; --panel:#161a24; --panel2:#1f2433; --line:#2a3042; --txt:#e6e9ef; --mut:#8b93a7;
+          --ok:#4ade80; --warn:#fbbf24; --bad:#f87171; --acc:#60a5fa; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--txt); font-family:'Segoe UI','Malgun Gothic',sans-serif; overflow:hidden; }
+  .wrap { height:100vh; display:grid; gap:8px; padding:8px; grid-template-rows:auto auto auto 1fr auto; }
+  .panel { background:var(--panel); border-radius:10px; padding:8px 10px; min-height:0; }
+  .ttl { font-size:12px; color:var(--mut); margin-bottom:6px; display:flex; justify-content:space-between; gap:8px; }
+  .ttl b { color:var(--txt); }
+  /* 헤더 */
+  .head { display:grid; grid-template-columns:auto 1fr auto; gap:12px; align-items:center; }
+  .brand { font-size:20px; font-weight:700; color:var(--acc); }
+  .meta { display:flex; gap:8px; flex-wrap:wrap; align-items:center; font-size:13px; }
+  .chip { background:var(--panel2); border-radius:6px; padding:3px 9px; }
+  .chip.env { background:#1e3a8a; color:#fff; font-weight:700; font-size:15px; }
+  .chip.label { background:#3b2f0b; color:#fde68a; font-weight:700; }
+  .dot { width:9px; height:9px; border-radius:50%; display:inline-block; background:var(--bad); margin-right:5px; }
+  .dot.on { background:var(--ok); }
+  .clock { background:#000; border:2px solid var(--acc); border-radius:8px; padding:2px 12px; text-align:right; font-family:Consolas,monospace; }
+  .clock .t { font-size:34px; font-weight:700; letter-spacing:1px; }
+  .clock .d { font-size:11px; color:var(--mut); }
+  /* 1행: 판단 · 자원 */
+  .row1 { display:grid; grid-template-columns:1.25fr 1fr 1fr; gap:8px; }
+  .judge { display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:center; }
+  .level { font-size:30px; font-weight:800; padding:6px 14px; border-radius:8px; background:var(--panel2); text-align:center; min-width:120px; }
+  .level.normal { color:var(--ok); } .level.warning { color:#111; background:var(--warn); } .level.critical { color:#fff; background:var(--bad); }
+  .kv { font-size:12px; color:var(--mut); line-height:1.6; }
+  .kv b { color:var(--txt); font-weight:600; }
+  .reason { font-size:13px; margin-top:4px; color:#e9e4ff; max-height:38px; overflow:hidden; }
+  .res { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+  .rbox { background:var(--panel2); border-radius:6px; padding:5px 8px; }
+  .rbox .v { font-size:20px; font-weight:700; }
+  .rbox .s { font-size:11px; color:var(--mut); }
+  .cores { display:flex; gap:2px; height:18px; align-items:flex-end; margin-top:3px; }
+  .cores div { flex:1; background:var(--acc); min-height:2px; border-radius:2px 2px 0 0; }
+  .audio-now .big { font-size:18px; font-weight:700; }
+  .audio-now .txt { font-size:15px; margin-top:4px; color:#fde68a; max-height:42px; overflow:hidden; }
+  /* 2행: M1 노드 */
+  .nodes { display:grid; grid-template-columns:repeat(5,1fr) 1.6fr; gap:6px; }
+  .nb { background:var(--panel2); border-radius:6px; padding:5px 8px; border-top:3px solid var(--line); font-size:11px; color:var(--mut); }
+  .nb.usable { border-top-color:var(--ok); } .nb.alarm { border-top-color:var(--bad); background:#3a1717; } .nb.off { opacity:.45; }
+  .nb .h { display:flex; justify-content:space-between; color:var(--txt); font-size:12px; font-weight:600; }
+  .nb .sc { font-size:22px; font-weight:800; color:var(--txt); }
+  .bar { position:relative; height:6px; background:#0f1219; border-radius:3px; margin:3px 0 2px; overflow:hidden; }
+  .bar i { position:absolute; left:0; top:0; bottom:0; border-radius:3px; }
+  .bar u { position:absolute; top:-2px; bottom:-2px; width:2px; background:#fff; opacity:.7; }
+  canvas { width:100%; height:100%; display:block; }
+  .nb { height:118px; }
+  .spark { background:var(--panel2); border-radius:6px; padding:4px; position:relative; height:118px; overflow:hidden; }
+  .spark .lg { position:absolute; top:3px; left:8px; font-size:10px; color:var(--mut); }
+  /* 3행: 기록 표 */
+  .row3 { display:grid; grid-template-columns:1fr 1fr; gap:8px; min-height:0; }
+  .tbl { width:100%; border-collapse:collapse; font-size:12px; table-layout:fixed; }
+  .tbl th { text-align:left; color:var(--mut); font-weight:500; border-bottom:1px solid var(--line); padding:3px 4px; }
+  .tbl td { padding:3px 4px; border-bottom:1px solid #1d2230; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tbl tr.crit td { color:#fecaca; } .tbl tr.new td { background:#1e293b; }
+  .scroll { overflow:hidden; height:calc(100% - 22px); }
+  .tag { padding:1px 6px; border-radius:4px; font-size:11px; font-weight:700; }
+  .tag.rule { background:var(--bad); color:#fff; } .tag.m5 { background:#7c3aed; color:#fff; }
+  .num { font-family:Consolas,monospace; text-align:right; }
+  .release { margin-top:4px; background:#14532d; color:#fff; border:1px solid var(--ok); border-radius:6px;
+             padding:3px 10px; font-size:12px; cursor:pointer; }
+  .release:disabled { opacity:.4; cursor:default; }
+  /* 4행: 세션 통계 */
+  .stats { display:grid; grid-template-columns:repeat(8,1fr); gap:6px; }
+  .st { background:var(--panel2); border-radius:6px; padding:4px 8px; }
+  .st .v { font-size:18px; font-weight:700; font-family:Consolas,monospace; }
+  .st .s { font-size:11px; color:var(--mut); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <!-- 헤더 -->
+  <div class="panel head">
+    <div class="brand">SafeWave 실측 기록</div>
+    <div class="meta">
+      <span class="chip env" id="env">환경 —</span>
+      <span class="chip label" id="label">시나리오 —</span>
+      <span class="chip"><span class="dot" id="ws-dot"></span><span id="ws-text">연결 중</span></span>
+      <span class="chip" id="api-host">API —</span>
+      <span class="chip" id="cfg">M1 — · 모델 —</span>
+      <span class="chip" id="since">기록 시작 —</span>
+    </div>
+    <div class="clock"><div class="t" id="clk">--:--:--.---</div><div class="d" id="clk-d">—</div></div>
+  </div>
+
+  <!-- 1행: 판단 / 오디오 최신 / 자원 -->
+  <div class="row1">
+    <div class="panel">
+      <div class="ttl"><span>통합 판단 (규칙 게이트 → M5)</span><span id="judge-age">—</span></div>
+      <div class="judge">
+        <div class="level normal" id="level">대기</div>
+        <div>
+          <div class="kv">위험도 <b id="risk">—</b> · 낙상 <b id="bk-fall">—</b> · 소리 <b id="bk-sound">—</b> · 음성 <b id="bk-speech">—</b></div>
+          <div class="kv">규칙 경보 <b id="rule">—</b> · M5 호출 <b id="slm">—</b> · 노드 <b id="jnode">—</b></div>
+          <div class="reason" id="reason">—</div>
+          <div class="kv" id="held">유지 중인 경보 없음</div>
+          <button class="release" id="release" disabled title="유지 중인 경보를 모니터 확인(ack)으로 해제">정상으로 해제</button>
+          <span class="kv" id="release-state"></span>
+        </div>
+      </div>
+    </div>
+    <div class="panel audio-now">
+      <div class="ttl"><span>최근 소리·음성 (M3 환경음 · M4 STT)</span><span id="audio-age">—</span></div>
+      <div class="big" id="a-m3">—</div>
+      <div class="txt" id="a-m4">—</div>
+      <div class="kv" id="a-meta">—</div>
+    </div>
+    <div class="panel">
+      <div class="ttl"><span>자원 — <b id="res-host">—</b></span><span id="res-state"></span></div>
+      <div class="res">
+        <div class="rbox"><div class="s">CPU</div><div class="v" id="cpu">—</div><div class="cores" id="cores"></div></div>
+        <div class="rbox"><div class="s">온도</div><div class="v" id="temp">—</div><div class="s" id="load">load —</div></div>
+        <div class="rbox"><div class="s">메모리</div><div class="v" id="mem">—</div><div class="s" id="mem-s">—</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2행: M1 보드 추론 노드별 + 60초 점수 추이 -->
+  <div class="panel">
+    <div class="ttl"><span>낙상 M1 — ESP32 보드 추론 · 노드별 점수 / 창 새 프레임(coverage, 흰 선 = 판정 기준) / 최근 5회 중 0.8 이상 횟수</span>
+      <span id="m1-sum">—</span></div>
+    <div class="nodes" id="nodes"></div>
+  </div>
+
+  <!-- 3행: 기록 표 -->
+  <div class="row3">
+    <div class="panel">
+      <div class="ttl"><span>오디오 처리 기록 — 지연 = 처리 완료 − 소리 끝 시각</span><span id="audio-n">—</span></div>
+      <div class="scroll"><table class="tbl">
+        <colgroup><col style="width:92px"><col style="width:46px"><col style="width:120px"><col><col style="width:62px"></colgroup>
+        <thead><tr><th>시각</th><th>길이</th><th>M3 환경음</th><th>M4 전사</th><th class="num">지연</th></tr></thead>
+        <tbody id="audio-rows"></tbody></table></div>
+    </div>
+    <div class="panel">
+      <div class="ttl"><span>경보 기록 — 기록 지연 = 경보 기록 − 판단 시각 · 발송 지연 = FCM 발송 − 판단 시각</span><span id="alert-n">—</span></div>
+      <div class="scroll"><table class="tbl">
+        <colgroup><col style="width:92px"><col style="width:40px"><col style="width:50px"><col><col style="width:62px"><col style="width:62px"></colgroup>
+        <thead><tr><th>시각</th><th>노드</th><th>경로</th><th>요약</th><th class="num">기록</th><th class="num">발송</th></tr></thead>
+        <tbody id="alert-rows"></tbody></table></div>
+    </div>
+  </div>
+
+  <!-- 4행: 세션 통계 -->
+  <div class="panel">
+    <div class="ttl"><span>이번 기록 통계 (페이지를 연 뒤부터)</span><span id="stat-dur">—</span></div>
+    <div class="stats">
+      <div class="st"><div class="s">오디오 이벤트</div><div class="v" id="s-audio">0</div></div>
+      <div class="st"><div class="s">오디오 지연 p50 / p95</div><div class="v" id="s-alat">—</div></div>
+      <div class="st"><div class="s">경보 (규칙 / M5)</div><div class="v" id="s-alerts">0 / 0</div></div>
+      <div class="st"><div class="s">발송 지연 p50 / 최대</div><div class="v" id="s-slat">—</div></div>
+      <div class="st"><div class="s">M1 판정 가능 창 (노드 평균)</div><div class="v" id="s-usable">—</div></div>
+      <div class="st"><div class="s">M1 노드 최고 점수</div><div class="v" id="s-m1max">—</div></div>
+      <div class="st"><div class="s">CPU 평균 / 최고</div><div class="v" id="s-cpu">—</div></div>
+      <div class="st"><div class="s">온도 최고 · 메모리 최고</div><div class="v" id="s-tm">—</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const Q = new URLSearchParams(location.search);
+  const API = (Q.get('api') || `${location.protocol}//${location.hostname}:8000`).replace(/\/$/, '');
+  const WS = API.replace(/^http/, 'ws') + '/ws/monitor';
+  const MIN_COV = parseFloat(Q.get('cov') || '0.9');   // ai-experts M1_BOARD_MIN_COVERAGE와 같게
+  const THR = parseFloat(Q.get('thr') || '0.8');       // M1_BOARD_THRESHOLD
+  const NODES = (Q.get('nodes') || '1,2,3,4,5').split(',').map(s => s.trim());
+  const T0 = Date.now();
+  // ?clock=0 — 영상 동기화 시계를 숨긴다(재생 녹화처럼 현재 시각이 의미 없을 때)
+  if (Q.get('clock') === '0') document.querySelector('.clock').style.display = 'none';
+  document.getElementById('env').textContent = Q.get('env') || '환경 미지정 (?env=)';
+  document.getElementById('label').textContent = Q.get('label') || '시나리오 미지정 (?label=)';
+  document.getElementById('api-host').textContent = 'API ' + new URL(API).host;
+  document.getElementById('res-host').textContent = new URL(API).host;
+  document.getElementById('since').textContent = '기록 시작 ' + hms(new Date(T0));
+
+  const $ = id => document.getElementById(id);
+  function p2(v, n = 2) { return String(v).padStart(n, '0'); }
+  function hms(d, ms = false) { return `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}` + (ms ? '.' + p2(d.getMilliseconds(), 3) : ''); }
+  function fmtMs(v) { return v == null ? '—' : v >= 10000 ? (v / 1000).toFixed(1) + 's' : v >= 1000 ? (v / 1000).toFixed(2) + 's' : Math.round(v) + 'ms'; }
+  function pct(arr, q) { if (!arr.length) return null; const s = [...arr].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(q * s.length))]; }
+  function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+  const SOUND = { silence: '무음', speech: '사람 음성', impact: '충격음', noise: '잡음', alarm: '경보음', unknown: '알 수 없음' };
+
+  // ── 시계 (이 PC 시계 · 영상 동기화용) ──
+  (function tick() {
+    const d = new Date();
+    $('clk').textContent = hms(d, true);
+    $('clk-d').textContent = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} · epoch ${d.getTime()}`;
+    const s = Math.floor((Date.now() - T0) / 1000);
+    $('stat-dur').textContent = `경과 ${p2(Math.floor(s / 3600))}:${p2(Math.floor(s / 60) % 60)}:${p2(s % 60)}`;
+    requestAnimationFrame(tick);
+  })();
+
+  // ── 세션 통계 상태 (페이지 메모리에만 보관) ──
+  const S = { audioIds: new Set(), audioLat: [], alertIds: new Set(), rule: 0, m5: 0, sendLat: new Map(),
+              usable: {}, total: {}, m1max: {}, cpu: [], tempMax: null, memMax: null };
+  const hist = {};             // 노드별 60초 점수 [t, score]
+  // 표시 등급 = max(유지 중인 경보, 최근 10초 스냅샷 등급). 순간 점수가 경고↔정상을 오가도 깜빡이지 않게 한다.
+  const SNAP_HOLD_MS = 10000;
+  const snapAt = { warning: 0, critical: 0 };
+  let held = [];               // /monitor/recent held — 규칙 경보·M5 판단을 해제 조건까지 유지
+  const RANK = { normal: 0, warning: 1, critical: 2 };
+  function renderLevel() {
+    const now = Date.now();
+    const snapLv = now - snapAt.critical < SNAP_HOLD_MS ? 'critical' : now - snapAt.warning < SNAP_HOLD_MS ? 'warning' : 'normal';
+    const h = held[0];
+    const lv = h && RANK[h.risk_level] >= RANK[snapLv] ? h.risk_level : snapLv;
+    $('level').className = 'level ' + lv;
+    $('level').textContent = (lv === 'critical' ? '응급' : lv === 'warning' ? '경고' : '정상') + (h && h.risk_level === lv ? ' 유지' : '');
+    $('release').disabled = !h;
+    if (h) {
+      const left = Math.max(0, Math.round((h.until_ms - now) / 1000));
+      $('held').innerHTML = `<b style="color:${h.risk_level === 'critical' ? 'var(--bad)' : 'var(--warn)'}">유지 중</b> · 노드 ${h.node_id} · `
+        + `${h.slm_mode === 'rule' ? '규칙 경보' : 'M5 판단'} ${hms(new Date(h.since_ms))} · ${esc(h.summary).slice(0, 40)}`
+        + ` · 해제: 폰 확인 / 음성 '괜찮다' / M5 정상 / ${left}초 후`;
+    } else {
+      $('held').textContent = '유지 중인 경보 없음';
+    }
+  }
+  setInterval(renderLevel, 500);
+
+  // 유지 중인 경보 해제 — 보호자 확인과 같은 경로(POST /alerts/{msg_id}/ack, 기기 이름 monitor)
+  async function releaseHeld() {
+    const items = held.slice();
+    if (!items.length) return;
+    $('release').disabled = true;
+    let ok = 0;
+    for (const h of items) {
+      try {
+        const res = await fetch(`${API}/alerts/${h.msg_id}/ack`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ device_id: 'monitor', action: 'seen' }),
+        });
+        if (res.ok) ok++;
+      } catch (e) { /* 다음 항목 계속 */ }
+    }
+    $('release-state').textContent = ` ${hms(new Date())} 해제 ${ok}/${items.length}건`;
+    await refreshRecent();
+  }
+  let lastSnapMs = 0, nodeHealth = {}, nodePrev = null, nodeRate = {};
+
+  // ── WebSocket 스냅샷: 판단·M1 ──
+  function onSnap(d) {
+    lastSnapMs = Date.now();
+    const lv = d.risk_level || 'normal';
+    if (lv === 'critical') snapAt.critical = Date.now();
+    if (lv !== 'normal') snapAt.warning = Date.now();
+    renderLevel();
+    $('risk').textContent = (d.risk_score || 0).toFixed(2);
+    const bd = d.emergency_breakdown || {};
+    $('bk-fall').textContent = (bd.fall || 0).toFixed(2);
+    $('bk-sound').textContent = (bd.sound || 0).toFixed(2);
+    $('bk-speech').textContent = (bd.speech || 0).toFixed(2);
+    $('rule').textContent = d.rule_alert ? '발생' : '없음';
+    $('slm').textContent = d.slm_invoked ? '예' : (d.slm_needed ? '대기' : '아니오');
+    $('jnode').textContent = d.node_id ?? '—';
+    $('reason').textContent = d.qwen_reason && d.qwen_reason !== 'below_threshold' ? d.qwen_reason : '임계 미만 — M5 미호출';
+    const m = d.models || {};
+    $('cfg').textContent = `M1 ${m.m1 === false ? 'OFF' : 'ON'}(${d.experts?.fall?.infer_source || '—'}) · M3 ${m.m3 === false ? 'OFF' : 'ON'} · M4 ${m.m4 === false ? 'OFF' : 'ON'} · M5 ${m.m5 === false ? 'OFF' : 'ON'}`;
+
+    const f = d.experts?.fall || {};
+    const nodes = f.nodes || {};
+    const now = Date.now();
+    for (const n of NODES) {
+      const s = nodes[n];
+      if (!s) continue;
+      const usable = s.window_full && !s.random && s.coverage >= MIN_COV;
+      S.total[n] = (S.total[n] || 0) + 1;
+      if (usable) S.usable[n] = (S.usable[n] || 0) + 1;
+      S.m1max[n] = Math.max(S.m1max[n] || 0, s.score || 0);
+      (hist[n] = hist[n] || []).push([now, s.score || 0]);
+    }
+    for (const n in hist) while (hist[n].length && now - hist[n][0][0] > 60000) hist[n].shift();
+    $('m1-sum').innerHTML = `낙상 판정 <b style="color:${f.fall_detected ? 'var(--bad)' : 'var(--ok)'}">${f.fall_detected ? '감지' : '없음'}</b>`
+      + ` · 경보 노드 ${(f.alarm_nodes || []).length}/${f.min_nodes ?? 1} 이상 필요 · 규칙 ${THR} 이상 ${f.fall_vote_required ?? 3}/${f.fall_vote_window ?? 5}회, coverage ≥ ${MIN_COV}`;
+    renderNodes(nodes);
+  }
+
+  function renderNodes(nodes) {
+    const box = $('nodes');
+    let html = NODES.map(n => {
+      const s = nodes[n], h = nodeHealth['node_' + n] || {};
+      if (!s) return `<div class="nb off"><div class="h"><span>노드 ${n}</span><span>점수 없음</span></div>
+        <div class="sc">—</div><div>${h.status === 'online' ? '패킷만 수신' : '오프라인'}</div></div>`;
+      const usable = s.window_full && !s.random && s.coverage >= MIN_COV;
+      const cls = s.alarm ? 'alarm' : usable ? 'usable' : '';
+      const col = s.score >= THR ? 'var(--bad)' : s.score >= 0.5 ? 'var(--warn)' : 'var(--ok)';
+      const rate = nodeRate[n];
+      return `<div class="nb ${cls}"><div class="h"><span>노드 ${n}</span><span>${s.alarm ? '경보' : usable ? '판정 가능' : '판정 불가'}</span></div>
+        <div class="sc">${(s.score ?? 0).toFixed(2)}</div>
+        <div class="bar"><i style="width:${(s.score || 0) * 100}%;background:${col}"></i><u style="left:${THR * 100}%"></u></div>
+        cov ${(s.coverage ?? 0).toFixed(2)}
+        <div class="bar"><i style="width:${(s.coverage || 0) * 100}%;background:${usable ? 'var(--ok)' : 'var(--warn)'}"></i><u style="left:${MIN_COV * 100}%"></u></div>
+        투표 <b style="color:var(--txt)">${s.votes}/${s.samples}</b> · ${rate != null ? rate.toFixed(0) + ' pkt/s' : '—'}${h.rssi != null ? ' · ' + h.rssi + 'dBm' : ''}</div>`;
+    }).join('');
+    html += `<div class="spark"><span class="lg">최근 60초 노드 점수 (점선 = ${THR})</span><canvas id="spark"></canvas></div>`;
+    box.innerHTML = html;
+    drawSpark();
+  }
+
+  const COLORS = ['#60a5fa', '#f472b6', '#facc15', '#4ade80', '#c084fc', '#fb923c'];
+  function drawSpark() {
+    const c = $('spark'); if (!c) return;
+    const w = c.clientWidth, h = c.clientHeight; if (!w || !h) return;
+    c.width = w * devicePixelRatio; c.height = h * devicePixelRatio;
+    const g = c.getContext('2d'); g.scale(devicePixelRatio, devicePixelRatio);
+    const now = Date.now(), y = v => h - 4 - v * (h - 16);
+    g.strokeStyle = '#f87171'; g.setLineDash([4, 3]); g.beginPath(); g.moveTo(0, y(THR)); g.lineTo(w, y(THR)); g.stroke(); g.setLineDash([]);
+    NODES.forEach((n, i) => {
+      const pts = hist[n] || []; if (pts.length < 2) return;
+      g.strokeStyle = COLORS[i % COLORS.length]; g.lineWidth = 1.5; g.beginPath();
+      pts.forEach(([t, v], j) => { const x = w - (now - t) / 60000 * w; j ? g.lineTo(x, y(v)) : g.moveTo(x, y(v)); });
+      g.stroke();
+      g.fillStyle = COLORS[i % COLORS.length]; g.font = '10px Segoe UI'; g.fillText(n, w - 10 - (NODES.length - i) * 12, 12);
+    });
+  }
+
+  function connect() {
+    const ws = new WebSocket(WS);
+    ws.onopen = () => { $('ws-dot').classList.add('on'); $('ws-text').textContent = '실시간 연결'; };
+    ws.onmessage = e => {
+      let m; try { m = JSON.parse(e.data); } catch { return; }
+      if (!m || m.ping) return;
+      let d = m.data || m;
+      if (typeof d === 'string') { try { d = JSON.parse(d); } catch { return; } }
+      if (d && d.ts_ms) onSnap(d);
+    };
+    ws.onclose = () => { $('ws-dot').classList.remove('on'); $('ws-text').textContent = '끊김 · 재연결'; setTimeout(connect, 3000); };
+    ws.onerror = () => ws.close();
+  }
+
+  // ── 오디오·경보 기록 (/monitor/recent) ──
+  async function refreshRecent() {
+    try {
+      const d = await (await fetch(API + '/monitor/recent?n=30')).json();
+      // 표·최근값은 페이지를 연 뒤 들어온 것만 — 새로고침 = 기록 화면 초기화(서버 데이터는 그대로)
+      const a = (d.audio || []).filter(r => r.done_ms >= T0), al = (d.alerts || []).filter(r => r.written_ms >= T0);
+      held = d.held || [];
+      renderLevel();
+      for (const r of a) if (r.done_ms >= T0 && !S.audioIds.has(r.id)) { S.audioIds.add(r.id); S.audioLat.push(r.latency_ms); }
+      for (const r of al) {
+        if (r.written_ms < T0) continue;
+        if (!S.alertIds.has(r.id)) { S.alertIds.add(r.id); r.slm_mode === 'rule' ? S.rule++ : S.m5++; }
+        if (r.sent_latency_ms != null) S.sendLat.set(r.id, r.sent_latency_ms);
+      }
+      if (a[0]) {
+        const r = a[0];
+        $('a-m3').textContent = `${SOUND[r.m3_label] || r.m3_label || '—'} ${r.m3_conf != null ? (r.m3_conf * 100).toFixed(0) + '%' : ''}`
+          + (r.m3_source && r.m3_source !== 'onnx' ? ` (${r.m3_source})` : '');
+        $('a-m4').textContent = r.m4_text ? `“${r.m4_text}”` : '(전사 없음)';
+        $('a-meta').innerHTML = `처리 지연 <b>${fmtMs(r.latency_ms)}</b> · 길이 ${fmtMs(r.duration_ms)} · ${r.peak_db ?? '—'} dB`
+          + (r.m4_keywords.length ? ` · 키워드 <b>${esc(r.m4_keywords.join(', '))}</b>` : '')
+          + (r.m4_phrase ? ' · <b style="color:var(--bad)">긴급 문장</b>' : '');
+        $('audio-age').textContent = hms(new Date(r.ts_ms));
+      }
+      $('audio-rows').innerHTML = a.slice(0, 14).map(r => `<tr class="${Date.now() - r.done_ms < 5000 ? 'new' : ''}">
+        <td>${hms(new Date(r.ts_ms), true)}</td><td>${fmtMs(r.duration_ms)}</td>
+        <td>${esc(SOUND[r.m3_label] || r.m3_label || '—')} ${r.m3_conf != null ? (r.m3_conf * 100).toFixed(0) + '%' : ''}</td>
+        <td>${r.m4_phrase ? '🚨 ' : ''}${esc(r.m4_text || '—')}</td><td class="num">${fmtMs(r.latency_ms)}</td></tr>`).join('');
+      $('alert-rows').innerHTML = al.slice(0, 14).map(r => `<tr class="${r.risk_level === 'critical' ? 'crit' : ''} ${Date.now() - r.written_ms < 5000 ? 'new' : ''}">
+        <td>${hms(new Date(r.ts_ms), true)}</td><td>${r.node_id ?? '—'}</td>
+        <td><span class="tag ${r.slm_mode === 'rule' ? 'rule' : 'm5'}">${r.slm_mode === 'rule' ? '규칙' : 'M5'}</span></td>
+        <td title="${esc(r.summary)}">${esc(r.risk_level)} · ${esc(r.summary)}</td>
+        <td class="num">${fmtMs(r.latency_ms)}</td><td class="num">${r.sent_latency_ms != null ? fmtMs(r.sent_latency_ms) + (r.sent_devices > 1 ? '×' + r.sent_devices : '') : '—'}</td></tr>`).join('');
+      $('audio-n').textContent = `서버 최근 ${a.length}건`;
+      $('alert-n').textContent = `서버 최근 ${al.length}건`;
+      renderStats();
+    } catch (e) { $('audio-n').textContent = '조회 실패 (/monitor/recent)'; }
+  }
+
+  function renderStats() {
+    $('s-audio').textContent = S.audioIds.size;
+    const p50 = pct(S.audioLat, 0.5), p95 = pct(S.audioLat, 0.95);
+    $('s-alat').textContent = p50 == null ? '—' : `${fmtMs(p50)} / ${fmtMs(p95)}`;
+    $('s-alerts').textContent = `${S.rule} / ${S.m5}`;
+    const sl = [...S.sendLat.values()];
+    $('s-slat').textContent = sl.length ? `${fmtMs(pct(sl, 0.5))} / ${fmtMs(Math.max(...sl))}` : '—';
+    const ratios = NODES.filter(n => S.total[n]).map(n => (S.usable[n] || 0) / S.total[n]);
+    $('s-usable').textContent = ratios.length ? (ratios.reduce((x, y) => x + y, 0) / ratios.length * 100).toFixed(0) + '%' : '—';
+    const mx = NODES.filter(n => S.m1max[n] != null).map(n => [n, S.m1max[n]]).sort((a, b) => b[1] - a[1])[0];
+    $('s-m1max').textContent = mx ? `${mx[1].toFixed(2)} (노드${mx[0]})` : '—';
+    if (S.cpu.length) $('s-cpu').textContent = `${(S.cpu.reduce((x, y) => x + y, 0) / S.cpu.length).toFixed(0)}% / ${Math.max(...S.cpu).toFixed(0)}%`;
+    $('s-tm').textContent = `${S.tempMax != null ? S.tempMax.toFixed(0) + '°C' : '—'} · ${S.memMax != null ? S.memMax.toFixed(1) + 'GB' : '—'}`;
+  }
+
+  // ── 자원 (/system/resources) ──
+  const GB = 1024 ** 3;
+  async function refreshRes() {
+    try {
+      const d = await (await fetch(API + '/system/resources')).json();
+      $('cpu').textContent = d.cpu.percent.toFixed(0) + '%';
+      $('cores').innerHTML = d.cpu.per_core.map(p => `<div style="height:${Math.max(4, p)}%"></div>`).join('');
+      $('load').textContent = `load ${d.cpu.load_avg.map(v => (+v).toFixed(1)).join(' ')} · ${d.cpu.per_core.length}코어`;
+      $('temp').textContent = d.temp_c != null ? d.temp_c.toFixed(1) + '°C' : '—';
+      const used = (d.memory.total - d.memory.available) / GB;
+      $('mem').textContent = (used / (d.memory.total / GB) * 100).toFixed(0) + '%';
+      $('mem-s').textContent = `${used.toFixed(1)} / ${(d.memory.total / GB).toFixed(1)} GB`;
+      S.cpu.push(d.cpu.percent);
+      if (d.temp_c != null) S.tempMax = Math.max(S.tempMax ?? 0, d.temp_c);
+      S.memMax = Math.max(S.memMax ?? 0, used);
+      $('res-state').textContent = '';
+    } catch (e) { $('res-state').textContent = '조회 실패'; }
+  }
+
+  // ── 노드 수신 (/nodes/health): 구간 pkt/s ──
+  async function refreshNodes() {
+    try {
+      const d = await (await fetch(API + '/nodes/health')).json();
+      const t = performance.now() / 1000;
+      for (const k in d) {
+        const n = k.split('_')[1], p = nodePrev && nodePrev.d[k];
+        if (p && d[k].rx >= p.rx && t - nodePrev.t > 0.5) nodeRate[n] = (d[k].rx - p.rx) / (t - nodePrev.t);
+        if (d[k].status !== 'online') nodeRate[n] = null;
+      }
+      nodeHealth = d; nodePrev = { t, d };
+    } catch (e) { /* 다음 주기에 다시 */ }
+  }
+
+  setInterval(() => { $('judge-age').textContent = lastSnapMs ? `마지막 판단 ${((Date.now() - lastSnapMs) / 1000).toFixed(1)}초 전` : '판단 대기'; }, 500);
+  $('release').addEventListener('click', releaseHeld);
+  connect();
+  refreshRecent(); setInterval(refreshRecent, 2000);
+  refreshRes(); setInterval(refreshRes, 3000);
+  refreshNodes(); setInterval(refreshNodes, 2000);
+</script>
+</body>
+</html>
