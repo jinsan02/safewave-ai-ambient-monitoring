@@ -94,8 +94,34 @@ async def synthesize(text: str) -> Path:
         except Exception as exc:
             last_exc = exc
             print(f"[tts] synth retry {attempt + 1}/3: {exc}")
+            if "403" in str(exc):
+                break  # 서버 거부(edge-tts 인증 변경)는 재시도해도 같다
             await asyncio.sleep(1.0 + attempt)
+    if sys.platform == "win32":
+        # 2026-10-12: edge-tts 7.2.8(최신)이 403으로 막혀 노트북은 Windows 내장 한국어 음성으로 대신한다.
+        return await _synthesize_windows(text, out_path.with_suffix(".wav"))
     raise last_exc
+
+
+async def _synthesize_windows(text: str, out_path: Path) -> Path:
+    safe = text.replace("'", "''")
+    ps = (
+        "Add-Type -AssemblyName System.Speech; "
+        "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+        "$v = $s.GetInstalledVoices() | Where-Object { $_.VoiceInfo.Culture.Name -eq 'ko-KR' } | Select-Object -First 1; "
+        "if ($v) { $s.SelectVoice($v.VoiceInfo.Name) }; "
+        f"$s.SetOutputToWaveFile('{out_path}'); $s.Speak('{safe}'); $s.Dispose()"
+    )
+    proc = await asyncio.create_subprocess_exec(
+        "powershell", "-NoProfile", "-Command", ps,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    await asyncio.wait_for(proc.wait(), timeout=TTS_SYNTH_TIMEOUT_SEC)
+    if not out_path.exists():
+        raise RuntimeError("windows tts produced no file")
+    print("[tts] edge-tts 실패 → Windows 음성으로 합성")
+    return out_path
 
 
 async def play_audio(path: Path):
