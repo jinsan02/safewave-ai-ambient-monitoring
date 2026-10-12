@@ -269,6 +269,7 @@ class M5ResultConsistencyTests(unittest.TestCase):
         self.assertEqual(result["risk_score"], 0.65)
         self.assertEqual(result["risk_level"], "warning")
         self.assertEqual(result["rubric_floor"], "warning")
+        self.assertEqual(result["slm_model_level"], "normal")  # 하한 전 모델 판단(대시보드 해제용)
         self.assertEqual(result["qwen_reason"], "판정표 warning 낙상감지 → 최소 warning")
 
     def test_rubric_floor_raises_crisis_with_hazard_to_critical(self):

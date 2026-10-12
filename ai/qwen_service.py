@@ -108,6 +108,8 @@ def _write_emergency(r: _redis.Redis, snapshot: dict, fused: dict):
         "is_outlier":             bool(fused.get("is_outlier", False)),
         "correlated_with_history": bool(fused.get("correlated_with_history", False)),
         "slm_mode":               fused.get("slm_mode"),
+        "slm_model_level":        fused.get("slm_model_level"),
+        "rubric_floor":           fused.get("rubric_floor"),
         "summary":                fused.get("summary") or fused.get("qwen_reason", ""),
         "emergency_breakdown":    snapshot.get("emergency_breakdown"),
     }

@@ -1078,6 +1078,8 @@ class QwenLogic:
         # reason에 남긴다(알림 문구 qwen_reason으로 나간다). 모델이 더 높게 낸 경우는 그대로 둔다.
         # 1.5B는 판정표를 일관되게 적용하지 못해 critical을 warning으로 내리는 일이 있었다(09-24 held-out).
         gate_score, gate_bd = gate
+        # 판정표 하한 전 모델 자체 판단 — 대시보드가 'M5가 괜찮다고 함'으로 유지 경보를 푸는 데 쓴다(10-12).
+        result["slm_model_level"] = classify_score(result.get("risk_score"))[1]
         rub_level, rub_reason = rubric_level(expert_results, gate_score, gate_bd)
         floor = RUBRIC_FLOOR_SCORE.get(rub_level)
         if floor and _safe_float(result.get("risk_score"), 0.0) < floor:

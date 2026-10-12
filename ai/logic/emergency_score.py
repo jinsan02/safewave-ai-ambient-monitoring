@@ -32,7 +32,9 @@ _SOUND_WEIGHTS = {
 _CRITICAL_KEYWORDS = frozenset(["살려", "도와", "아파", "응급", "위험", "넘어", "불", "화재", "119"])
 
 # 도메인 가중치 (합 = 1.0)
-_DOMAIN_WEIGHTS = {"fall": 0.40, "vital": 0.30, "sound": 0.15, "speech": 0.15}
+# 2026-10-12: M2 폐기로 생체신호 몫(30%)이 늘 0이라 M1·M3·M4가 모두 만점이어도 0.70이 상한이었다.
+#   M1(낙상) 50% : 소리 50%(M3 환경음 25% + M4 음성 25%)로 재배분해 세 모델만으로 임계를 넘을 수 있게 한다.
+_DOMAIN_WEIGHTS = {"fall": 0.50, "vital": 0.0, "sound": 0.25, "speech": 0.25}
 
 # 복합 위험 보정 배율 (활성 도메인 수 기준)
 _COMPOSITE_BOOST = {2: 1.20, 3: 1.35, 4: 1.50}
@@ -154,7 +156,7 @@ def compute_emergency_score(expert_results: dict, time_series=None,
       지속 경고·점진 악화 에스컬레이션을 적용(M5 임계 0.6으로 floor). None이면 스냅샷 전용
       (기존과 100% 동일 — 하위호환).
 
-    도메인 가중치: fall 40% + vital 30% + sound 15% + speech 15%
+    도메인 가중치: fall 50% + sound 25% + speech 25% (vital 0 — M2 폐기, 10-12)
     복합 위험 보정(활성 도메인 수 비례):
       2도메인 >=0.5 -> x1.20 / 3도메인 -> x1.35 / 4도메인 -> x1.50 (상한 1.0)
     M2 생체신호 극한값 단일 에스컬레이션:
