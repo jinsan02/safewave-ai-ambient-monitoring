@@ -773,7 +773,8 @@ class GuardianAppContractTests(unittest.TestCase):
         _extract_functions(
             ROOT / "api" / "notifier.py",
             {"build_fcm_fields", "build_risk_message", "send_risk_notification",
-             "send_voice_ok_notification", "send_heartbeat_notification"},
+             "send_voice_ok_notification", "send_heartbeat_notification",
+             "send_emergency_test_notification"},
             ns,
         )
         return ns, sent
@@ -813,6 +814,18 @@ class GuardianAppContractTests(unittest.TestCase):
 
         ns["send_heartbeat_notification"]("tok", 2, 3)
         self.assertEqual(sent[-1][0][3]["type"], "heartbeat")
+
+    def test_emergency_test_payload_is_explicit_and_carries_predefined_speech(self):
+        ns, sent = self._notifier()
+        ns["send_emergency_test_notification"]("tok")
+        args, kwargs = sent[-1]
+        self.assertEqual(args[0], "tok")
+        self.assertTrue(kwargs["title"].startswith("[시험]"))
+        self.assertIn("실제 사고가 아닙니다", kwargs["body"])
+        self.assertEqual(kwargs["extra"]["type"], "emergency")
+        self.assertEqual(kwargs["extra"]["test"], "1")
+        self.assertEqual(kwargs["extra"]["speech_text"], "살려줘")
+        self.assertTrue(kwargs["critical"])
 
     def test_app_summary_counts_expected_nodes_and_hides_private_fields(self):
         ns = _extract_functions(

@@ -38,9 +38,10 @@ curl -i -X POST -H 'Content-Type: application/json' -d '{"token":""}' \
 ## 3. 실제 연동 순서
 
 1. 폰 앱을 열어 RPi5 주소로 토큰을 재등록한다. `/auth/tokens`에는 토큰 값이 아니라 `device_id`만 표시되는지 확인한다.
-2. 앱의 `POST /notify/test` 버튼으로 **일반 시험 푸시**를 보내고, 서버 200 응답과 폰 실제 수신 시각을 따로 기록한다. 200은 폰 수신 증거가 아니다.
-3. 앱이 data-only 푸시를 처리한다면 `FCM_DATA_ONLY=true`를 적용하고 API를 재생성한 뒤, 2절 값이 실제로 바뀌었는지 다시 확인한다. 앱 미지원이면 이 단계에서 중단한다.
-4. 동시 경보가 없는 상태에서 승인된 16 kHz·mono·16-bit PCM “도와주세요” WAV로 아래 종단 시험을 **한 번** 수행한다. RPi5에 `scripts/dev/push_e2e.py` 최신본과 WAV를 준비한다. 이전 미추적 복사본을 쓰지 말고 파일을 비교한다.
+2. 앱의 `POST /notify/test` 버튼으로 **일반 시험 푸시**를 보내고, 서버 200 응답과 폰 실제 수신 시각을 따로 기록한다. 모니터에서는 `POST /notify/test-registered`를 사용한다. 200은 폰 수신 증거가 아니다.
+3. 모니터의 `[시험] 응급 알림 보내기`를 한 번 눌러 `[시험]`, `speech_text=살려줘`, 응급 표시·알림음을 확인한다. 이 버튼은 감지 파이프라인·사고 이력·Phase 2를 건드리지 않는다.
+4. 앱이 data-only 푸시를 처리한다면 `FCM_DATA_ONLY=true`를 적용하고 API를 재생성한 뒤, 2절 값이 실제로 바뀌었는지 다시 확인한다. 앱 미지원이면 이 단계에서 중단한다.
+5. 동시 경보가 없는 상태에서 승인된 16 kHz·mono·16-bit PCM “도와주세요” WAV로 아래 종단 시험을 **한 번** 수행한다. RPi5에 `scripts/dev/push_e2e.py` 최신본과 WAV를 준비한다. 이전 미추적 복사본을 쓰지 말고 파일을 비교한다.
 
 ```bash
 docker cp scripts/dev/push_e2e.py rp5-ai-experts:/tmp/push_e2e.py
@@ -53,8 +54,8 @@ docker cp rp5-ai-experts:/tmp/push_e2e.json /tmp/push_e2e.json
 
 스크립트는 해당 노드·주입 시각의 **긴급 음성 규칙 경보**만 결과로 잡는다. `devices_notified`는 Redis의 `notify:sent` **발송 시도 표시 수**이지 FCM 수신·폰 표시 성공 수가 아니다. 결과 JSON에는 경보 사유에 음성 전사가 들어갈 수 있으므로 공유 전 확인한다.
 
-5. 폰에 표시된 `msg_id`와 결과 JSON의 `msg_id`가 같은지 확인한다. 앱에서 `seen`, 이어서 필요하면 `called`를 누르고 `GET /alerts/{msg_id}`의 `acked_by`를 확인한다. `VOICE_ENABLED=false`라면 `voice_ok`는 판정하지 않는다. 90초 동일 노드 잠금 중 재주입하지 않는다.
-6. 앱 로그/화면에서 잠금·무음·방해금지·앱 종료 상태를 **각각 별도 회차**로 시험한다(`docs/03_ANDROID_ALERT_RELIABILITY.md`). 한 회차의 성공을 다른 상태의 성공으로 일반화하지 않는다.
+6. 폰에 표시된 `msg_id`와 결과 JSON의 `msg_id`가 같은지 확인한다. 앱에서 `seen`, 이어서 필요하면 `called`를 누르고 `GET /alerts/{msg_id}`의 `acked_by`를 확인한다. `VOICE_ENABLED=false`라면 `voice_ok`는 판정하지 않는다. 90초 동일 노드 잠금 중 재주입하지 않는다.
+7. 앱 로그/화면에서 잠금·무음·방해금지·앱 종료 상태를 **각각 별도 회차**로 시험한다(`docs/03_ANDROID_ALERT_RELIABILITY.md`). 한 회차의 성공을 다른 상태의 성공으로 일반화하지 않는다.
 
 ## 4. 남길 결과와 중단 조건
 

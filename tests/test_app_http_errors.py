@@ -149,7 +149,8 @@ class AppHttpErrorTests(unittest.TestCase):
 
         ns = _load_nodes(
             ROOT / "api" / "main.py",
-            {"list_fcm_tokens", "test_registered_notifications"},
+            {"list_fcm_tokens", "test_registered_notifications",
+             "test_registered_emergency_notifications"},
             {"JSONResponse": JSONResponse, "FCM_READY": False,
              "_ensure_redis": redis_client, "_list_registered_tokens": no_tokens},
         )
@@ -170,6 +171,7 @@ class AppHttpErrorTests(unittest.TestCase):
 
         ns.update({"_list_registered_tokens": one_token, "_notify_all": sent_once,
                    "send_test_notification": object(), "logging": logging,
+                   "send_emergency_test_notification": object(),
                    "_log": lambda *_args, **_kwargs: None})
         listed = asyncio.run(ns["list_fcm_tokens"]())
         self.assertEqual(listed, {"devices": ["phone-1"], "count": 1, "fcm_ready": True})
@@ -177,6 +179,10 @@ class AppHttpErrorTests(unittest.TestCase):
 
         result = asyncio.run(ns["test_registered_notifications"]())
         self.assertEqual(result, {"ok": True, "registered": 1, "sent": 1, "failed": 0})
+
+        result = asyncio.run(ns["test_registered_emergency_notifications"]())
+        self.assertEqual(result, {"ok": True, "registered": 1, "sent": 1, "failed": 0,
+                                  "test": True, "speech_text": "살려줘"})
 
 
 if __name__ == "__main__":

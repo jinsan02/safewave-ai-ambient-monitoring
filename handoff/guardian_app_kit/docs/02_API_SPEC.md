@@ -63,6 +63,13 @@ data 전용 형식에는 `title`, `body`가 data 안에 함께 온다(시스템 
 `no_registered_devices`, Firebase 미설정은 503 `fcm_unavailable`, 전부 실패하면 502 `fcm_send_failed`.
 200은 Firebase 발송 접수 결과이며 휴대폰 표시 성공 증거가 아니다.
 
+### `POST /notify/test-emergency-registered`
+모니터 화면용 응급 표시 시험. 등록된 모든 기기에 `type=emergency`, `test=1`,
+`speech_text=살려줘`를 보낸다. 제목과 본문에도 `[시험]`과 “실제 사고가 아닙니다”를 표시한다.
+성공 응답은 `{"ok":true,"registered":1,"sent":1,"failed":0,"test":true,"speech_text":"살려줘"}`.
+이 API는 `ai:emergency`나 Phase 2를 생성하지 않으며, 감지 파이프라인이 아닌 앱의 응급 푸시 표시만 검증한다.
+오류 상태와 200의 주장 범위는 일반 등록 기기 테스트 API와 같다.
+
 ### `GET /status`
 최신 스냅샷(`mock/status.json`). 데이터가 없으면 **200** `{"message":"no data yet"}`.
 사용 필드: `ts_ms`, `node_id`, `risk_score`, `risk_level`(normal|warning|critical), `rule_alert`, `slm_mode`, `qwen_reason`,

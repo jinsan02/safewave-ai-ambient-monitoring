@@ -188,6 +188,28 @@ def send_test_notification(token: str) -> str:
     )
 
 
+def send_emergency_test_notification(token: str, speech_text: str = "살려줘") -> str:
+    """보호자 앱의 응급 알림 표시만 확인하는 시험 메시지.
+
+    실제 ai:emergency 스트림과 Phase 2를 거치지 않으며, 앱이 실제
+    사고로 오인하지 않도록 제목과 data에 시험 표시를 둘 다 넣는다.
+    """
+    return _send_fcm(
+        token,
+        title="[시험] 응급 음성 알림",
+        body=f'[시험] 사전 정의 음성 "{speech_text}"가 감지됐습니다. 실제 사고가 아닙니다.',
+        extra={
+            "type": "emergency",
+            "test": "1",
+            "emergency": True,
+            "risk_level": "critical",
+            "speech_text": speech_text,
+            "summary": f'[시험] 긴급 음성 "{speech_text}"',
+        },
+        critical=True,
+    )
+
+
 def _fcm_error_response(exc: Exception, *, sent: bool | None = None) -> JSONResponse:
     """앱이 재등록·재시도·서버 점검을 구분하도록 FCM 오류를 노출한다."""
     if isinstance(exc, messaging.UnregisteredError):
