@@ -1,7 +1,9 @@
 # 엔드포인트·푸시 명세
 
-기준: 서버 저장소 `develop`의 `api/main.py`, `api/notifier.py` (2026-09-23 코드 확인). 인증 없음.
+기준: 서버 저장소 `develop`의 `api/main.py`, `api/notifier.py` (최초 2026-09-23 확인, 경보 확인 API 10-05 반영, 10-13 상태 주석). 인증 없음.
 기본 주소 `http://<RPi5>:8000`. 앱은 모든 응답에서 **알 수 없는 필드를 무시**하고 누락 필드는 기본값을 쓴다.
+
+> 10-13 주의: `APP_EXPECTED_NODES`의 서버 기본값은 여전히 `1,2,3`이다. 노드 5대 시연에서는 서버 배포 설정을 `1,2,3,4,5`로 맞춰야 `/app/summary.nodes_expected`가 5가 된다. 10-12 노트북 GPU 라이브에서 앱 ack 서버 기록을 확인했지만, RPi5에서 같은 경로가 확인된 것은 아니다. 새 `/monitor/recent`는 녹화·진단용이며 M4 전사 원문을 포함하므로 앱 화면·저장소에 그대로 쓰지 않는다.
 
 ## 1. 통신 경로
 
@@ -45,7 +47,7 @@ data 전용 형식에는 `title`, `body`가 data 안에 함께 온다(시스템 
 `{"service":"rp5-api","status":"ok"}` — 연결 확인.
 
 ### `POST /auth/register-token`
-요청 `{"token":"<fcm>","device_id":"<uuid>"}` → `{"status":"registered","device_id":"<uuid>","ttl_seconds":3600}`
+요청 `{"token":"<fcm>","device_id":"<uuid>"}` → `{"status":"registered","device_id":"<uuid>","ttl_seconds":3600}`. 빈 토큰·잘못된 `device_id`는 422.
 - 서버 저장 TTL 1시간, 서버가 살아 있으면 10분마다 연장. 앱은 시작·`onNewToken`·30분 주기로 재등록(멱등).
 - `device_id` 기본값 `galaxy_flip4`를 쓰지 말 것(여러 보호자가 서로 덮어씀).
 
@@ -53,8 +55,7 @@ data 전용 형식에는 `title`, `body`가 data 안에 함께 온다(시스템 
 `{"devices":["<uuid>",...],"count":2}`
 
 ### `POST /notify/test`
-요청 `{"token":"<fcm>"}` → `{"ok":true,"message_id":"..."}` / 500 `{"ok":false,"error":"..."}`
-(서버에 Firebase 키가 없으면 500)
+요청 `{"token":"<fcm>"}` → `{"ok":true,"message_id":"..."}`. 빈 토큰은 422. 실패 응답은 아래 6절의 상태코드와 고정 `error` 값을 따른다(원래 Firebase 오류 문구·키 경로는 반환하지 않음).
 
 ### `GET /status`
 최신 스냅샷(`mock/status.json`). 데이터가 없으면 **200** `{"message":"no data yet"}`.
@@ -87,6 +88,7 @@ MVP는 읽기만. `ai_enabled=false` 또는 `models.m1=false`면 홈에 "감시 
 
 ### `POST /alerts/{msg_id}/feedback` (구현 완료)
 요청 `{"device_id":"<uuid>","feedback":"false_alarm|missed_alert"}` → `{"ok":true,"msg_id","feedback"}`, 그 외 값은 422.
+`msg_id` 형식이 틀리면 400 `{"error":"invalid msg_id"}`.
 - 서버는 기존 M5 피드백 키에 기록해 **이후 1시간 동안 M5(AI 판단) 점수를 0.08 낮추거나(false_alarm) 높인다(missed_alert).**
   규칙 경보(낙상 확정 등)에는 영향이 없다. 앱은 오탐 신고 확인 창에 이 영향을 짧게 안내한다.
 - 가장 최근 신고 1건만 유효하다(여러 번 신고해도 누적되지 않음).
@@ -96,6 +98,7 @@ MVP는 읽기만. `ai_enabled=false` 또는 `models.m1=false`면 홈에 "감시 
 
 ### `GET /history?before=<msg_id>` (구현 완료)
 `before`보다 오래된 항목부터 `n`건(필터 적용 후). 다음 페이지는 마지막 항목의 `_id`를 `before`로 준다. 빈 배열이면 끝.
+`before`가 스트림 ID 형식이 아니면 400 `{"error":"invalid before msg_id"}`.
 
 ### `GET /charts/minute?minutes=60` (P1)
 `[{"ts":<초>,"risk_score_avg","heart_rate_avg","breathing_rate_avg","slm_invoked_count","samples"}]`
@@ -131,10 +134,18 @@ MVP는 읽기만. `ai_enabled=false` 또는 `models.m1=false`면 홈에 "감시 
 
 ## 6. 오류 처리 규칙
 
-| 상황 | 앱 표시 |
+| 상황 | 서버 응답·앱 처리 |
 |---|---|
-| 연결 실패·타임아웃(5초) | "서버에 연결할 수 없음(집 밖이거나 서버 정지). 응급 알림은 계속 받습니다" + 마지막 값 |
-| `{"message":"no data yet"}` | "센서 데이터 대기 중" |
-| 503 | "서버 일부 기능 이상" |
-| 404(예정 API) | 버튼 "준비 중", 동작은 로컬 기록 |
-| 500(`/notify/test`) | "서버에서 알림을 보낼 수 없음(Firebase 설정 확인)" |
+| 연결 실패·타임아웃(HTTP 응답 없음) | 마지막 값을 오래된 값으로 표시하고 재시도. 새 경보 푸시 수신을 보장한다고 표시하지 않음 |
+| 200 `{"message":"no data yet"}` | 센서 데이터 대기 중(오류 아님) |
+| 400 `invalid msg_id`·`invalid before msg_id` | 요청 ID/커서 수정. 같은 요청 그대로 재시도하지 않음 |
+| 404 `alert not found` | 경보가 없거나 이력에서 밀림. 이미 구현된 API이므로 "준비 중"으로 처리하지 않음 |
+| 409 `fcm_project_mismatch` (`/notify/*`) | 폰 토큰·서버 Firebase 프로젝트 불일치 확인. 반복 전송하지 않음 |
+| 410 `fcm_token_unregistered` (`/notify/*`) | 앱에서 새 FCM 토큰을 얻어 재등록한 뒤 재시험 |
+| 422 | 요청 JSON/필드 검증 오류(`detail`) 또는 `invalid_fcm_request`. 입력을 수정한 뒤 재시험 |
+| 502 `fcm_send_failed` (`/notify/*`) | FCM 전송 실패. 서버 로그 확인, 짧은 간격의 무한 재시도 금지 |
+| 503 `redis_unavailable` | Redis 의존 API 사용 불가. 상태 저하 표시 후 간격을 두고 재시도 |
+| 503 `fcm_unavailable` (`/notify/*`) | Firebase 초기화·서버 키 상태 확인. 토큰을 반복 등록해도 해결되지 않음 |
+| 500 `internal_error` | 서버 내부 오류. 본문 상세를 사용자에게 그대로 노출하지 않음 |
+
+`/notify/check` 실패에는 `sent:false`도 붙는다. 200·`message_id`는 FCM 발송 API가 요청을 수락했다는 뜻이며 **폰에 실제 표시됐다는 증거는 아니다**. `/system/health`의 Redis 장애는 503 `{"status":"degraded","redis":{"connected":false,"error":"redis_unavailable"}}`다.

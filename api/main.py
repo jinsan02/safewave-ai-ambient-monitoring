@@ -30,7 +30,7 @@ from typing import Any
 
 import redis.asyncio as aioredis
 from redis.exceptions import RedisError
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -105,8 +105,8 @@ class EmergencySummary(BaseModel):
 
 
 class TokenRegistration(BaseModel):
-    token: str
-    device_id: str = "galaxy_flip4"
+    token: str = Field(min_length=1)
+    device_id: str = Field(default="galaxy_flip4", pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
 
 
 class AudioEventIn(BaseModel):
@@ -255,6 +255,13 @@ def _log(level: int, event: str, **fields):
 
 app = FastAPI(title="rp5 API")
 _phase2_tasks: set[asyncio.Task] = set()
+
+
+@app.exception_handler(RedisError)
+async def _redis_unavailable_response(request: Request, exc: RedisError):
+    _log(logging.ERROR, "api_redis_unavailable", path=request.url.path,
+         error_type=type(exc).__name__)
+    return JSONResponse({"error": "redis_unavailable"}, status_code=503)
 
 
 def _spawn_phase2_task(coro, *, node_id: int, msg_id: str) -> asyncio.Task:
@@ -924,6 +931,8 @@ async def get_history(n: int = 100, level: str = "warning", before: str | None =
     n = max(1, min(n, 3600))
     if level not in ("warning", "critical"):
         return JSONResponse({"error": "level must be 'warning' or 'critical'"}, status_code=400)
+    if before is not None and not _MSG_ID_RE.fullmatch(before):
+        return JSONResponse({"error": "invalid before msg_id"}, status_code=400)
 
     redis_client = await _ensure_redis()
     result = []
@@ -1088,7 +1097,7 @@ async def unregister_fcm_token(device_id: str):
 
 
 class AlertFeedback(BaseModel):
-    device_id: str
+    device_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
     feedback: str = Field(pattern="^(false_alarm|missed_alert)$")
 
 
@@ -1098,6 +1107,8 @@ async def post_alert_feedback(msg_id: str, body: AlertFeedback):
 
     규칙 경보(slm_mode=rule)는 M5를 거치지 않으므로 이 보정의 영향을 받지 않는다.
     """
+    if not _MSG_ID_RE.fullmatch(msg_id):
+        return JSONResponse({"error": "invalid msg_id"}, status_code=400)
     redis_client = await _ensure_redis()
     entry = {
         "feedback": body.feedback,
@@ -1302,11 +1313,12 @@ async def get_system_health():
         redis_client = await _ensure_redis()
         pong = await redis_client.ping()
         info = await redis_client.info("memory")
-    except Exception as exc:
+    except RedisError as exc:
+        _log(logging.ERROR, "system_health_redis_unavailable", error_type=type(exc).__name__)
         return JSONResponse(
             {
                 "status": "degraded",
-                "redis": {"connected": False, "error": str(exc)},
+                "redis": {"connected": False, "error": "redis_unavailable"},
             },
             status_code=503,
         )
