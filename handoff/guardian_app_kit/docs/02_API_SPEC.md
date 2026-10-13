@@ -52,10 +52,16 @@ data 전용 형식에는 `title`, `body`가 data 안에 함께 온다(시스템 
 - `device_id` 기본값 `galaxy_flip4`를 쓰지 말 것(여러 보호자가 서로 덮어씀).
 
 ### `GET /auth/tokens`
-`{"devices":["<uuid>",...],"count":2}`
+`{"devices":["<uuid>",...],"count":2,"fcm_ready":true}`. 토큰 값은 반환하지 않는다.
 
 ### `POST /notify/test`
 요청 `{"token":"<fcm>"}` → `{"ok":true,"message_id":"..."}`. 빈 토큰은 422. 실패 응답은 아래 6절의 상태코드와 고정 `error` 값을 따른다(원래 Firebase 오류 문구·키 경로는 반환하지 않음).
+
+### `POST /notify/test-registered`
+모니터 화면용. 등록된 모든 기기에 일반 테스트 알림을 1회 보내며 토큰을 브라우저에 노출하지 않는다.
+성공 응답은 `{"ok":true,"registered":1,"sent":1,"failed":0}`. 등록 기기가 없으면 409
+`no_registered_devices`, Firebase 미설정은 503 `fcm_unavailable`, 전부 실패하면 502 `fcm_send_failed`.
+200은 Firebase 발송 접수 결과이며 휴대폰 표시 성공 증거가 아니다.
 
 ### `GET /status`
 최신 스냅샷(`mock/status.json`). 데이터가 없으면 **200** `{"message":"no data yet"}`.

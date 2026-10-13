@@ -1,6 +1,7 @@
 """앱 연동 HTTP 오류 계약. 무거운 서비스 의존성 없이 핸들러만 검사한다."""
 
 import ast
+import asyncio
 import json
 import logging
 import re
@@ -68,7 +69,7 @@ class AppHttpErrorTests(unittest.TestCase):
 
         ns["TestNotifyRequest"] = object
         _load_nodes(ROOT / "api" / "notifier.py", {"test_notification"}, ns)
-        ns["_send_fcm"] = lambda *args, **kw: (_ for _ in ()).throw(
+        ns["send_test_notification"] = lambda *args, **kw: (_ for _ in ()).throw(
             ns["FcmUnavailableError"]("private key path"))
         with self.assertRaises(StopIteration) as done:
             ns["test_notification"](SimpleNamespace(token="token")).send(None)
@@ -138,6 +139,44 @@ class AppHttpErrorTests(unittest.TestCase):
             ns["TokenRegistration"](token="token", device_id="bad id")
         self.assertEqual(ns["TokenRegistration"](token="token", device_id="phone-1").device_id,
                          "phone-1")
+
+    def test_registered_test_notification_statuses_and_token_privacy(self):
+        async def redis_client():
+            return object()
+
+        async def no_tokens(_redis):
+            return []
+
+        ns = _load_nodes(
+            ROOT / "api" / "main.py",
+            {"list_fcm_tokens", "test_registered_notifications"},
+            {"JSONResponse": JSONResponse, "FCM_READY": False,
+             "_ensure_redis": redis_client, "_list_registered_tokens": no_tokens},
+        )
+        response = asyncio.run(ns["test_registered_notifications"]())
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(json.loads(response.body)["error"], "fcm_unavailable")
+
+        ns["FCM_READY"] = True
+        response = asyncio.run(ns["test_registered_notifications"]())
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(json.loads(response.body)["error"], "no_registered_devices")
+
+        async def one_token(_redis):
+            return [("phone-1", "private-fcm-token")]
+
+        async def sent_once(*_args, **_kwargs):
+            return 1
+
+        ns.update({"_list_registered_tokens": one_token, "_notify_all": sent_once,
+                   "send_test_notification": object(), "logging": logging,
+                   "_log": lambda *_args, **_kwargs: None})
+        listed = asyncio.run(ns["list_fcm_tokens"]())
+        self.assertEqual(listed, {"devices": ["phone-1"], "count": 1, "fcm_ready": True})
+        self.assertNotIn("private-fcm-token", json.dumps(listed))
+
+        result = asyncio.run(ns["test_registered_notifications"]())
+        self.assertEqual(result, {"ok": True, "registered": 1, "sent": 1, "failed": 0})
 
 
 if __name__ == "__main__":

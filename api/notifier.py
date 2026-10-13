@@ -178,6 +178,16 @@ def _send_fcm(token: str, title: str, body: str, extra: dict[str, Any] | None = 
     return messaging.send(msg)
 
 
+def send_test_notification(token: str) -> str:
+    """등록된 보호자 앱의 수신 경로를 확인하는 일반 테스트 알림."""
+    return _send_fcm(
+        token,
+        title="✅ RP5 알림 테스트",
+        body="갤럭시 플립 4와 RP5 서버가 정상 연결됐습니다.",
+        extra={"type": "test"},
+    )
+
+
 def _fcm_error_response(exc: Exception, *, sent: bool | None = None) -> JSONResponse:
     """앱이 재등록·재시도·서버 점검을 구분하도록 FCM 오류를 노출한다."""
     if isinstance(exc, messaging.UnregisteredError):
@@ -240,12 +250,7 @@ class TestNotifyRequest(BaseModel):
 async def test_notification(req: TestNotifyRequest):
     """앱에서 FCM 수신 연결을 확인하는 테스트 알림 발송."""
     try:
-        msg_id = _send_fcm(
-            req.token,
-            title="✅ RP5 알림 테스트",
-            body="갤럭시 플립 4와 RP5 서버가 정상 연결됐습니다.",
-            extra={"type": "test"},
-        )
+        msg_id = send_test_notification(req.token)
         return {"ok": True, "message_id": msg_id}
     except Exception as exc:
         return _fcm_error_response(exc)

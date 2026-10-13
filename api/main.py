@@ -43,6 +43,7 @@ from notifier import (
     send_ack_notification,
     send_risk_notification,
     send_heartbeat_notification,
+    send_test_notification,
     send_voice_ok_notification,
 )
 
@@ -1265,7 +1266,40 @@ async def get_app_summary():
 async def list_fcm_tokens():
     redis_client = await _ensure_redis()
     tokens = await _list_registered_tokens(redis_client)
-    return {"devices": [device_id for device_id, _token in tokens], "count": len(tokens)}
+    return {
+        "devices": [device_id for device_id, _token in tokens],
+        "count": len(tokens),
+        "fcm_ready": FCM_READY,
+    }
+
+
+@app.post("/notify/test-registered")
+async def test_registered_notifications():
+    """모니터 화면에서 등록된 보호자 앱 전체에 일반 테스트 알림을 1회 보낸다."""
+    if not FCM_READY:
+        return JSONResponse(
+            {"ok": False, "error": "fcm_unavailable", "registered": 0, "sent": 0},
+            status_code=503,
+        )
+    redis_client = await _ensure_redis()
+    tokens = await _list_registered_tokens(redis_client)
+    registered = len(tokens)
+    if registered == 0:
+        return JSONResponse(
+            {"ok": False, "error": "no_registered_devices", "registered": 0, "sent": 0},
+            status_code=409,
+        )
+
+    sent = await _notify_all(redis_client, None, send_test_notification)
+    failed = max(0, registered - sent)
+    if sent == 0:
+        return JSONResponse(
+            {"ok": False, "error": "fcm_send_failed", "registered": registered,
+             "sent": 0, "failed": failed},
+            status_code=502,
+        )
+    _log(logging.INFO, "monitor_test_notification", registered=registered, sent=sent, failed=failed)
+    return {"ok": failed == 0, "registered": registered, "sent": sent, "failed": failed}
 
 
 @app.get("/notify/threshold")
