@@ -62,6 +62,8 @@ data 전용 형식에는 `title`, `body`가 data 안에 함께 온다(시스템 
 성공 응답은 `{"ok":true,"registered":1,"sent":1,"failed":0}`. 등록 기기가 없으면 409
 `no_registered_devices`, Firebase 미설정은 503 `fcm_unavailable`, 전부 실패하면 502 `fcm_send_failed`.
 200은 Firebase 발송 접수 결과이며 휴대폰 표시 성공 증거가 아니다.
+서버 stdout에 기기별 `fcm_send_accepted`(`device_id`, `message_id`, `sender`) 또는
+`fcm_send_failed`(`device_id`, `sender`, `error_type`) 로 기록하며, FCM 토큰 값은 로그에 남기지 않는다.
 
 ### `POST /notify/test-emergency-registered`
 모니터 화면용 응급 표시 시험. 등록된 모든 기기에 `type=emergency`, `test=1`,
