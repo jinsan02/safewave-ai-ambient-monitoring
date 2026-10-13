@@ -184,6 +184,36 @@ class AppHttpErrorTests(unittest.TestCase):
         self.assertEqual(result, {"ok": True, "registered": 1, "sent": 1, "failed": 0,
                                   "test": True, "speech_text": "살려줘"})
 
+    def test_notify_all_logs_fcm_acceptance_and_failure_without_token(self):
+        class RedisError(Exception):
+            pass
+
+        logs = []
+
+        async def tokens(_redis):
+            return [("phone-1", "private-token-1"), ("phone-2", "private-token-2")]
+
+        def send(_token):
+            if _token.endswith("2"):
+                raise RuntimeError("provider rejected")
+            return "projects/demo/messages/abc"
+
+        ns = _load_nodes(
+            ROOT / "api" / "main.py", {"_notify_all"},
+            {"RedisError": RedisError, "_list_registered_tokens": tokens,
+             "_log": lambda level, event, **fields: logs.append((level, event, fields)),
+             "logging": logging, "asyncio": asyncio},
+        )
+        sent = asyncio.run(ns["_notify_all"](object(), None, send))
+        self.assertEqual(sent, 1)
+        accepted = next(item for item in logs if item[1] == "fcm_send_accepted")
+        failed = next(item for item in logs if item[1] == "fcm_send_failed")
+        self.assertEqual(accepted[2]["device_id"], "phone-1")
+        self.assertEqual(accepted[2]["message_id"], "projects/demo/messages/abc")
+        self.assertEqual(failed[2]["device_id"], "phone-2")
+        self.assertEqual(failed[2]["error_type"], "RuntimeError")
+        self.assertNotIn("private-token", json.dumps(logs))
+
 
 if __name__ == "__main__":
     unittest.main()

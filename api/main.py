@@ -560,10 +560,16 @@ async def _notify_all(redis_client, dedupe_prefix: str | None, send_fn, *send_ar
         if not claimed:
             continue
         try:
-            await asyncio.to_thread(send_fn, token, *send_args)
+            message_id = await asyncio.to_thread(send_fn, token, *send_args)
             sent += 1
+            # FCM 접수 ID는 토큰이 아닌 추적용 값이다. 휴대폰 표시를 증명하지는 않지만,
+            # 응급 알림이 어느 기기에 접수됐는지 파일로 추적할 수 있어야 한다.
+            _log(logging.INFO, "fcm_send_accepted", device_id=device_id,
+                 message_id=message_id, sender=send_fn.__name__)
         except Exception as exc:
-            _log(logging.ERROR, "fcm_send_failed", device_id=device_id, error=str(exc))
+            _log(logging.ERROR, "fcm_send_failed", device_id=device_id,
+                 sender=getattr(send_fn, "__name__", type(send_fn).__name__),
+                 error_type=type(exc).__name__, error=str(exc))
     return sent
 
 
