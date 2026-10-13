@@ -34,6 +34,7 @@
     .mic-input { background:#252838; border:1px solid #30354a; color:#e0e0e0; border-radius:8px; padding:8px 10px; min-width:220px; }
     .mic-btn { background:#2e3550; color:#fff; border:0; border-radius:8px; padding:8px 12px; cursor:pointer; }
     .mic-btn:disabled { opacity:0.5; cursor:not-allowed; }
+    .mic-btn.emergency-test { background:#8b2733; }
     .mic-hint { font-size:12px; color:#9aa3b2; margin-top:8px; }
     .model-toggle-panel { background:#1e2130; border-radius:12px; padding:14px; margin-bottom:14px; }
     .model-toggle-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
@@ -42,6 +43,12 @@
     .model-toggle input { accent-color:#69f0ae; cursor:pointer; }
     .model-toggle.off { opacity:0.5; border-color:#5a3030; }
     .model-dim { opacity:0.35; }
+    .app-panel { background:#1e2130; border-radius:12px; padding:14px; margin-bottom:14px; }
+    .app-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .app-status { display:inline-block; min-width:54px; text-align:center; padding:5px 10px; border-radius:20px;
+                  font-size:12px; font-weight:bold; background:#5a3030; color:#ffd8d8; }
+    .app-status.on { background:#1f5a3d; color:#b9ffd7; }
+    .app-detail { font-size:13px; color:#b8c0cc; flex:1; min-width:180px; }
     .res-panel { background:#1e2130; border-radius:12px; padding:14px; margin-bottom:14px; }
     .res-row { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; }
     .res-box { background:#252838; border-radius:8px; padding:10px 12px; }
@@ -101,6 +108,17 @@
   <div class="conn-bar">
     <span id="status-dot" class="off"></span>
     <span id="conn-text">WebSocket 연결 중...</span>
+  </div>
+
+  <div class="app-panel" id="app-panel">
+    <div class="app-row">
+      <span style="font-size:13px;font-weight:600;">보호자 앱 연동</span>
+      <span class="app-status" id="app-status">확인 중</span>
+      <span class="app-detail" id="app-detail">Firebase·등록 기기 상태를 확인합니다.</span>
+      <button class="mic-btn" id="app-test-btn" disabled>테스트 알림 보내기</button>
+      <button class="mic-btn emergency-test" id="app-emergency-test-btn" disabled>[시험] 응급 알림 보내기</button>
+    </div>
+    <div class="mic-hint" id="app-test-result">등록 토큰은 브라우저에 표시하지 않습니다. 응급 시험은 사전 정의 문구 “살려줘”와 [시험] 표시를 보내며, 실제 사고 이력은 만들지 않습니다.</div>
   </div>
 
   <div class="mic-panel" id="mic-panel">
@@ -259,6 +277,77 @@
     const SPEECH_ONLY = detectSpeechOnlyMode();
     let ws;
     let mediaStream = null;
+
+    // ── 보호자 앱 연동 상태·테스트 알림 ───────────────────────────
+    let appLinked = false;
+    async function refreshAppLink() {
+      const badge = document.getElementById('app-status');
+      const detail = document.getElementById('app-detail');
+      const button = document.getElementById('app-test-btn');
+      const emergencyButton = document.getElementById('app-emergency-test-btn');
+      try {
+        const res = await fetch(API + '/auth/tokens');
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
+        const count = Number(d.count || 0);
+        appLinked = d.fcm_ready === true && count > 0;
+        badge.textContent = appLinked ? 'ON' : 'OFF';
+        badge.classList.toggle('on', appLinked);
+        detail.textContent = !d.fcm_ready
+          ? 'Firebase가 준비되지 않았습니다.'
+          : count === 0 ? '등록된 앱 기기가 없습니다.' : `등록 기기 ${count}대 · FCM 준비됨`;
+        button.disabled = !appLinked;
+        emergencyButton.disabled = !appLinked;
+      } catch (e) {
+        appLinked = false;
+        badge.textContent = 'OFF';
+        badge.classList.remove('on');
+        detail.textContent = '상태 조회 실패: ' + e.message;
+        button.disabled = true;
+        emergencyButton.disabled = true;
+      }
+    }
+
+    async function sendRegisteredTestNotification() {
+      const button = document.getElementById('app-test-btn');
+      const result = document.getElementById('app-test-result');
+      if (!appLinked || button.disabled) return;
+      button.disabled = true;
+      result.textContent = '테스트 알림 발송 중...';
+      try {
+        const res = await fetch(API + '/notify/test-registered', { method: 'POST' });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
+        result.textContent = `발송 접수 ${d.sent}/${d.registered}대${d.failed ? ` · 실패 ${d.failed}대` : ''}. 휴대폰 표시를 직접 확인하세요.`;
+      } catch (e) {
+        result.textContent = '발송 실패: ' + e.message;
+      } finally {
+        setTimeout(refreshAppLink, 1000);
+      }
+    }
+
+    async function sendRegisteredEmergencyTestNotification() {
+      const button = document.getElementById('app-emergency-test-btn');
+      const result = document.getElementById('app-test-result');
+      if (!appLinked || button.disabled) return;
+      button.disabled = true;
+      result.textContent = '응급 시험 알림 발송 중...';
+      try {
+        const res = await fetch(API + '/notify/test-emergency-registered', { method: 'POST' });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
+        result.textContent = `[시험] “${d.speech_text}” 응급 알림 발송 ${d.sent}/${d.registered}대${d.failed ? ` · 실패 ${d.failed}대` : ''}. 휴대폰의 응급 표시와 소리를 확인하세요.`;
+      } catch (e) {
+        result.textContent = '응급 시험 알림 발송 실패: ' + e.message;
+      } finally {
+        setTimeout(refreshAppLink, 1000);
+      }
+    }
+
+    document.getElementById('app-test-btn').addEventListener('click', sendRegisteredTestNotification);
+    document.getElementById('app-emergency-test-btn').addEventListener('click', sendRegisteredEmergencyTestNotification);
+    refreshAppLink();
+    setInterval(refreshAppLink, 5000);
 
     // ── 모델별 on/off 토글 ─────────────────────────────────────────
     // POST /settings는 full-replace라 반드시 GET→merge→POST로 다른 필드를 보존한다.
