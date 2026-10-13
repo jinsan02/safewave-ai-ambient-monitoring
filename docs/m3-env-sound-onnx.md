@@ -70,13 +70,15 @@
 
 | 파일 | 크기 | 설명 |
 |---|---|---|
-| `v34_homepos.onnx` | 330.3 MB | 모델 본체 (전처리 포함) |
+| `v34_homepos_int8.onnx` | 88.0 MB | INT8 양자화본 (전처리 포함) — **기본** (§2.1) |
+| `v34_homepos.onnx` | 330.3 MB | 같은 모델의 FP32 원본 — 기준 모델·GPU용 |
 | `model_spec.json` | 1.5 KB | 입출력·전처리 상수·권장 운영값 (기계 판독용) |
 | `labels.json` | 0.1 KB | 라벨 id → 이름 |
 
 ```
-sha256(v34_homepos.onnx) = d06265e9401a4fe824a8e6c5cee68f8200acdbf04b6374c3e02bc44e01cdb615
-opset 17 · 파라미터 86.5 M (float32) · 세션 메모리 약 0.57 GB
+sha256(v34_homepos.onnx)      = d06265e9401a4fe824a8e6c5cee68f8200acdbf04b6374c3e02bc44e01cdb615
+sha256(v34_homepos_int8.onnx) = 65cdf854094a5904cfa5140b72962cd342c307c1fa8cef3c2c1f270bae173e3a
+opset 17 · 파라미터 86.5 M (float32) · 세션 메모리 약 0.56 GB / INT8 0.33 GB
 ```
 
 ### 받기 · 설치
@@ -95,8 +97,64 @@ python scripts/setup_m3_ast_onnx.py --src ./ast_onnx
 ### 교체할 때
 
 입출력 규격과 라벨 순서가 고정이므로 **`.onnx` 파일만 바꾸면 된다.** 코드 수정은 필요 없다.
-파일명이 `m3_env_sound.onnx` / `v34_homepos.onnx` / `ast.onnx` 중 하나면 자동으로 찾고,
-아니면 `M3_ENV_SOUND_ONNX` 로 파일명을 지정한다.
+파일명이 `m3_env_sound.onnx` / `v34_homepos_int8.onnx` / `v34_homepos.onnx` / `ast.onnx` 중
+하나면 이 순서로 자동으로 찾고, 아니면 `M3_ENV_SOUND_ONNX` 로 파일명을 지정한다.
+
+## 2.1 INT8 양자화본 — 기본 모델
+
+FP32와 **같은 학습 결과물**이다. 가중치만 INT8로 압축했고 입출력·라벨·전처리는 동일하다.
+
+| | FP32 | INT8 |
+|---|---|---|
+| 크기 | 330.3 MB | **88.0 MB** (27%) |
+| 세션 메모리 | 0.56 GB | **0.33 GB** |
+| 윈도우 1개 추론 | 1.09초 | **0.84초** (1.30배) |
+
+측정 환경: i7-8700K 6코어, `CPUExecutionProvider`, `intra_op_num_threads=6`.
+스레드는 **물리 코어 수가 최적**이다 — 12(논리 코어)로 올리면 INT8이 0.94초로 되레 느려진다.
+
+### 판정이 바뀌지 않는다는 근거
+
+확률값은 미세하게 달라지므로(impact 확률 최대 차이 0.127, 평균 0.0008) **운영 판정이 바뀌는지**
+를 실제 녹음으로 대조했다. 기준은 게이트 0.005 · impact 0.6 · 3초 병합 (= 런타임 기본값).
+
+| 대조 | 표본 | FP32 | INT8 |
+|---|---|---|---|
+| 자택 held-out 생활음 오탐 | 2,820윈도우 (3.97h) | 16건 / 4.03회/h | **16건 / 4.03회/h** (사건 시각까지 동일) |
+| 실환경 낙상 감지 | 50시행 | 47/50 | **47/50** (50시행 판정 전원 일치) |
+| 조용한 저음 발화 오탐 | 30윈도우 | 알림 0 | **알림 0** |
+
+> 위 낙상 47/50은 모델 저장소(`ast-base`)의 채점 규칙(1초 홉 슬라이딩, 한 윈도우라도 알림이면
+> 감지)으로 FP32·INT8을 **같은 조건에서** 비교한 값이다. §1 표의 46/50은 이 런타임의 창 선택
+> (`M3_WINDOW_MODE=peak`, 6초 병합) 조건에서 측정한 값이라 숫자 기준이 다르다.
+
+무음 게이트는 영향을 받지 않는다. 전처리(게인 정규화·fbank)와 어텐션 score 곱은 FP32로
+남겨두었기 때문에 `raw_peak` 출력이 FP32와 **비트 단위로 동일**하다.
+
+### 쓰는 법
+
+```bash
+hf sync hf://buckets/sobh6498/ast-finetuned-audioset-10-10-0.4593-bucket/ast-base/exports/ast_onnx ./ast_onnx
+python scripts/setup_m3_ast_onnx.py --src ./ast_onnx     # 복사 + 검증 (INT8 자동 선택)
+```
+
+두 파일이 같은 폴더에 있으면 **INT8이 기본으로 선택된다.** FP32로 돌리려면 명시한다.
+
+```bash
+M3_ENV_SOUND_ONNX=v34_homepos.onnx     # docker-compose 환경변수로 지정
+```
+
+### 언제 쓸까
+
+- **기본은 INT8.** CPU 1초 홉 실시간을 FP32(1.09초)는 못 맞추고 INT8(0.84초)은 맞춘다.
+  0.84초도 여유가 작으니 무음 게이트 선필터를 함께 쓴다(게이트 미통과 윈도우는 모델을
+  호출하지 않아도 결과가 같다).
+- **FP32**: 기준 모델이다. 판정이 의심될 때 대조용으로 쓴다.
+- **GPU가 있으면 FP32를 쓴다.** FP32 + `CUDAExecutionProvider` 가 더 빠르다.
+- **ARM(RPi5) 미검증**: 위 등가성은 x86(i7-8700K)에서만 확인했다. ARM은 INT8 연산 커널이
+  달라 확률이 조금 달라질 수 있으므로, 실기기에서 FP32와 판정을 한 번 대조한다.
+- 미재검증 항목: AI-Hub held-out 낙상 재현율(FP32 0.993). 실환경 50시행이 전부 일치했으므로
+  감지 쪽 위험은 낮게 보지만 정식 재측정은 하지 않았다.
 
 ---
 
@@ -190,7 +248,7 @@ dict로 넘길 때 읽는 메타는 두 개다.
     "silence": 0.0012, "speech": 0.1803, "impact": 0.7124,
     "noise": 0.0001, "alarm": 0.0003, "unknown": 0.1057
   },
-  "env_sound_model": "v34_homepos"
+  "env_sound_model": "v34_homepos_int8"
 }
 ```
 

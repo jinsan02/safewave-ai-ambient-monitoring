@@ -11,6 +11,7 @@
 
     python scripts/setup_m3_ast_onnx.py --src ./ast_onnx          # 복사 후 검증
     python scripts/setup_m3_ast_onnx.py --verify-only             # 이미 놓인 모델만 검증
+    python scripts/setup_m3_ast_onnx.py --verify-only --model v34_homepos.onnx   # FP32 원본 검증
 
 검증 항목: 입력 이름/형상, 출력 3종, 클래스 수, 실제 추론 1회, raw_peak 일치, sha256.
 """
@@ -41,7 +42,14 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+# 런타임(ai/experts/m3_ast_base.py ONNX_CANDIDATES)과 같은 우선순위 — 둘 다 있으면 INT8 이 기본
+PREFERRED = ("m3_env_sound.onnx", "v34_homepos_int8.onnx", "v34_homepos.onnx", "ast.onnx")
+
+
 def find_onnx(directory: Path) -> Path | None:
+    for name in PREFERRED:
+        if (directory / name).exists():
+            return directory / name
     candidates = sorted(directory.glob("*.onnx"))
     return candidates[0] if candidates else None
 
@@ -127,16 +135,22 @@ def main() -> None:
     parser.add_argument("--dest", default=str(DEFAULT_DEST),
                         help="설치 위치 (기본: volumes/models/ast_onnx)")
     parser.add_argument("--verify-only", action="store_true", help="복사 없이 설치된 모델만 검증")
+    parser.add_argument("--model", default=None,
+                        help="검증할 파일명 (기본: 설치 폴더에서 자동 선택 = INT8 우선). 예: v34_homepos.onnx")
     args = parser.parse_args()
 
     dest = Path(args.dest)
 
     if args.verify_only or args.src is None:
-        model = find_onnx(dest)
+        model = (dest / args.model) if args.model else find_onnx(dest)
         if model is None:
             raise SystemExit(f"{dest} 에 .onnx 가 없습니다. --src 로 받아온 경로를 지정하세요.")
+        if not model.exists():
+            raise SystemExit(f"{model} 가 없습니다")
     else:
         model = install(Path(args.src), dest)
+        if args.model:
+            model = dest / args.model
 
     sys.exit(0 if verify(model) else 1)
 
