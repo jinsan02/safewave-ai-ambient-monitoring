@@ -36,7 +36,8 @@ def load(folder: Path, name: str, t0: int, t1: int | None) -> dict:
         ms, d = sid_ms(r["stream_id"]), r["data"]
         if within(ms):
             m3, m4 = d.get("env_sound") or {}, d.get("speech_ko") or {}
-            audio.append({"off": (ms - t0) / 1000, "lat": ms - int(d["ts_ms"]), "m3": m3.get("env_sound_label"),
+            audio.append({"off": (ms - t0) / 1000, "ev": (int(d["ts_ms"]) - t0) / 1000, "lat": ms - int(d["ts_ms"]),
+                          "m3": m3.get("env_sound_label"), "m3_ran": m3.get("env_sound_source") == "onnx",
                           "text": m4.get("transcript_ko", ""), "phrase": bool(m4.get("emergency_phrase_detected"))})
     alerts = []
     for line in open(v / "raw_ai_emergency.jsonl", encoding="utf-8"):
@@ -94,7 +95,17 @@ def main():
     for run in args.runs:
         run = Path(run)
         meta = json.loads((run / "run.json").read_text(encoding="utf-8"))
-        data.append(load(run, f"재생 {meta['env']}", meta["replay_start_ms"], None))
+        d = load(run, f"재생 {meta['env']}", meta["replay_start_ms"], None)
+        # 재생 장비 시계(RPi5 등)와 노트북 시계가 달라도 맞도록, 첫 오디오 이벤트를 원본 첫 이벤트에 맞춘다.
+        # 서버 시계로 찍힌 오디오·경보·M5 시점만 옮긴다(자원 기록은 노트북 시계 그대로).
+        if d["audio"] and data[0]["audio"]:
+            shift = min(x["ev"] for x in d["audio"]) - min(x["ev"] for x in data[0]["audio"])
+            for x in d["audio"]:
+                x["ev"] -= shift; x["off"] -= shift
+            for x in d["alerts"] + d["m5"]:
+                x["off"] -= shift
+            d["shift_s"] = round(shift, 2)
+        data.append(d)
 
     lines = ["# 같은 입력 재생 비교 (실측 23:07~23:10 구간)", "",
              f"기준: `{base}` · 재생: " + ", ".join(f"`{r}`" for r in args.runs), "",
@@ -114,6 +125,29 @@ def main():
             + (f"{st.mean(cpu):.0f}% / {max(cpu):.0f}%" if cpu else "—") + " | "
             + (f"{max(x['mem'] for x in d['res']):.1f}GB" if d["res"] else "—") + " | "
             + (f"{max(temps):.0f}°C" if temps else "—") + " |")
+    # 정확도: 원본 오디오 이벤트와 같은 소리(이벤트 시각 ±1초)를 짝지어 결과가 같은지 본다
+    base_audio = data[0]["audio"]
+    lines += ["", "## 정확도 (원본 실측과 같은 소리끼리 비교)", "",
+              "| 환경 | 처리율 | M3 라벨 일치 (둘 다 실행) | M3 건너뜀 | M4 전사 완전 일치 (전사 있는 건) | 긴급 문장 인식 (원본 4건 중) |",
+              "|---|---|---|---|---|---|"]
+    for d in data[1:]:
+        pairs, used = [], set()                    # 1:1 짝 — 재생 쪽 한 건을 두 번 쓰지 않는다
+        for x in base_audio:
+            cand = [y for y in d["audio"] if id(y) not in used and abs(y["ev"] - x["ev"]) < 1.0]
+            if cand:
+                y = min(cand, key=lambda y: abs(y["ev"] - x["ev"]))
+                used.add(id(y))
+                pairs.append((x, y))
+        both = [(x, y) for x, y in pairs if x["m3_ran"] and y["m3_ran"]]
+        txt = [(x, y) for x, y in pairs if x["text"] or y["text"]]
+        base_ph = [x for x in base_audio if x["phrase"]]
+        hit = sum(1 for x in base_ph for xx, y in pairs if xx is x and y["phrase"])
+        lines.append(f"| {d['name']} | {len(pairs)}/{len(base_audio)} ({len(pairs) / max(len(base_audio), 1) * 100:.0f}%) | "
+                     f"{sum(x['m3'] == y['m3'] for x, y in both)}/{len(both)} | {sum(not y['m3_ran'] for _, y in pairs)} | "
+                     f"{sum(x['text'] == y['text'] for x, y in txt)}/{len(txt)} | {hit}/{len(base_ph)} |")
+    lines += ["", "시점 보정(첫 오디오 이벤트 기준): " + ", ".join(f"{d['name']} {d.get('shift_s', 0):+.2f}s" for d in data[1:])]
+    lines += ["", "처리율이 100%보다 낮으면 대기열에서 60초를 넘겨 버려진 소리(AUDIO_BACKLOG_MAX_WAIT_MS)가 있다는 뜻이다.",
+              "M3 건너뜀은 밀린 이벤트에서 M4만 돌린 경우(10-05 수정)와 긴급 문장일 때다."]
     lines += ["", "## 경보 목록 (재생 시작 기준 초)", ""]
     for d in data:
         lines.append(f"### {d['name']}")
@@ -140,7 +174,7 @@ def main():
         plt.rcParams["axes.unicode_minus"] = False
         names = [d["name"] for d in data]
         fig, ax = plt.subplots(figsize=(9, 4))
-        ax.boxplot([[a["lat"] / 1000 for a in d["audio"]] or [0] for d in data], labels=names)
+        ax.boxplot([[a["lat"] / 1000 for a in d["audio"]] or [0] for d in data], tick_labels=names)
         ax.set_ylabel("초"); ax.set_title("오디오 처리 지연 (M3+M4)")
         fig.tight_layout(); fig.savefig(out / "1_audio_latency.png", dpi=130); plt.close(fig)
         fig, ax = plt.subplots(figsize=(9, 3.5))
@@ -154,7 +188,7 @@ def main():
         fig, ax = plt.subplots(figsize=(9, 3.5))
         m5d = [d for d in data if d["m5"]]
         if m5d:
-            ax.boxplot([[m["ms"] / 1000 for m in d["m5"] if m["ms"]] or [0] for d in m5d], labels=[d["name"] for d in m5d])
+            ax.boxplot([[m["ms"] / 1000 for m in d["m5"] if m["ms"]] or [0] for d in m5d], tick_labels=[d["name"] for d in m5d])
         ax.set_ylabel("초"); ax.set_title("M5 추론 시간")
         fig.tight_layout(); fig.savefig(out / "3_m5_infer.png", dpi=130); plt.close(fig)
         fig, ax = plt.subplots(figsize=(9, 3.5))

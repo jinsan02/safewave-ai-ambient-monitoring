@@ -1,5 +1,7 @@
 # M1 · M2 인계 (김태연, 2026-09-16)
 
+> **2026-09-16 원본 인계.** 아래의 ‘M1 드롭인’은 당시 허브 ONNX 경로를 설명한다. 2026-10-05부터 실험·운영 경로는 N_pose 보드 추론(`M1_SOURCE=board`)이며 Compose 기본값은 여전히 `onnx`다. M2는 팀 결정으로 폐기돼 기본 꺼짐이다. 최신 상태는 [`HANDOFF.md`](../../HANDOFF.md) 0절을 본다.
+
 `composedly13/safewave-ai-ambient-monitoring-pose` / `-vital` 에서 나온 산출물입니다.
 상세는 각 `*_HANDOFF.md` 를 보시고, 이 문서는 **설치와 주의사항만** 담았습니다.
 

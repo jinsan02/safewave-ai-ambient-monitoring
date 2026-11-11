@@ -13,6 +13,7 @@
 import argparse
 import json
 import math
+import os
 import time
 import urllib.request
 import wave
@@ -35,9 +36,12 @@ def main():
     ap.add_argument("--ack-wait", type=float, default=60.0)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
-    r = redis.Redis()
+    r = redis.Redis(host=os.getenv("REDIS_HOST", "localhost"),
+                    port=int(os.getenv("REDIS_PORT", "6379")))
     devices = get(a.api, "/auth/tokens").get("devices", [])
     with wave.open(a.wav) as w:
+        if (w.getframerate(), w.getnchannels(), w.getsampwidth()) != (16000, 1, 2):
+            ap.error("--wav must be 16 kHz, mono, 16-bit PCM")
         x = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
     peak = float(np.abs(x).max())
     clip = x if peak >= 0.12 else np.clip(x * (0.85 / max(peak, 1e-9)), -1, 1).astype(np.float32)
@@ -53,7 +57,10 @@ def main():
     while time.time() * 1000 - t_inj < a.timeout * 1000 and msg_id is None:
         for mid, f in r.xrange("ai:emergency", min=f"({last_id}", max="+"):
             d = json.loads(f[b"data"])
-            if d.get("slm_mode") == "rule" or d.get("risk_level") == "critical":
+            if (d.get("slm_mode") == "rule"
+                    and int(d.get("node_id", -1)) == a.node
+                    and int(d.get("ts_ms", 0)) >= t_inj - 1000
+                    and (d.get("emergency_breakdown") or {}).get("voice_emergency_bypass")):
                 msg_id, payload = mid.decode(), d
                 break
         time.sleep(0.05)
@@ -77,7 +84,7 @@ def main():
         t_end = time.time() + a.ack_wait
         while time.time() < t_end:
             detail = get(a.api, f"/alerts/{msg_id}")
-            if detail.get("acked_by") and detail.get("voice_ok") is not None:
+            if detail.get("acked_by"):
                 break
             time.sleep(2)
         rep.update(acked_by=detail.get("acked_by"), voice_ok=detail.get("voice_ok"))

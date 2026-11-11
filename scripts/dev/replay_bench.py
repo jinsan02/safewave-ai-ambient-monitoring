@@ -110,6 +110,7 @@ def main() -> None:
     ap.add_argument("--redis-port", type=int, default=6379, help="RPi5는 ssh 터널 포트(6380)")
     ap.add_argument("--ssh", default="", help="RPi5: csi@주소 — 재생을 RPi5 컨테이너 안에서 돌린다")
     ap.add_argument("--tail-s", type=float, default=30.0)
+    ap.add_argument("--remote-ready", action="store_true", help="RPi5 컨테이너 /tmp에 스크립트·기록을 미리 복사해 둔 경우 복사를 건너뛴다")
     ap.add_argument("--auto-ack-s", type=float, default=0.0, help="경보마다 N초 뒤 앱 확인 대신 넣기(0이면 안 함)")
     ap.add_argument("--root", default="data/replay_bench")
     args = ap.parse_args()
@@ -140,11 +141,13 @@ def main() -> None:
     t_replay = int(time.time() * 1000)
     if args.ssh:
         cap = Path(args.capture)
-        subprocess.run(["scp", "-q", str(ROOT / "scripts/dev/npose_capture.py"), str(cap), f"{args.ssh}:/tmp/"], check=True)
-        remote = ("docker cp /tmp/npose_capture.py rp5-ai-experts:/tmp/ && "
-                  f"docker cp /tmp/{cap.name} rp5-ai-experts:/tmp/ && "
-                  f"docker exec rp5-ai-experts python -u /tmp/npose_capture.py replay /tmp/{cap.name} "
-                  "--udp-host sensing --redis-host db")
+        remote = ""
+        if not args.remote_ready:
+            subprocess.run(["scp", "-q", str(ROOT / "scripts/dev/npose_capture.py"), str(cap), f"{args.ssh}:/tmp/"], check=True)
+            remote = ("docker cp /tmp/npose_capture.py rp5-ai-experts:/tmp/ && "
+                      f"docker cp /tmp/{cap.name} rp5-ai-experts:/tmp/ && ")
+        remote += (f"docker exec rp5-ai-experts python -u /tmp/npose_capture.py replay /tmp/{cap.name} "
+                   "--udp-host sensing --redis-host db")
         subprocess.run(["ssh", "-o", "BatchMode=yes", args.ssh, remote], check=True)
     else:
         subprocess.run([PY, "-X", "utf8", "-u", str(ROOT / "scripts/dev/npose_capture.py"), "replay", args.capture,

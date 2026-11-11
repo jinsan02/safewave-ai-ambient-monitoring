@@ -30,7 +30,7 @@ from typing import Any
 
 import redis.asyncio as aioredis
 from redis.exceptions import RedisError
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -41,8 +41,10 @@ from notifier import (
     load_risk_threshold,
     router as notify_router,
     send_ack_notification,
+    send_emergency_test_notification,
     send_risk_notification,
     send_heartbeat_notification,
+    send_test_notification,
     send_voice_ok_notification,
 )
 
@@ -105,8 +107,8 @@ class EmergencySummary(BaseModel):
 
 
 class TokenRegistration(BaseModel):
-    token: str
-    device_id: str = "galaxy_flip4"
+    token: str = Field(min_length=1)
+    device_id: str = Field(default="galaxy_flip4", pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
 
 
 class AudioEventIn(BaseModel):
@@ -255,6 +257,13 @@ def _log(level: int, event: str, **fields):
 
 app = FastAPI(title="rp5 API")
 _phase2_tasks: set[asyncio.Task] = set()
+
+
+@app.exception_handler(RedisError)
+async def _redis_unavailable_response(request: Request, exc: RedisError):
+    _log(logging.ERROR, "api_redis_unavailable", path=request.url.path,
+         error_type=type(exc).__name__)
+    return JSONResponse({"error": "redis_unavailable"}, status_code=503)
 
 
 def _spawn_phase2_task(coro, *, node_id: int, msg_id: str) -> asyncio.Task:
@@ -551,10 +560,16 @@ async def _notify_all(redis_client, dedupe_prefix: str | None, send_fn, *send_ar
         if not claimed:
             continue
         try:
-            await asyncio.to_thread(send_fn, token, *send_args)
+            message_id = await asyncio.to_thread(send_fn, token, *send_args)
             sent += 1
+            # FCM 접수 ID는 토큰이 아닌 추적용 값이다. 휴대폰 표시를 증명하지는 않지만,
+            # 응급 알림이 어느 기기에 접수됐는지 파일로 추적할 수 있어야 한다.
+            _log(logging.INFO, "fcm_send_accepted", device_id=device_id,
+                 message_id=message_id, sender=send_fn.__name__)
         except Exception as exc:
-            _log(logging.ERROR, "fcm_send_failed", device_id=device_id, error=str(exc))
+            _log(logging.ERROR, "fcm_send_failed", device_id=device_id,
+                 sender=getattr(send_fn, "__name__", type(send_fn).__name__),
+                 error_type=type(exc).__name__, error=str(exc))
     return sent
 
 
@@ -924,6 +939,8 @@ async def get_history(n: int = 100, level: str = "warning", before: str | None =
     n = max(1, min(n, 3600))
     if level not in ("warning", "critical"):
         return JSONResponse({"error": "level must be 'warning' or 'critical'"}, status_code=400)
+    if before is not None and not _MSG_ID_RE.fullmatch(before):
+        return JSONResponse({"error": "invalid before msg_id"}, status_code=400)
 
     redis_client = await _ensure_redis()
     result = []
@@ -1088,7 +1105,7 @@ async def unregister_fcm_token(device_id: str):
 
 
 class AlertFeedback(BaseModel):
-    device_id: str
+    device_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
     feedback: str = Field(pattern="^(false_alarm|missed_alert)$")
 
 
@@ -1098,6 +1115,8 @@ async def post_alert_feedback(msg_id: str, body: AlertFeedback):
 
     규칙 경보(slm_mode=rule)는 M5를 거치지 않으므로 이 보정의 영향을 받지 않는다.
     """
+    if not _MSG_ID_RE.fullmatch(msg_id):
+        return JSONResponse({"error": "invalid msg_id"}, status_code=400)
     redis_client = await _ensure_redis()
     entry = {
         "feedback": body.feedback,
@@ -1254,7 +1273,71 @@ async def get_app_summary():
 async def list_fcm_tokens():
     redis_client = await _ensure_redis()
     tokens = await _list_registered_tokens(redis_client)
-    return {"devices": [device_id for device_id, _token in tokens], "count": len(tokens)}
+    return {
+        "devices": [device_id for device_id, _token in tokens],
+        "count": len(tokens),
+        "fcm_ready": FCM_READY,
+    }
+
+
+@app.post("/notify/test-registered")
+async def test_registered_notifications():
+    """모니터 화면에서 등록된 보호자 앱 전체에 일반 테스트 알림을 1회 보낸다."""
+    if not FCM_READY:
+        return JSONResponse(
+            {"ok": False, "error": "fcm_unavailable", "registered": 0, "sent": 0},
+            status_code=503,
+        )
+    redis_client = await _ensure_redis()
+    tokens = await _list_registered_tokens(redis_client)
+    registered = len(tokens)
+    if registered == 0:
+        return JSONResponse(
+            {"ok": False, "error": "no_registered_devices", "registered": 0, "sent": 0},
+            status_code=409,
+        )
+
+    sent = await _notify_all(redis_client, None, send_test_notification)
+    failed = max(0, registered - sent)
+    if sent == 0:
+        return JSONResponse(
+            {"ok": False, "error": "fcm_send_failed", "registered": registered,
+             "sent": 0, "failed": failed},
+            status_code=502,
+        )
+    _log(logging.INFO, "monitor_test_notification", registered=registered, sent=sent, failed=failed)
+    return {"ok": failed == 0, "registered": registered, "sent": sent, "failed": failed}
+
+
+@app.post("/notify/test-emergency-registered")
+async def test_registered_emergency_notifications():
+    """모니터 화면에서 등록된 보호자 앱 전체에 시험용 응급 알림을 1회 보낸다."""
+    if not FCM_READY:
+        return JSONResponse(
+            {"ok": False, "error": "fcm_unavailable", "registered": 0, "sent": 0},
+            status_code=503,
+        )
+    redis_client = await _ensure_redis()
+    tokens = await _list_registered_tokens(redis_client)
+    registered = len(tokens)
+    if registered == 0:
+        return JSONResponse(
+            {"ok": False, "error": "no_registered_devices", "registered": 0, "sent": 0},
+            status_code=409,
+        )
+
+    sent = await _notify_all(redis_client, None, send_emergency_test_notification)
+    failed = max(0, registered - sent)
+    if sent == 0:
+        return JSONResponse(
+            {"ok": False, "error": "fcm_send_failed", "registered": registered,
+             "sent": 0, "failed": failed},
+            status_code=502,
+        )
+    _log(logging.INFO, "monitor_emergency_test_notification",
+         registered=registered, sent=sent, failed=failed, speech_text="살려줘")
+    return {"ok": failed == 0, "registered": registered, "sent": sent, "failed": failed,
+            "test": True, "speech_text": "살려줘"}
 
 
 @app.get("/notify/threshold")
@@ -1302,11 +1385,12 @@ async def get_system_health():
         redis_client = await _ensure_redis()
         pong = await redis_client.ping()
         info = await redis_client.info("memory")
-    except Exception as exc:
+    except RedisError as exc:
+        _log(logging.ERROR, "system_health_redis_unavailable", error_type=type(exc).__name__)
         return JSONResponse(
             {
                 "status": "degraded",
-                "redis": {"connected": False, "error": str(exc)},
+                "redis": {"connected": False, "error": "redis_unavailable"},
             },
             status_code=503,
         )

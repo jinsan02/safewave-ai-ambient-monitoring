@@ -1,5 +1,7 @@
 # 09-23 노트북 실험 인계 — 요약과 팀원별 할 일
 
+> **2026-09-23 당시 기록.** 이후 M2는 폐기됐고 M1 운영 경로는 N_pose 보드 점수로 바뀌었다. 2026-10-13 동일 입력 3환경 재생 결과와 현재 우선순위는 [`HANDOFF.md`](../../HANDOFF.md) 0절 및 [`docs/validation_status.md`](../../docs/validation_status.md)를 본다. 아래의 당시 팀원 요청·지연 수치를 현재 운영 상태로 읽지 않는다.
+
 작성: 노진산(통합) · 2026-09-24 · 코드 develop(원격 반영)
 상세: 담당자별 문서(`TO_*.md`, `M5_NOTES_NOJINSAN.md`), 0값 통계 `csi_zero_stats_20260923_2347.xlsx`.
 노트북 전체 기록(`reports/laptop/EXPERIMENT_CPU_GPU.md`)은 Git 제외 — 공유 폴더·노션에 별도 첨부.

@@ -10,7 +10,7 @@ import os
 from typing import Any
 
 import firebase_admin
-from firebase_admin import credentials, messaging
+from firebase_admin import credentials, exceptions as firebase_exceptions, messaging
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -37,14 +37,14 @@ FCM_TTL_SECONDS = int(os.getenv("FCM_TTL_SECONDS", "600"))
 
 # ── 스키마 ───────────────────────────────────────────────────
 class NotifyRequest(BaseModel):
-    token: str
+    token: str = Field(min_length=1)
     title: str
     body: str
     data: dict[str, Any] = Field(default_factory=dict)
 
 
 class RiskPayload(BaseModel):
-    token: str
+    token: str = Field(min_length=1)
     risk_score: float
     risk_level: str = "normal"
     emergency: bool = False
@@ -139,10 +139,14 @@ def build_fcm_fields(title: str, body: str, extra: dict[str, Any] | None, critic
 
 
 # ── 공통 전송 함수 ────────────────────────────────────────────
+class FcmUnavailableError(RuntimeError):
+    pass
+
+
 def _send_fcm(token: str, title: str, body: str, extra: dict[str, Any] | None = None,
               critical: bool = False) -> str:
     if not firebase_admin._apps:
-        raise RuntimeError("Firebase not initialized — key file missing")
+        raise FcmUnavailableError("Firebase not initialized — key file missing")
 
     fields = build_fcm_fields(title, body, extra, critical, FCM_DATA_ONLY, FCM_TTL_SECONDS)
     if fields["notification"] is None:
@@ -174,6 +178,58 @@ def _send_fcm(token: str, title: str, body: str, extra: dict[str, Any] | None = 
     return messaging.send(msg)
 
 
+def send_test_notification(token: str) -> str:
+    """등록된 보호자 앱의 수신 경로를 확인하는 일반 테스트 알림."""
+    return _send_fcm(
+        token,
+        title="✅ RP5 알림 테스트",
+        body="갤럭시 플립 4와 RP5 서버가 정상 연결됐습니다.",
+        extra={"type": "test"},
+    )
+
+
+def send_emergency_test_notification(token: str, speech_text: str = "살려줘") -> str:
+    """보호자 앱의 응급 알림 표시만 확인하는 시험 메시지.
+
+    실제 ai:emergency 스트림과 Phase 2를 거치지 않으며, 앱이 실제
+    사고로 오인하지 않도록 제목과 data에 시험 표시를 둘 다 넣는다.
+    """
+    return _send_fcm(
+        token,
+        title="[시험] 응급 음성 알림",
+        body=f'[시험] 사전 정의 음성 "{speech_text}"가 감지됐습니다. 실제 사고가 아닙니다.',
+        extra={
+            "type": "emergency",
+            "test": "1",
+            "emergency": True,
+            "risk_level": "critical",
+            "speech_text": speech_text,
+            "summary": f'[시험] 긴급 음성 "{speech_text}"',
+        },
+        critical=True,
+    )
+
+
+def _fcm_error_response(exc: Exception, *, sent: bool | None = None) -> JSONResponse:
+    """앱이 재등록·재시도·서버 점검을 구분하도록 FCM 오류를 노출한다."""
+    if isinstance(exc, messaging.UnregisteredError):
+        status, code = 410, "fcm_token_unregistered"
+    elif isinstance(exc, messaging.SenderIdMismatchError):
+        status, code = 409, "fcm_project_mismatch"
+    elif isinstance(exc, (firebase_exceptions.InvalidArgumentError, ValueError)):
+        status, code = 422, "invalid_fcm_request"
+    elif isinstance(exc, FcmUnavailableError):
+        status, code = 503, "fcm_unavailable"
+    elif isinstance(exc, firebase_exceptions.FirebaseError):
+        status, code = 502, "fcm_send_failed"
+    else:
+        status, code = 500, "internal_error"
+    body = {"ok": False, "error": code}
+    if sent is not None:
+        body["sent"] = sent
+    return JSONResponse(body, status_code=status)
+
+
 # ── 엔드포인트 ────────────────────────────────────────────────
 @router.post("/send")
 async def send_notification(req: NotifyRequest):
@@ -182,7 +238,7 @@ async def send_notification(req: NotifyRequest):
         msg_id = _send_fcm(req.token, req.title, req.body, req.data)
         return {"ok": True, "message_id": msg_id}
     except Exception as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+        return _fcm_error_response(exc)
 
 
 @router.post("/check")
@@ -205,23 +261,18 @@ async def check_and_notify(payload: RiskPayload, request: Request):
         )
         return {"ok": True, "sent": True, "message_id": msg_id}
     except Exception as exc:
-        return JSONResponse({"ok": False, "sent": False, "error": str(exc)}, status_code=500)
+        return _fcm_error_response(exc, sent=False)
 
 
 class TestNotifyRequest(BaseModel):
-    token: str
+    token: str = Field(min_length=1)
 
 
 @router.post("/test")
 async def test_notification(req: TestNotifyRequest):
     """앱에서 FCM 수신 연결을 확인하는 테스트 알림 발송."""
     try:
-        msg_id = _send_fcm(
-            req.token,
-            title="✅ RP5 알림 테스트",
-            body="갤럭시 플립 4와 RP5 서버가 정상 연결됐습니다.",
-            extra={"type": "test"},
-        )
+        msg_id = send_test_notification(req.token)
         return {"ok": True, "message_id": msg_id}
     except Exception as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+        return _fcm_error_response(exc)
